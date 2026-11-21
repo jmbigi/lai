@@ -90,12 +90,16 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 - Solo si se expone fuera de loopback
 - API key + rate limit en gateway-go config
 
-### 6. Chat history trimming + chat() refactor ⏸ PENDIENTE
+### 6. Chat history trimming + chat() refactor ✅ **COMPLETADO**
 - Delegar `chat()` a `chat_messages()` para evitar duplicación
-- Límite de historial por tokens/caracteres
+- Límite de historial por tokens (history_max_tokens=12000)
+- _strip_thinking_artifacts() para limpiar respuestas
 
-### 7. Sandboxing para run_command/python_eval ⏸ PENDIENTE
-- Evaluar bubblewrap o contenedores para AutoMode
+### 7. Sandboxing para run_command/python_eval ✅ **COMPLETADO**
+- bubblewrap para run_command y run_python (sandbox=True por defecto)
+- --unshare-all, --cap-drop ALL, bind mounts selectivos
+- Verificado: bloquea /etc/shadow, red; permite python execution
+- Opción sandbox=False para compatibilidad
 
 ## Comandos de Desarrollo
 
@@ -132,9 +136,9 @@ python3 lai.py review archivo.py --format sarif
 
 ## Issues Conocidos
 
-1. `chat()` legacy mantiene lógica duplicada; debería delegar en `chat_messages()`
-2. Historial conversacional sin límite (crece indefinido)
-3. `serve` SSE single-chunk; no streaming real de tool calls
-4. `run_command`/`python_eval` usan `shell=True` (no sandbox)
+1. ~~`chat()` legacy mantiene lógica duplicada; debería delegar en `chat_messages()`~~ ✅ **RESUELTO**
+2. ~~Historial conversacional sin límite (crece indefinido)~~ ✅ **RESUELTO** (_trim_history)
+3. ~~`serve` SSE single-chunk; no streaming real de tool calls~~ ✅ **RESUELTO**
+4. ~~`run_command`/`python_eval` usan `shell=True` (no sandbox)~~ ✅ **RESUELTO** (bubblewrap sandbox)
 5. `gateway.py`/`harness.py` legacy — no mantener
 6. Versiones divergentes: gateway 3.1.0 vs OpenAPI 3.0.0
