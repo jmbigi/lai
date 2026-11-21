@@ -1858,7 +1858,8 @@ def think_cmd(lai: LAI, args):
 def search_cmd(lai: LAI, args):
     results = lai.tools.grep(args.pattern, args.path)
     if args.type:
-        results = [r for r in results if r.endswith(f".{args.type}")]
+        # Results are in format "filepath:line: content", filter by filepath extension
+        results = [r for r in results if r.split(':')[0].endswith(f".{args.type}")]
     if args.ignore_case:
         results = [r for r in results if args.pattern.lower() in r.lower()]
     for r in results:
