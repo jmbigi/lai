@@ -1,8 +1,8 @@
 # Documentación: Reglas y Trabajo Realizado
 
-## Reglas del Proyecto (README del proyecto chess)
+## Reglas del Proyecto (README del proyecto)
 
-Estas reglas provienen del archivo `README.md` en `/home/kubuntu/curso-ia/modelo-local/chess/README.md`:
+Estas reglas provienen del archivo `README.md` en la raíz del proyecto `/home/kubuntu/curso-ia/modelo-local/README.md`:
 
 1. Seguir las reglas de https://github.com/jmbigi/thinker/.
 2. Seguir las reglas de https://github.com/jmbigi/better-ai/.
