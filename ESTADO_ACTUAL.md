@@ -28,10 +28,11 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 ### Core lai.py
 - **Regla 4 guard**: `is_local_url()` bloquea endpoints públicos
 - **AutoMode nativo**: tool calling nativo llama.cpp (no heurísticas), max_turns=20, cost tracking
-- **chat_messages()**: tool calling, top_p/top_k/min_p, chat_template_kwargs, reasoning_content
-- **Serve**: `/health`, `/v1/models`, `/v1/chat/completions` (SSE), reasoning_content
+- **chat_messages()**: tool calling, top_p/top_k/min_p, chat_template_kwargs, reasoning_content, **streaming con tool_calls deltas**
+- **Serve**: `/health`, `/v1/models`, `/v1/chat/completions` (SSE), **streaming tool_calls**, reasoning_content
 - **Review**: chunking 120 líneas, focus, formatos text/json/sarif
 - **Tools (16)**: read_file(strict), write_file(strict), list_dir, run_command, grep, find_files, repo_map, python_eval, apply_patch, web_search, run_python, run_tests, lint_file, format_code, check_types, analyze_complexity, find_unused_imports, find_unused_code, find_todos, check_security, check_dead_code, analyze_dependencies, validate_syntax, validate_imports, validate_types, validate_project, fix_imports, fix_syntax, fix_formatting, fix_types, auto_fix, analyze_project, get_project_structure, find_duplicates, check_circular_imports, fix_missing_init, fix_circular_imports, fix_relative_imports, normalize_imports, run_quality_check, generate_type_stubs, check_docstrings
+- **Bash/Zsh completion**: `lai completion bash|zsh`
 
 ### Gateway-go v3.1
 - Proxy reverso llama.cpp/Ollama con circuit breaker, load balancing
@@ -46,10 +47,10 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 
 ## Estándares y Calidad
 
-- `make check` = compile + ruff + pytest (18 tests pasan)
+- `make check` = compile + ruff + pytest (**24 tests pasan**, 3 skipped)
 - `pyproject.toml` single source: version, deps, ruff, mypy, black, isort, pytest
 - Ruff per-file ignores para CLI patterns (T201, ARG001, PTH*, PLR*, etc.)
-- Tests: is_local_url, ToolRegistry, get_tools_schema, get_lai_instance, CLI
+- Tests: is_local_url, ToolRegistry, get_tools_schema, get_lai_instance, CLI, **Integration (gateway, serve, AutoMode)**
 
 ## Documentación
 
@@ -66,20 +67,20 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 
 ## Próximas Mejoras (Plan de Acción)
 
-### 1. Bash Completion (~30 min) ✅ PLANIFICADO
-- `lai --completion bash|zsh` genera script completado
+### 1. Bash Completion (~30 min) ✅ **COMPLETADO**
+- `lai completion bash|zsh` genera script completado
 - Subcomandos, flags, modelos, rutas
 
-### 2. Streaming Tool Calls Real (3-5h) ✅ PLANIFICADO
+### 2. Streaming Tool Calls Real (3-5h) ✅ **COMPLETADO**
 - `chat_messages(stream=True)` → SSE con `tool_calls` chunked
-- `serve` SSE real: envía `tool_calls` deltas, no solo content
-- Gateway-go ya pasa streaming raw; ajustar lai.py parser
+- `serve` SSE real: envía `tool_calls` deltas, non-streaming con tool_calls
+- Gateway-go ya pasa streaming raw; lai.py parser ajustado
 
-### 3. Tests Integración E2E (4-6h, incremental) ✅ PLANIFICADO
+### 3. Tests Integración E2E (4-6h, incremental) ✅ **COMPLETADO**
 - Fixtures pytest: llama.cpp + gateway reales
 - AutoMode multi-tool (crear archivo → test → lint)
-- Serve round-trip: chat + tools + streaming
-- Gateway cache invalidation
+- Serve round-trip: chat + tools + streaming (skipped si serve no running)
+- Gateway tool calling (non-stream + stream) ✅
 
 ### 4. LSP Integration (opcional, 4-8h) ⏸ PENDIENTE DECISIÓN
 - `python-lsp-server` para goto_definition, hover, references
@@ -88,6 +89,13 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 ### 5. Auth Gateway (opcional, 2-4h) ⏸ PENDIENTE DECISIÓN
 - Solo si se expone fuera de loopback
 - API key + rate limit en gateway-go config
+
+### 6. Chat history trimming + chat() refactor ⏸ PENDIENTE
+- Delegar `chat()` a `chat_messages()` para evitar duplicación
+- Límite de historial por tokens/caracteres
+
+### 7. Sandboxing para run_command/python_eval ⏸ PENDIENTE
+- Evaluar bubblewrap o contenedores para AutoMode
 
 ## Comandos de Desarrollo
 
