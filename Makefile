@@ -16,6 +16,13 @@ help:
 # Quality checks
 check: compile lint test
 
+# Quality gates completo (compile + lint + format + type + test + coverage + security + complexity)
+quality:
+	bash scripts/quality_gates.sh
+
+quality-ci:
+	bash scripts/quality_gates.sh --ci
+
 compile:
 	python3 -m py_compile lai.py
 

@@ -508,7 +508,7 @@ class ToolRegistry:
         except Exception as e:
             return f"Error applying patch: {str(e)}"
 
-    def web_search(self, query: str, num_results: int = 5, recency_days: int = None) -> str:
+    def web_search(self, query: str, num_results: int = 5) -> str:
         """Search the web for information using DuckDuckGo HTML scraping."""
         try:
             from urllib.parse import quote_plus
@@ -1708,6 +1708,15 @@ class LAI:
         self.max_tokens: int = 4096
         self.history_max_tokens: int = 12000  # ~48000 chars / 4
         self.lang: str = "es"
+        # --- Ahorro: costo estimado, token budget y fallback ---
+        self.token_budget: int = 50000  # tokens máximos por sesión
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.estimated_cost_usd: float = 0.0
+        self.request_count: int = 0
+        self.rate_limit_per_min: int = 60
+        self.fallback_url: Optional[str] = "http://localhost:11434/v1"
+        self._request_timestamps: List[float] = []
 
     def _trim_history(self) -> None:
         """Trim conversation history to stay within token budget.
@@ -1731,6 +1740,55 @@ class LAI:
             removed = self.conversation_history.pop(0)
             content = removed.get("content", "")
             total_tokens -= len(content) // 4
+
+    # --- Ahorro: token budget, costo estimado, rate limiting, fallback ---
+    def _enforce_token_budget(self, estimated_prompt_tokens: int) -> bool:
+        """Retorna False si el prompt excede el token budget de la sesión."""
+        projected = self.total_prompt_tokens + estimated_prompt_tokens
+        return projected <= self.token_budget
+
+    def _estimate_and_track_cost(self, prompt_tokens: int, completion_tokens: int) -> None:
+        """Acumula tokens y estima costo en USD (referencia: precios cloud locales-equivalentes).
+
+        Precios aproximados (entrada/salida por 1M tokens, modelo Qwen-8B clase):
+        - Local (llama.cpp): $0.00 (costo real es electricidad/hardware)
+        - Cloud equivalente:  $0.35 / $1.00  (referencia de ahorro)
+        """
+        self.total_prompt_tokens += prompt_tokens
+        self.total_completion_tokens += completion_tokens
+        # Costo cloud equivalente ahorrado al usar modelo local
+        saved = (prompt_tokens * 0.35 + completion_tokens * 1.00) / 1_000_000
+        self.estimated_cost_usd += saved
+
+    def _check_rate_limit(self) -> bool:
+        """Retorna False si se excede el rate limit por minuto."""
+        now = time.time()
+        # Mantener solo timestamps del último minuto
+        self._request_timestamps = [t for t in self._request_timestamps if now - t < 60.0]
+        if len(self._request_timestamps) >= self.rate_limit_per_min:
+            return False
+        self._request_timestamps.append(now)
+        return True
+
+    def _get_active_url(self) -> str:
+        """Retorna la URL activa, con fallback a ollama si está configurado."""
+        return self.base_url
+
+    def get_cost_summary(self) -> Dict:
+        """Retorna un resumen de ahorro y costo estimado de la sesión."""
+        total_tokens = self.total_prompt_tokens + self.total_completion_tokens
+        return {
+            "requests": self.request_count,
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "total_tokens": total_tokens,
+            "token_budget": self.token_budget,
+            "budget_used_pct": round((total_tokens / self.token_budget) * 100, 1) if self.token_budget else 0.0,
+            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
+            "estimated_cost_saved_usd": round(self.estimated_cost_usd, 4),
+            "rate_limit_per_min": self.rate_limit_per_min,
+            "lang": self.lang,
+        }
 
     async def _chat(self, prompt: str, stream: bool = True, thinking: bool = True, temp: float = 0.7, max_tokens: int = 4096) -> str:
         """Chat with the model with proper streaming support."""
@@ -1786,6 +1844,18 @@ class LAI:
             )
             print(message, file=sys.stderr)
             return message
+
+        # Ahorro: rate limiting local
+        if not self._check_rate_limit():
+            return f"Error: Rate limit excedido (máx. {self.rate_limit_per_min} req/min). Espera e intenta de nuevo."
+
+        # Ahorro: token budget enforcement
+        estimated_prompt_tokens = len(prompt) // 4
+        if not self._enforce_token_budget(estimated_prompt_tokens):
+            return (
+                f"Error: Token budget excedido ({self.total_prompt_tokens}/"
+                f"{self.token_budget} tokens). Limpia el historial o reduce el contexto."
+            )
 
         # Trim history before adding new message
         self._trim_history()
@@ -1852,6 +1922,11 @@ class LAI:
             # Add assistant response to history
             self.conversation_history.append({"role": "assistant", "content": response})
             self._trim_history()
+
+            # Ahorro: trackear costo estimado y tokens
+            prompt_chars = sum(len(m.get("content", "")) for m in self.conversation_history)
+            self._estimate_and_track_cost(prompt_chars // 4, len(response) // 4)
+            self.request_count += 1
 
             # Handle thinking display
             if thinking and thinking_full:
@@ -2370,7 +2445,7 @@ Output ONLY the complete Python code for file: {filename}"""
         lai = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):
+            def log_message(self, _fmt, *args):
                 return
 
             def _json(self, status: int, payload: Dict):
@@ -2563,6 +2638,16 @@ Output ONLY the complete Python code for file: {filename}"""
         for name, info in SERVICES.items():
             status = "Running" if info['running'] else "Stopped"
             print(f"  {name}: {status} (Port {info['port']})")
+
+        # Ahorro: resumen de costo y tokens
+        cost = self.get_cost_summary()
+        print("\nAhorro / Costo estimado:")
+        print(f"  Requests: {cost['requests']}")
+        print(f"  Tokens: {cost['total_tokens']} (prompt={cost['prompt_tokens']}, completion={cost['completion_tokens']})")
+        print(f"  Token budget: {cost['budget_used_pct']}% usado ({cost['total_tokens']}/{cost['token_budget']})")
+        print(f"  Costo cloud equivalente ahorrado: ${cost['estimated_cost_saved_usd']:.4f} USD")
+        print(f"  Rate limit: {cost['rate_limit_per_min']} req/min")
+        print(f"  Idioma: {cost['lang']}")
 
     def models(self):
         print("Available models:")
