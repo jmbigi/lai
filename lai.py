@@ -23,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -1673,7 +1673,7 @@ class LAI:
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temp,
-            "stream": False,
+            "stream": stream,
             "top_p": 0.95 if thinking else 0.8,
             "top_k": 20,
             "min_p": 0.0,
@@ -1683,6 +1683,9 @@ class LAI:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
             payload["parallel_tool_calls"] = False
+
+        if stream:
+            return self._chat_messages_stream(payload)
 
         try:
             with httpx.Client(timeout=300) as client:
@@ -1704,6 +1707,42 @@ class LAI:
             }
         except Exception as exc:
             return {"content": "", "tool_calls": [], "error": str(exc)}
+
+    def _chat_messages_stream(self, payload: Dict) -> Generator[Dict, None, None]:
+        """Stream chat messages with native tool calls support.
+
+        Yields dict chunks with keys: content, tool_calls, finish_reason, usage
+        """
+        try:
+            with httpx.Client(timeout=300) as client, \
+                 client.stream("POST", f"{self.base_url}/chat/completions", json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                        if not line:
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                yield {"finish_reason": "stop", "content": "", "tool_calls": []}
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content")
+                            tool_calls = delta.get("tool_calls")
+                            finish_reason = choices[0].get("finish_reason")
+                            yield {
+                                "content": content or "",
+                                "tool_calls": tool_calls or [],
+                                "finish_reason": finish_reason,
+                            }
+        except Exception as exc:
+            yield {"content": "", "tool_calls": [], "error": str(exc)}
 
     def think(self, problem: str) -> str:
         return self.chat(problem, thinking=True)
@@ -2100,64 +2139,135 @@ Output ONLY the complete Python code for file: {filename}"""
                 if not isinstance(messages, list) or not messages:
                     self._json(400, {'error': 'messages is required'})
                     return
-                prompt = "\n\n".join(
-                    str(m.get('content', ''))
-                    for m in messages
-                    if isinstance(m, dict) and m.get('role') != 'system'
-                )
-                if not prompt.strip():
-                    self._json(400, {'error': 'empty prompt'})
-                    return
 
-                old_history = lai.conversation_history
-                lai.conversation_history = []
-                try:
-                    content = lai.chat(
-                        prompt, stream=False, thinking=False,
-                        temp=float(body.get('temperature', 0.7)),
-                        max_tokens=int(body.get('max_tokens', 2048)),
-                    )
-                finally:
-                    lai.conversation_history = old_history
-
-                if content.startswith('Error:'):
-                    self._json(502, {'error': content})
-                    return
+                tools = body.get('tools')
+                tool_choice = body.get('tool_choice', 'auto')
+                stream = body.get('stream', False)
+                temperature = float(body.get('temperature', 0.7))
+                max_tokens = int(body.get('max_tokens', 2048))
+                model = body.get('model', lai.model)
 
                 completion_id = f"chatcmpl-{uuid.uuid4().hex}"
                 created = int(time.time())
-                if body.get('stream'):
-                    chunk = {
-                        'id': completion_id, 'object': 'chat.completion.chunk',
-                        'created': created, 'model': lai.model,
-                        'choices': [{
-                            'index': 0,
-                            'delta': {'role': 'assistant', 'content': content},
-                            'finish_reason': None,
-                        }],
-                    }
+
+                if stream:
+                    # Streaming response with tool calls support
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/event-stream')
                     self.send_header('Cache-Control', 'no-cache')
+                    self.send_header('Connection', 'keep-alive')
                     self.end_headers()
-                    self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode('utf-8'))
-                    self.wfile.write(b"data: [DONE]\n\n")
+
+                    try:
+                        for chunk_data in lai.chat_messages(
+                            messages=messages,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            stream=True,
+                            thinking=False,
+                            temp=temperature,
+                            max_tokens=max_tokens,
+                        ):
+                            if isinstance(chunk_data, dict) and chunk_data.get("error"):
+                                error_chunk = {
+                                    'id': completion_id,
+                                    'object': 'chat.completion.chunk',
+                                    'created': created,
+                                    'model': model,
+                                    'choices': [{
+                                        'index': 0,
+                                        'delta': {},
+                                        'finish_reason': 'error',
+                                    }],
+                                }
+                                self.wfile.write(f"data: {json.dumps(error_chunk)}\n\n".encode('utf-8'))
+                                break
+
+                            content = chunk_data.get("content", "")
+                            tool_calls = chunk_data.get("tool_calls", [])
+                            finish_reason = chunk_data.get("finish_reason")
+
+                            delta = {}
+                            if content:
+                                delta["content"] = content
+                            if tool_calls:
+                                delta["tool_calls"] = tool_calls
+
+                            chunk = {
+                                'id': completion_id,
+                                'object': 'chat.completion.chunk',
+                                'created': created,
+                                'model': model,
+                                'choices': [{
+                                    'index': 0,
+                                    'delta': delta,
+                                    'finish_reason': finish_reason,
+                                }],
+                            }
+                            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode('utf-8'))
+                            self.wfile.flush()
+
+                            if finish_reason:
+                                break
+                    except Exception:
+                        error_chunk = {
+                            'id': completion_id,
+                            'object': 'chat.completion.chunk',
+                            'created': created,
+                            'model': model,
+                            'choices': [{
+                                'index': 0,
+                                'delta': {},
+                                'finish_reason': 'error',
+                            }],
+                        }
+                        self.wfile.write(f"data: {json.dumps(error_chunk)}\n\n".encode('utf-8'))
+                    finally:
+                        self.wfile.write(b"data: [DONE]\n\n")
                     return
+
+                # Non-streaming response with tool calls support
+                try:
+                    result = lai.chat_messages(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        stream=False,
+                        thinking=False,
+                        temp=temperature,
+                        max_tokens=max_tokens,
+                    )
+                except Exception as exc:
+                    self._json(502, {'error': str(exc)})
+                    return
+
+                if isinstance(result, dict) and result.get("error"):
+                    self._json(502, {'error': result["error"]})
+                    return
+
+                content = result.get("content", "")
+                tool_calls = result.get("tool_calls", [])
+                finish_reason = result.get("finish_reason", "stop")
+                usage = result.get("usage", {})
+
+                message = {"role": "assistant", "content": content}
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
 
                 self._json(200, {
                     'id': completion_id,
                     'object': 'chat.completion',
                     'created': created,
-                    'model': lai.model,
+                    'model': model,
                     'choices': [{
                         'index': 0,
-                        'message': {'role': 'assistant', 'content': content},
-                        'finish_reason': 'stop',
+                        'message': message,
+                        'finish_reason': finish_reason,
                     }],
-                    'usage': {
-                        'prompt_tokens': len(prompt) // 4,
-                        'completion_tokens': len(content) // 4,
-                        'total_tokens': (len(prompt) + len(content)) // 4,
+                    'usage': usage or {
+                        'prompt_tokens': 0,
+                        'completion_tokens': 0,
+                        'total_tokens': 0,
                     },
                 })
 
