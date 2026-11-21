@@ -2788,9 +2788,196 @@ def version_cmd():
     """Show lai version."""
     print(f"lai {get_version()}")
 
+def completion_cmd(args):
+    """Generate shell completion script."""
+    shell = getattr(args, 'shell', 'bash')
+    print(_generate_completion(shell))
+
 # ============================================================================
 # MAIN CLI
 # ============================================================================
+
+def _generate_completion(shell: str) -> str:
+    """Generate shell completion script for lai."""
+    if shell == "bash":
+        return '''# lai bash completion
+_lai_complete() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    local commands="chat generate code think auto run serve status models tools search find fix repair review diff test init project config install update exec doctor clean version"
+    local global_opts="-m --model -u --base-url -t --temp --max-tokens --stream --no-stream --thinking --no-thinking --tools --no-tools --auto --yolo -v --verbose -q --quiet --help"
+    
+    case "${prev}" in
+        lai)
+            COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        -m|--model)
+            COMPREPLY=( $(compgen -W "qwen3-8b qwen3:8b phi-3.5-mini" -- ${cur}) )
+            return 0
+            ;;
+        -u|--base-url)
+            COMPREPLY=( $(compgen -W "http://localhost:8080/v1 http://localhost:8081/v1 http://localhost:11434/v1" -- ${cur}) )
+            return 0
+            ;;
+        --max-tokens|-t|--temp)
+            return 0
+            ;;
+        chat|generate)
+            COMPREPLY=( $(compgen -W "${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        auto)
+            COMPREPLY=( $(compgen -W "--max-iterations --max-turns --no-cost ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        serve)
+            COMPREPLY=( $(compgen -W "--host --port ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        review)
+            COMPREPLY=( $(compgen -W "--focus --format ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        code)
+            COMPREPLY=( $(compgen -W "--auto --yolo --max-iterations ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        fix|repair)
+            COMPREPLY=( $(compgen -W "--type ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        search|find)
+            COMPREPLY=( $(compgen -W "--type -i --ignore-case -r --recursive --max-depth ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        config)
+            COMPREPLY=( $(compgen -W "get set list edit --global ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        install|update)
+            COMPREPLY=( $(compgen -W "--dev --dry-run --all --requirements --packages ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+        *)
+            COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- ${cur}) )
+            return 0
+            ;;
+    esac
+}
+complete -F _lai_complete lai
+'''
+    elif shell == "zsh":
+        return '''# lai zsh completion
+#compdef lai
+_lai() {
+    local -a commands
+    local -a global_opts
+    commands=(
+        'chat:Chat with AI'
+        'generate:Generate text'
+        'code:Generate code'
+        'think:Thinking mode'
+        'auto:Auto mode'
+        'run:Run script'
+        'serve:Start API server'
+        'status:Check status'
+        'models:List models'
+        'tools:List tools'
+        'search:Search code/files'
+        'find:Find files'
+        'fix:Fix code issues'
+        'repair:Alias for fix'
+        'review:Code review'
+        'diff:Show diff'
+        'test:Run tests'
+        'init:Initialize project'
+        'project:Generate complete project'
+        'config:Manage configuration'
+        'install:Install dependencies'
+        'update:Update dependencies'
+        'exec:Execute command in project context'
+        'doctor:Diagnose environment'
+        'clean:Clean build artifacts'
+        'version:Show version'
+    )
+    global_opts=(
+        '-m[Model to use]:model:(qwen3-8b qwen3:8b phi-3.5-mini)'
+        '-u[Base URL for API]:url:(http://localhost:8080/v1 http://localhost:8081/v1 http://localhost:11434/v1)'
+        '-t[Temperature]:float:'
+        '--max-tokens[Max tokens]:int:'
+        '--stream[Stream output]'
+        '--no-stream[Disable streaming]'
+        '--thinking[Enable thinking mode]'
+        '--no-thinking[Disable thinking mode]'
+        '--tools[Enable tools]'
+        '--no-tools[Disable tools]'
+        '--auto[Auto mode]'
+        '--yolo[YOLO mode]'
+        '-v[Verbose output]'
+        '-q[Quiet mode]'
+        '--help[Show help]'
+    )
+    _arguments -C \
+        "${global_opts[@]}" \
+        '1: :($commands)' \
+        '*::arg:->subcmds' && return 0
+    
+    if (( CURRENT == 1 )); then
+        compadd -a commands
+        return
+    fi
+    
+    case "${words[1]}" in
+        chat|generate)
+            _arguments "${global_opts[@]}" ;;
+        auto)
+            _arguments "${global_opts[@]}" \
+                '--max-iterations[Max iterations]:int:' \
+                '--max-turns[Max tool turns]:int:' \
+                '--no-cost[Disable cost tracking]' ;;
+        serve)
+            _arguments "${global_opts[@]}" \
+                '--host[Bind address]:string:' \
+                '--port[Port]:int:' ;;
+        review)
+            _arguments "${global_opts[@]}" \
+                '--focus[Focus area]:string:' \
+                '--format[Output format]:string:(text json markdown sarif)' ;;
+        code)
+            _arguments "${global_opts[@]}" \
+                '--auto' '--yolo' \
+                '--max-iterations[Max iterations]:int:' ;;
+        fix|repair)
+            _arguments "${global_opts[@]}" \
+                '--type[Type of fix]:string:(lint format imports types all)' ;;
+        search|find)
+            _arguments "${global_opts[@]}" \
+                '--type[File type]:string:' \
+                '(-i --ignore-case)'{-i,--ignore-case}'[Case insensitive]' \
+                '(-r --recursive)'{-r,--recursive}'[Recursive]' \
+                '--max-depth[Max depth]:int:' ;;
+        config)
+            _arguments "${global_opts[@]}" \
+                '1:action:(get set list edit)' \
+                '--global[Global config]' ;;
+        install|update)
+            _arguments "${global_opts[@]}" \
+                '--dev[Install dev dependencies]' \
+                '--dry-run[Dry run]' \
+                '--all[All packages]' \
+                '--requirements[From requirements.txt]' \
+                '--packages[Packages to install]:string:' ;;
+    esac
+}
+compdef _lai lai
+'''
+    else:
+        return f"Unsupported shell: {shell}"
+
 
 def cli():
     parser = argparse.ArgumentParser(
@@ -2898,6 +3085,11 @@ Examples:
     # Version
     version_parser = subparsers.add_parser('version', help='Show version')
     version_parser.set_defaults(func=lambda _: version_cmd())
+    
+    # Completion
+    completion_parser = subparsers.add_parser('completion', help='Generate shell completion script')
+    completion_parser.add_argument('shell', choices=['bash', 'zsh'], default='bash', nargs='?', help='Shell type (bash|zsh)')
+    completion_parser.set_defaults(func=lambda a: completion_cmd(a))
     
     # Search
     search_parser = subparsers.add_parser('search', help='Search code/files')
