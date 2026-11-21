@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import select
 import subprocess
 import sys
 import tempfile
@@ -705,6 +706,189 @@ class ToolRegistry:
         except Exception as e:
             return f"Error finding unused code: {str(e)}"
 
+    def _lsp_request(self, method: str, params: Dict, timeout: int = 30) -> Dict:
+        """Send an LSP request to python-lsp-server and return the response."""
+        try:
+            import subprocess
+            import json
+
+            # Start pylsp server
+            proc = subprocess.Popen(
+                ['python', '-m', 'pylsp'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # Initialize
+            init_params = {
+                "processId": None,
+                "rootUri": None,
+                "capabilities": {},
+                "workspaceSettings": {}
+            }
+            self._lsp_send(proc, "initialize", init_params)
+            init_response = self._lsp_receive(proc)
+            if init_response.get("error"):
+                proc.kill()
+                return {"error": f"LSP init failed: {init_response['error']}"}
+
+            # Initialized notification
+            self._lsp_send_notification(proc, "initialized", {})
+
+            # Send the actual request
+            response = self._lsp_send_and_receive(proc, method, params, timeout)
+
+            # Shutdown
+            self._lsp_send_and_receive(proc, "shutdown", {}, timeout)
+            proc.kill()
+
+            return response
+        except FileNotFoundError:
+            return {"error": "pylsp not installed. Install with: pip install python-lsp-server"}
+        except Exception as e:
+            return {"error": f"LSP error: {str(e)}"}
+
+    def _lsp_send(self, proc, method: str, params: Dict, request_id: int = 1):
+        """Send an LSP request message."""
+        message = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        }
+        content = json.dumps(message)
+        header = f"Content-Length: {len(content.encode('utf-8'))}\r\n\r\n"
+        proc.stdin.write(header + content)
+        proc.stdin.flush()
+
+    def _lsp_send_notification(self, proc, method: str, params: Dict):
+        """Send an LSP notification (no response expected)."""
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        }
+        content = json.dumps(message)
+        header = f"Content-Length: {len(content.encode('utf-8'))}\r\n\r\n"
+        proc.stdin.write(header + content)
+        proc.stdin.flush()
+
+    def _lsp_receive(self, proc) -> Dict:
+        """Receive an LSP response message."""
+        import json
+        # Read Content-Length header
+        header_line = proc.stdout.readline()
+        if not header_line:
+            return {"error": "No response from LSP server"}
+
+        content_length = 0
+        while header_line.strip():
+            if header_line.lower().startswith("content-length:"):
+                content_length = int(header_line.split(":")[1].strip())
+            header_line = proc.stdout.readline()
+
+        # Skip empty line
+        proc.stdout.readline()
+
+        # Read content
+        content = proc.stdout.read(content_length).decode('utf-8')
+        return json.loads(content)
+
+    def _lsp_send_and_receive(self, proc, method: str, params: Dict, timeout: int = 30) -> Dict:
+        """Send a request and wait for response."""
+        import json
+        import select
+
+        request_id = 2
+        self._lsp_send(proc, method, params, request_id)
+
+        # Wait for response with timeout
+        proc.stdout.flush()
+        ready, _, _ = select.select([proc.stdout], [], [], timeout)
+        if not ready:
+            proc.kill()
+            return {"error": "LSP request timeout"}
+
+        return self._lsp_receive(proc)
+
+    def lsp_hover(self, path: str, line: int, column: int) -> str:
+        """Get LSP hover info for a symbol at a position."""
+        params = {
+            "textDocument": {"uri": f"file://{path}"},
+            "position": {"line": line, "character": column}
+        }
+        result = self._lsp_request("textDocument/hover", params)
+        if "error" in result:
+            return f"LSP error: {result['error']}"
+        contents = result.get("result", {}).get("contents", {})
+        if isinstance(contents, dict):
+            return contents.get("value", str(contents))
+        return str(contents)
+
+    def lsp_go_to_definition(self, path: str, line: int, column: int) -> str:
+        """Go to definition of a symbol at a position."""
+        params = {
+            "textDocument": {"uri": f"file://{path}"},
+            "position": {"line": line, "character": column}
+        }
+        result = self._lsp_request("textDocument/definition", params)
+        if "error" in result:
+            return f"LSP error: {result['error']}"
+        locations = result.get("result", [])
+        if not locations:
+            return "No definition found"
+        output = []
+        for loc in locations:
+            uri = loc.get("uri", "")
+            rng = loc.get("range", {})
+            start = rng.get("start", {})
+            output.append(f"{uri}:{start.get('line', 0)+1}:{start.get('character', 0)+1}")
+        return "\n".join(output)
+
+    def lsp_find_references(self, path: str, line: int, column: int) -> str:
+        """Find references to a symbol at a position."""
+        params = {
+            "textDocument": {"uri": f"file://{path}"},
+            "position": {"line": line, "character": column},
+            "context": {"includeDeclaration": False}
+        }
+        result = self._lsp_request("textDocument/references", params)
+        if "error" in result:
+            return f"LSP error: {result['error']}"
+        locations = result.get("result", [])
+        if not locations:
+            return "No references found"
+        output = []
+        for loc in locations:
+            uri = loc.get("uri", "")
+            rng = loc.get("range", {})
+            start = rng.get("start", {})
+            output.append(f"{uri}:{start.get('line', 0)+1}:{start.get('character', 0)+1}")
+        return "\n".join(output)
+
+    def lsp_diagnostics(self, path: str) -> str:
+        """Get LSP diagnostics for a file."""
+        params = {
+            "textDocument": {"uri": f"file://{path}"}
+        }
+        result = self._lsp_request("textDocument/diagnostic", params)
+        if "error" in result:
+            return f"LSP error: {result['error']}"
+        items = result.get("items", [])
+        if not items:
+            return "No diagnostics found"
+        output = []
+        for item in items:
+            rng = item.get("range", {})
+            start = rng.get("start", {})
+            end = rng.get("end", {})
+            severity = item.get("severity", 1)
+            severity_map = {1: "Error", 2: "Warning", 3: "Information", 4: "Hint"}
+            output.append(f"{path}:{start.get('line', 0)+1}:{start.get('character', 0)+1}-{end.get('line', 0)+1}:{end.get('character', 0)+1} [{severity_map.get(severity, 'Unknown')}] {item.get('message', '')}")
+        return "\n".join(output)
+
     def find_todos(self, path: str) -> str:
         """Find TODO/FIXME comments in code."""
         try:
@@ -1253,6 +1437,14 @@ class ToolRegistry:
             fn("find_todos", "Find TODO/FIXME comments", {"path": {"type": "string"}}, ["path"]),
             fn("check_security", "Run bandit", {"path": {"type": "string"}}, ["path"]),
             fn("analyze_complexity", "Run radon complexity analysis",
+               {"path": {"type": "string"}}, ["path"]),
+            fn("lsp_hover", "Get LSP hover info for a symbol at a position",
+               {"path": {"type": "string"}, "line": {"type": "integer"}, "column": {"type": "integer"}}, ["path", "line", "column"]),
+            fn("lsp_go_to_definition", "Go to definition of a symbol at a position",
+               {"path": {"type": "string"}, "line": {"type": "integer"}, "column": {"type": "integer"}}, ["path", "line", "column"]),
+            fn("lsp_find_references", "Find references to a symbol at a position",
+               {"path": {"type": "string"}, "line": {"type": "integer"}, "column": {"type": "integer"}}, ["path", "line", "column"]),
+            fn("lsp_diagnostics", "Get LSP diagnostics for a file",
                {"path": {"type": "string"}}, ["path"]),
         ]
 

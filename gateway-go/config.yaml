@@ -118,6 +118,16 @@ rate_limit:
   enabled: true
   requests_per_minute: 1000
 
+mtls:
+  enabled: false
+  # CA certificate for verifying client certificates
+  ca_cert: ""
+  # Server certificate and key (for TLS)
+  server_cert: ""
+  server_key: ""
+  # Require client certificate for all connections
+  require_client_cert: false
+
 semantic_cache:
   enabled: true
   model: "sentence-transformers/all-MiniLM-L6-v2"

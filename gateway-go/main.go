@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -46,6 +48,7 @@ type Config struct {
 	CircuitBreaker    CircuitBreakerConfig    `yaml:"circuit_breaker"`
 	Auth              AuthConfig              `yaml:"auth"`
 	RateLimit         RateLimitConfig         `yaml:"rate_limit"`
+	MTLS              MTLSConfig              `yaml:"mtls"`
 }
 
 type ServerConfig struct {
@@ -134,6 +137,14 @@ type RateLimitAuthConfig struct {
 type RateLimitConfig struct {
 	Enabled           bool `yaml:"enabled"`
 	RequestsPerMinute int  `yaml:"requests_per_minute"`
+}
+
+type MTLSConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	CaCert            string `yaml:"ca_cert"`
+	ServerCert        string `yaml:"server_cert"`
+	ServerKey         string `yaml:"server_key"`
+	RequireClientCert bool   `yaml:"require_client_cert"`
 }
 
 type clientInfo struct {
@@ -1915,8 +1926,49 @@ func main() {
 		MaxHeaderBytes: 1 << 20,
 	}
 
+	// Configure TLS if mTLS is enabled
+	if config.MTLS.Enabled {
+		if config.MTLS.ServerCert == "" || config.MTLS.ServerKey == "" {
+			log.Fatal("mTLS enabled but server_cert and/or server_key not configured")
+		}
+		cert, err := tls.LoadX509KeyPair(config.MTLS.ServerCert, config.MTLS.ServerKey)
+		if err != nil {
+			log.Fatalf("Failed to load server certificate: %v", err)
+		}
+
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+
+		if config.MTLS.RequireClientCert {
+			if config.MTLS.CaCert == "" {
+				log.Fatal("mTLS require_client_cert enabled but ca_cert not configured")
+			}
+			caCert, err := os.ReadFile(config.MTLS.CaCert)
+			if err != nil {
+				log.Fatalf("Failed to read CA certificate: %v", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				log.Fatal("Failed to parse CA certificate")
+			}
+			tlsConfig.ClientCAs = caCertPool
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+
+		srv.TLSConfig = tlsConfig
+		log.Printf("mTLS enabled (require_client_cert: %v)", config.MTLS.RequireClientCert)
+	}
+
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if config.MTLS.Enabled {
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
