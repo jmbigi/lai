@@ -165,7 +165,6 @@ class ToolRegistry:
         try:
             matches = []
             if os.path.isfile(path):
-                # Single file
                 filepath = path
                 try:
                     with open(filepath, 'r') as f:
@@ -175,7 +174,6 @@ class ToolRegistry:
                 except:
                     pass
             else:
-                # Directory
                 for root, dirs, files in os.walk(path):
                     for file in files:
                         filepath = os.path.join(root, file)
@@ -579,12 +577,62 @@ class AutoMode:
             
             # Build prompt with available tools
             tools_list = ", ".join(self.tools.tools.keys())
-            # Very short prompt to force JSON-only output - select tool based on goal
             goal_lower = self.goal.lower()
             
             # Heuristic: choose tool based on goal keywords
-            # Check for "search" first (before "create" which might match "search for")
-            if "search" in goal_lower or "grep" in goal_lower:
+            # Check for "create/write/make/generate" first (before "list" which might match "list methods")
+            if "create" in goal_lower or "write" in goal_lower or "make" in goal_lower or "generate" in goal_lower:
+                if ".py" in goal_lower or "python" in goal_lower or "code" in goal_lower or "function" in goal_lower or "class" in goal_lower:
+                    tool_name = "write_file"
+                    # Extract filename from goal
+                    import re
+                    fname_match = re.search(r'(\w+\.py)', goal_lower)
+                    filename = fname_match.group(1) if fname_match else "output.py"
+                    # Generate code using LLM (separate call, not in JSON)
+                    # Clear conversation history to avoid confusing the model with previous context
+                    self.lai.conversation_history.clear()
+                    code_prompt = f"""Generate ONLY valid Python code for: {self.goal}
+
+Requirements:
+- Valid Python 3, executable COMPLETE SCRIPT
+- Professional structure with functions/classes
+- MUST include a main() function
+- MUST include if __name__ == "__main__": block to run the program
+- Error handling (try/except)
+- Type hints where appropriate
+- Docstrings in main functions/classes
+- Clean, readable, PEP 8 compliant
+- No markdown, no explanations, ONLY code
+- Imports at top
+- No test code, only the requested program
+- ASCII ONLY: straight quotes and NO curly quotes
+- NO special Unicode characters
+
+Output ONLY the complete Python code for {filename}:"""
+                    generated_code = self.lai.chat(code_prompt, stream=False, thinking=False, temp=0.0, max_tokens=2048)
+                    # Clean up any markdown (chat method should have stripped, but just in case)
+                    if generated_code.startswith("```python"):
+                        generated_code = generated_code[9:]
+                    elif generated_code.startswith("```"):
+                        generated_code = generated_code[3:]
+                    if generated_code.endswith("```"):
+                        generated_code = generated_code[:-3]
+                    generated_code = generated_code.strip()
+                    # Validate syntax before writing
+                    try:
+                        compile(generated_code, filename, 'exec')
+                    except SyntaxError as e:
+                        generated_code = f"# Generated: {self.goal}\n# Syntax error: {e}\nprint('Error: Invalid code generated')"
+                    # Write the file directly, bypass JSON tool call
+                    self.tools.write_file(filename, generated_code)
+                    results.append(f"✅ Generated and saved {filename}")
+                    self.history.append(f"Iteration {self.iteration}: Created {filename} with LLM-generated code")
+                    # Skip to next iteration
+                    continue
+                else:
+                    tool_name = "list_dir"
+                    tool_args = {"path": "."}
+            elif "search" in goal_lower or "grep" in goal_lower:
                 tool_name = "grep"
                 # Extract search pattern
                 import re
@@ -600,17 +648,6 @@ class AutoMode:
             elif "list" in goal_lower or "files" in goal_lower or "directory" in goal_lower:
                 tool_name = "list_dir"
                 tool_args = {"path": "."}
-            elif "create" in goal_lower or "write" in goal_lower or "make" in goal_lower or "generate" in goal_lower:
-                if ".py" in goal_lower or "python" in goal_lower:
-                    tool_name = "write_file"
-                    # Extract filename from goal
-                    import re
-                    fname_match = re.search(r'(\w+\.py)', goal_lower)
-                    filename = fname_match.group(1) if fname_match else "output.py"
-                    tool_args = {"path": filename, "content": f"# {self.goal}\nprint('Hello, World!')\n"}
-                else:
-                    tool_name = "list_dir"
-                    tool_args = {"path": "."}
             elif "run" in goal_lower or "execute" in goal_lower:
                 tool_name = "run_command"
                 tool_args = {"cmd": "ls -la"}
@@ -620,50 +657,63 @@ class AutoMode:
             
             prompt = f"/no_think Output ONLY this JSON: {{\"tool\": \"{tool_name}\", \"args\": {json.dumps(tool_args)}, \"reasoning\": \"{self.goal[:50]}\"}}" if self.iteration == 1 else f"/no_think Output ONLY: {{\"done\": true, \"result\": \"{self.goal[:80]}\"}}"
 
-            response = self.lai.chat(prompt, stream=False, thinking=False, temp=0.0, max_tokens=200)
+            response = self.lai.chat(prompt, stream=False, thinking=False, temp=0.0, max_tokens=500)
             
-            # Extract JSON from response
+            # Extract JSON from response - find the last complete JSON object
             import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                response = json_match.group(0)
+            json_candidates = re.findall(r'\{.*?\}(?=\s*$|\s*\{)', response, re.DOTALL)
+            if not json_candidates:
+                # Fallback: find any JSON-like object
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    json_candidates = [json_match.group(0)]
             
-            # Try to parse JSON response
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
+            action = None
+            for candidate in reversed(json_candidates):
                 try:
-                    action = json.loads(json_match.group(0))
-                    
-                    if action.get("done"):
-                        results.append(f"✓ Task completed!")
-                        results.append(f"Result: {action.get('result', 'Done')}")
-                        self.history.append(f"Iteration {self.iteration}: Completed - {action.get('result', 'Done')}")
-                        break
-                    
-                    tool_name = action.get("tool")
-                    args = action.get("args", {})
-                    reasoning = action.get("reasoning", "")
-                    
-                    if tool_name and tool_name in self.tools.tools:
-                        results.append(f"🔧 Executing: {tool_name} with args: {args}")
-                        results.append(f"   Reasoning: {reasoning}")
-                        
-                        tool_func = self.tools.tools[tool_name]
-                        try:
-                            tool_result = tool_func(**args)
-                            results.append(f"   Result: {str(tool_result)[:500]}")
-                            self.history.append(f"Iteration {self.iteration}: {tool_name}({args}) -> {str(tool_result)[:200]}")
-                        except Exception as e:
-                            results.append(f"   Error: {e}")
-                            self.history.append(f"Iteration {self.iteration}: {tool_name}({args}) -> ERROR: {e}")
-                    else:
-                        results.append(f"⚠ Unknown tool: {tool_name}")
-                        self.history.append(f"Iteration {self.iteration}: Unknown tool {tool_name}")
+                    action = json.loads(candidate)
+                    break
                 except json.JSONDecodeError:
-                    results.append(f"⚠ Could not parse response as JSON")
-                    results.append(f"Raw response: {response[:300]}")
-                    self.history.append(f"Iteration {self.iteration}: Failed to parse response")
+                    continue
+            
+            if action is None:
+                # Try to fix common JSON issues (unescaped newlines in strings)
+                for candidate in reversed(json_candidates):
+                    try:
+                        # Fix unescaped newlines in JSON strings
+                        fixed = re.sub(r'(?<!\\)\n', '\\n', candidate)
+                        action = json.loads(fixed)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            
+            if action:
+                
+                if action.get("done"):
+                    results.append(f"✓ Task completed!")
+                    results.append(f"Result: {action.get('result', 'Done')}")
+                    self.history.append(f"Iteration {self.iteration}: Completed - {action.get('result', 'Done')}")
+                    break
+                
+                tool_name = action.get("tool")
+                args = action.get("args", {})
+                reasoning = action.get("reasoning", "")
+                
+                if tool_name and tool_name in self.tools.tools:
+                    results.append(f"🔧 Executing: {tool_name} with args: {args}")
+                    results.append(f"   Reasoning: {reasoning}")
+                    
+                    tool_func = self.tools.tools[tool_name]
+                    try:
+                        tool_result = tool_func(**args)
+                        results.append(f"   Result: {str(tool_result)[:500]}")
+                        self.history.append(f"Iteration {self.iteration}: {tool_name}({args}) -> {str(tool_result)[:200]}")
+                    except Exception as e:
+                        results.append(f"   Error: {e}")
+                        self.history.append(f"Iteration {self.iteration}: {tool_name}({args}) -> ERROR: {e}")
+                else:
+                    results.append(f"⚠ Unknown tool: {tool_name}")
+                    self.history.append(f"Iteration {self.iteration}: Unknown tool {tool_name}")
             else:
                 results.append(f"⚠ No valid JSON in response")
                 results.append(f"Raw response: {response[:300]}")
@@ -725,10 +775,10 @@ class LAI:
                                     pass
                         print()
                         return "".join(content_buffer)
-                # Non-streaming case
-                resp = await client.post(f"{self.base_url}/chat/completions", json=payload, timeout=120)
-                data = resp.json()
-                return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                else:
+                    resp = await client.post(f"{self.base_url}/chat/completions", json=payload, timeout=120)
+                    data = resp.json()
+                    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
         except Exception as e:
             return f"Error: {e}"
 
@@ -823,17 +873,21 @@ class LAI:
                     response = self.thinking_manager.format_thinking_for_display(thinking_content, clean_content)
             elif not thinking:
                 # When thinking is disabled, ensure we don't have thinking artifacts
-                # The model might still output <think>...</think>, <thinking>...</thinking>, "questions...回答" format, or "questions...</thinking>"
+                # The model might still output <thinking>...</thinking>, "questions...回答" format, or "questions...</thinking>"
                 
                 import re
-                
-                # Handle <think>...</think> format (Qwen3 uses this shorter form)
-                if "<think>" in response and "</think>" in response:
-                    response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
                 
                 # Handle <thinking>...</thinking> format
                 if "<thinking>" in response and "</thinking>" in response:
                     response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL).strip()
+                
+                # Handle "question...回答" format (model outputs "question" as prefix)
+                if "question" in response.lower() and "回答" in response:
+                    response = re.sub(r"question.*?回答", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
+                
+                # Handle "thinking...回答" format (some models)
+                if "thinking" in response.lower() and "回答" in response:
+                    response = re.sub(r"thinking.*?回答", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
                 
                 # Handle "questions...回答" format (DeepSeek style)
                 if "回答" in response:
@@ -845,14 +899,29 @@ class LAI:
                 if "questions" in response.lower() and "</thinking>" in response:
                     response = re.sub(r"questions\s*(.*?)\s*</thinking>", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
                 
-                # Also strip markdown code fences if present
-                if response.startswith("```python"):
-                    response = response[9:]
-                elif response.startswith("```"):
-                    response = response[3:]
-                if response.endswith("```"):
-                    response = response[:-3]
+                # Also strip markdown code fences if present (handle cases with leading text)
                 response = response.strip()
+                # Extract code from markdown fences if present
+                if "```python" in response:
+                    # Extract content between ```python and ```
+                    match = re.search(r'```python\n(.*?)\n```', response, re.DOTALL)
+                    if match:
+                        response = match.group(1).strip()
+                elif "```" in response:
+                    # Extract content between ``` and ```
+                    match = re.search(r'```\n(.*?)\n```', response, re.DOTALL)
+                    if match:
+                        response = match.group(1).strip()
+                else:
+                    # Fallback: strip leading ```python or ``` if at start
+                    response = response.strip()
+                    if response.startswith("```python"):
+                        response = response[9:]
+                    elif response.startswith("```"):
+                        response = response[3:]
+                    if response.endswith("```"):
+                        response = response[:-3]
+                    response = response.strip()
             
             return response
         except Exception as e:
@@ -867,22 +936,51 @@ class LAI:
 
     def code(self, description: str, filename: str, auto: bool = False, yolo: bool = False):
         """Generate high-quality code using the local LLM."""
-        prompt = f"""Generate ONLY valid Python code for: {description}
+        base_prompt = """Generate ONLY valid Python code, no explanations, no markdown.
 
-Requirements:
-- Valid Python 3, executable
+Description: {description}
+
+CRITICAL REQUIREMENTS:
+- Valid Python 3 code, executable
 - Professional structure with functions/classes
 - Error handling (try/except)
 - Type hints where appropriate
 - Docstrings in main functions/classes
-- Clean, readable, PEP 8 compliant
-- No markdown, no explanations, ONLY code
-- Imports at top
-- No test code
-- ASCII ONLY: straight quotes ' and ", NO curly quotes
-- NO special Unicode characters
+- Clean, readable code following PEP 8
+- No markdown, no explanations, only valid Python code
+- Imports at the top
+- No test code, only the requested code
+- USE ONLY ASCII CHARACTERS: straight quotes ' and ", NO curly quotes " " ' '
+- NO special Unicode characters (—, –, •, etc.)
 
-Output ONLY the complete Python code for {filename}:"""
+Expected structure example:
+```python
+import sys
+import os
+from typing import List, Optional
+
+class MyClass:
+    def __init__(self):
+        pass
+    
+    def my_method(self) -> str:
+        return "Hello"
+
+def main():
+    obj = MyClass()
+    print(obj.my_method())
+
+if __name__ == "__main__":
+    main()
+```"""
+
+        prompt = f"""{base_prompt}
+
+Task: {description}
+
+Generate ONLY the complete Python code for file: {filename}
+
+IMPORTANT: Use straight quotes (') or ("), NO curly quotes. Use pure ASCII."""
 
         try:
             response = self.chat(prompt, stream=False, thinking=False, temp=0.0, max_tokens=4096)
@@ -891,8 +989,6 @@ Output ONLY the complete Python code for {filename}:"""
             # Clean up any markdown fences if the model added them
             if code.startswith("```python"):
                 code = code[9:]
-            elif code.startswith("```"):
-                code = code[3:]
             if code.endswith("```"):
                 code = code[:-3]
             code = code.strip()
@@ -1015,7 +1111,7 @@ def code_cmd(lai: LAI, args):
 
 def auto_cmd(lai: LAI, args):
     print(f"Auto mode: {args.goal}")
-    result = lai.auto_mode_run(args.goal)
+    result = lai.auto_mode_run(args.goal, max_iterations=args.max_iterations)
     print(result)
 
 def run_cmd(lai: LAI, args):
@@ -1101,6 +1197,179 @@ def init_cmd(lai: LAI, args):
     if args.git:
         subprocess.run(['git', 'init'], cwd=args.path)
     print(f"Initialized {args.type} project: {args.name} at {args.path}")
+
+
+def project_cmd(lai: LAI, args):
+    """Generate a complete project from a natural language description."""
+    description = " ".join(args.description) if args.description else ""
+    if not description:
+        print("Error: No project description provided")
+        return
+    
+    path = args.path or "."
+    os.makedirs(path, exist_ok=True)
+    
+    print(f"🎯 Analyzing project description...")
+    print(f"📁 Target path: {os.path.abspath(path)}")
+    
+    # Step 1: Analyze the description and create a project plan
+    plan_prompt = f"""Analyze this project description and create a detailed project plan.
+
+Description: {description}
+
+Output ONLY a JSON object with this structure:
+{{
+    "project_type": "fastapi|django|flask|react|vue|svelte|cli|lib|python",
+    "name": "short-project-name",
+    "description": "brief description",
+    "tech_stack": {{"language": "python", "framework": "fastapi", "database": "postgresql", "orm": "sqlalchemy"}},
+    "features": ["auth", "crud", "api", "admin", "tests", "docker"],
+    "files": [
+        {{"path": "main.py", "purpose": "FastAPI app entry point"}},
+        {{"path": "models.py", "purpose": "SQLAlchemy models"}},
+        {{"path": "schemas.py", "purpose": "Pydantic schemas"}},
+        {{"path": "api/routes.py", "purpose": "API endpoints"}},
+        {{"path": "database.py", "purpose": "Database connection"}},
+        {{"path": "requirements.txt", "purpose": "Python dependencies"}},
+        {{"path": "Dockerfile", "purpose": "Docker configuration"}},
+        {{"path": "docker-compose.yml", "purpose": "Docker Compose"}},
+        {{"path": "tests/test_main.py", "purpose": "Test suite"}},
+        {{"path": "README.md", "purpose": "Documentation"}}
+    ]
+}}
+
+The plan should be appropriate for the described project. Include all necessary files for a production-ready project.""".replace("{", "{{").replace("}", "}}")
+    
+    print("🤖 Generating project plan...")
+    plan_response = lai.chat(plan_prompt, stream=False, thinking=False, temp=0.1, max_tokens=2048)
+    
+    # Extract JSON from response
+    import re
+    json_match = re.search(r'\{.*\}', plan_response, re.DOTALL)
+    if not json_match:
+        print("❌ Failed to generate project plan")
+        print(f"Raw response: {plan_response[:500]}")
+        return
+    
+    try:
+        import json
+        plan = json.loads(json_match.group(0))
+    except json.JSONDecodeError as e:
+        print(f"❌ Failed to parse project plan: {e}")
+        print(f"Raw: {plan_response[:500]}")
+        return
+    
+    print(f"✅ Project plan generated: {plan.get('name', 'unnamed')} ({plan.get('project_type', 'unknown')})")
+    print(f"📋 Features: {', '.join(plan.get('features', []))}")
+    print(f"📄 Files to generate: {len(plan.get('files', []))}")
+    
+    if not args.yes and not args.yolo:
+        confirm = input("\nProceed with generation? (y/n): ")
+        if confirm.lower() != 'y':
+            print("Cancelled.")
+            return
+    
+    # Step 2: Generate each file
+    print("\n🔨 Generating project files...")
+    
+    # Clear conversation history for clean generation
+    lai.conversation_history.clear()
+    
+    success_count = 0
+    failed_count = 0
+    
+    for i, file_info in enumerate(plan.get('files', []), 1):
+        file_path = file_info.get('path', '')
+        purpose = file_info.get('purpose', '')
+        
+        if not file_path:
+            continue
+        
+        full_path = os.path.join(path, file_path)
+        print(f"\n[{i}/{len(plan.get('files', []))}] Generating {file_path}...")
+        print(f"   Purpose: {purpose}")
+        
+        # Generate code for this file
+        file_prompt = f"""Generate ONLY valid Python code for: {purpose}
+
+Project context:
+- Project: {plan.get('name', 'Project')}
+- Type: {plan.get('project_type', 'python')}
+- Tech stack: {plan.get('tech_stack', {})}
+- Features: {', '.join(plan.get('features', []))}
+
+Requirements:
+- Valid Python 3, executable COMPLETE FILE
+- Professional structure with functions/classes
+- MUST include main() function if it's an entry point
+- MUST include if __name__ == "__main__": block to run the program
+- Error handling (try/except)
+- Type hints where appropriate
+- Docstrings in main functions/classes
+- Clean, readable, PEP 8 compliant
+- No markdown, no explanations, ONLY code
+- Imports at top
+- No test code, only the requested program
+- ASCII ONLY: straight quotes and NO curly quotes
+- NO special Unicode characters
+
+Output ONLY the complete Python code for {file_path}:"""
+        
+        try:
+            generated_code = lai.chat(file_prompt, stream=False, thinking=False, temp=0.0, max_tokens=4096)
+            
+            # Clean up any markdown
+            if generated_code.startswith("```python"):
+                generated_code = generated_code[9:]
+            elif generated_code.startswith("```"):
+                generated_code = generated_code[3:]
+            if generated_code.endswith("```"):
+                generated_code = generated_code[:-3]
+            generated_code = generated_code.strip()
+            
+            # Validate syntax before writing
+            try:
+                compile(generated_code, file_path, 'exec')
+            except SyntaxError as e:
+                print(f"   ⚠️ Syntax error, attempting fix...")
+                generated_code = f"# Generated: {purpose}\n# Syntax error: {e}\nprint('Error: Invalid code generated')"
+            
+            # Write the file
+            os.makedirs(os.path.dirname(os.path.join(path, file_path)), exist_ok=True)
+            with open(os.path.join(path, file_path), 'w') as f:
+                f.write(generated_code)
+            
+            print(f"   ✅ Generated {file_path}")
+            success_count += 1
+            
+        except Exception as e:
+            print(f"   ❌ Failed: {e}")
+            failed_count += 1
+    
+    # Step 3: Initialize git if requested
+    if args.git:
+        subprocess.run(['git', 'init'], cwd=path)
+        print("\n📦 Git repository initialized")
+    
+    # Step 4: Install dependencies if requirements.txt exists
+    req_path = os.path.join(path, 'requirements.txt')
+    if os.path.exists(req_path) and args.install:
+        print("\n📦 Installing dependencies...")
+        subprocess.run(['pip', 'install', '-r', req_path], cwd=path)
+    
+    # Summary
+    print(f"\n{'='*50}")
+    print(f"🎉 Project generation complete!")
+    print(f"✅ Successful: {success_count}")
+    print(f"❌ Failed: {failed_count}")
+    print(f"📁 Location: {os.path.abspath(path)}")
+    
+    if failed_count == 0:
+        print(f"\n🚀 Ready to run! Try:")
+        print(f"   cd {path}")
+        if os.path.exists(os.path.join(path, 'requirements.txt')):
+            print(f"   pip install -r requirements.txt")
+        print(f"   python main.py  # or whatever the entry point is")
 
 def config_cmd(lai: LAI, args):
     config_file = os.path.expanduser("~/.lai/config.json") if args.global_ else "./.lai/config.json"
@@ -1349,6 +1618,16 @@ Examples:
     init_parser.add_argument('--path', default='.', help='Target directory')
     init_parser.add_argument('--git', action='store_true', help='Initialize git repo')
     init_parser.set_defaults(func=lambda a: init_cmd(get_lai_instance(), a))
+    
+    # Project
+    project_parser = subparsers.add_parser('project', help='Generate complete project from description')
+    project_parser.add_argument('description', nargs='+', help='Project description')
+    project_parser.add_argument('--path', default='.', help='Target directory')
+    project_parser.add_argument('--git', action='store_true', help='Initialize git repo')
+    project_parser.add_argument('--install', action='store_true', help='Install dependencies after generation')
+    project_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
+    project_parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
+    project_parser.set_defaults(func=lambda a: project_cmd(get_lai_instance(), a))
     
     # Config
     config_parser = subparsers.add_parser('config', help='Manage configuration')
