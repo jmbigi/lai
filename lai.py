@@ -14,8 +14,8 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -709,9 +709,6 @@ class ToolRegistry:
     def _lsp_request(self, method: str, params: Dict, timeout: int = 30) -> Dict:
         """Send an LSP request to python-lsp-server and return the response."""
         try:
-            import subprocess
-            import json
-
             # Start pylsp server
             proc = subprocess.Popen(
                 ['python', '-m', 'pylsp'],
@@ -777,7 +774,6 @@ class ToolRegistry:
 
     def _lsp_receive(self, proc) -> Dict:
         """Receive an LSP response message."""
-        import json
         # Read Content-Length header
         header_line = proc.stdout.readline()
         if not header_line:
@@ -798,9 +794,6 @@ class ToolRegistry:
 
     def _lsp_send_and_receive(self, proc, method: str, params: Dict, timeout: int = 30) -> Dict:
         """Send a request and wait for response."""
-        import json
-        import select
-
         request_id = 2
         self._lsp_send(proc, method, params, request_id)
 
