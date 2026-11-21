@@ -1,3 +1,7 @@
+> ⚠️ **DOCUMENTO HISTÓRICO** — Este documento refleja el estado del proyecto a fecha de su escritura.
+> La arquitectura actual usa **gateway-go** (puerto 8081) y **llama.cpp** (puerto 8080) con contexto 32768.
+> Ver `DOCUMENTACION_REGLAS.md` y `DOCS/REVISION_2026.md` para la versión vigente.
+
 # DOCUMENTACIÓN FINAL - Gateway Local, Harness y Estado del Proyecto
 
 ## 1. GATEWAY LOCAL

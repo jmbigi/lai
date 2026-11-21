@@ -1,3 +1,7 @@
+> ⚠️ **DOCUMENTO HISTÓRICO** — Este documento refleja lecciones aprendidas durante el desarrollo.
+> La arquitectura actual y comandos pueden haber cambiado.
+> Ver `DOCUMENTACION_REGLAS.md` y `DOCS/REVISION_2026.md` para la versión vigente.
+
 # Lecciones Aprendidas - Proyecto Gateway IA Local
 
 ## Resumen del Proyecto

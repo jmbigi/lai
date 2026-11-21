@@ -1,3 +1,7 @@
+> ⚠️ **DOCUMENTO HISTÓRICO** — Registro de intentos de generación de `chess.py` (noviembre 2026).
+> La infraestructura actual usa gateway-go + llama.cpp con `--reasoning-format deepseek --reasoning-budget 1024`.
+> Ver `DOCUMENTACION_REGLAS.md` y `DOCS/REVISION_2026.md` para la versión vigente.
+
 # DOCUMENTACIÓN - Intento de Generación de chess.py
 
 ## Objetivo

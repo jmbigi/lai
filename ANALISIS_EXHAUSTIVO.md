@@ -1,3 +1,7 @@
+> ⚠️ **DOCUMENTO HISTÓRICO** — Análisis de fallos previos (contexto 16384, gateway Python).
+> La arquitectura actual: gateway-go + llama.cpp 32768 ctx + `--reasoning-format deepseek --reasoning-budget 1024`.
+> Ver `DOCUMENTACION_REGLAS.md` y `DOCS/REVISION_2026.md` para la versión vigente.
+
 # ANÁLISIS EXHAUSTIVO - Intentos de Generación de chess.py
 
 ## 1. OBJETIVO

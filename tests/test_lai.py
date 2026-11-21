@@ -32,6 +32,12 @@ class TestIsLocalUrl:
         assert lai.is_local_url("not-a-url") is False
         assert lai.is_local_url("") is False
 
+    def test_ipv6_and_ports(self):
+        assert lai.is_local_url("http://[::1]:8080") is True
+        assert lai.is_local_url("http://[::1]") is True
+        assert lai.is_local_url("http://localhost:8080/v1/chat/completions") is True
+        assert lai.is_local_url("http://127.0.0.1:8080/") is True
+
 
 class TestToolRegistry:
     """Tests for ToolRegistry."""
@@ -175,6 +181,15 @@ class TestGetLAIInstance:
 
 class TestCLI:
     """Basic CLI smoke tests."""
+
+    def test_version(self):
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "lai.py", "version"],
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__))
+        )
+        assert result.returncode == 0
+        assert "0.0.2" in result.stdout
 
     def test_help(self):
         import subprocess

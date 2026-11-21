@@ -22,12 +22,27 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def get_version() -> str:
+    """Read version from pyproject.toml (single source of truth)."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    pyproject = Path(__file__).parent / "pyproject.toml"
+    if pyproject.exists():
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+            return data.get("project", {}).get("version", "0.0.0")
+    return "0.0.0"
 
 
 def is_local_url(base_url: str) -> bool:
@@ -252,11 +267,13 @@ class ToolRegistry:
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    def write_file(self, path: str, content: str) -> str:
+    def write_file(self, path: str, content: str, strict: bool = False) -> str:
         """Write a file, validating Python syntax before touching disk.
 
         Returning the syntax error to the agent lets it repair the file in the
         next tool-calling iteration instead of leaving a broken artifact.
+
+        If strict=True, also runs ruff and mypy checks (requires tools installed).
         """
         try:
             if path.endswith('.py'):
@@ -267,6 +284,25 @@ class ToolRegistry:
                         f"ERROR: Python syntax error in {path} at line {e.lineno}: "
                         f"{e.msg}. File not written. Fix the code and retry."
                     )
+                if strict:
+                    # Run ruff check
+                    ruff_result = subprocess.run(
+                        ['ruff', 'check', '-'], input=content, capture_output=True, text=True, timeout=30
+                    )
+                    if ruff_result.returncode != 0:
+                        return (
+                            f"ERROR: Ruff lint failed in {path}:\n{ruff_result.stdout}\n{ruff_result.stderr}"
+                            f"\nFile not written. Fix lint issues and retry."
+                        )
+                    # Run mypy check
+                    mypy_result = subprocess.run(
+                        ['mypy', '--strict', '-'], input=content, capture_output=True, text=True, timeout=60
+                    )
+                    if mypy_result.returncode != 0:
+                        return (
+                            f"ERROR: MyPy type check failed in {path}:\n{mypy_result.stdout}\n{mypy_result.stderr}"
+                            f"\nFile not written. Fix type errors and retry."
+                        )
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -1112,8 +1148,8 @@ class ToolRegistry:
 
         return [
             fn("read_file", "Read a text file", {"path": {"type": "string"}}, ["path"]),
-            fn("write_file", "Write a file. Python files are syntax-checked first.",
-               {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
+            fn("write_file", "Write a file. Python files are syntax-checked first. Use strict=true for ruff+mypy checks.",
+               {"path": {"type": "string"}, "content": {"type": "string"}, "strict": {"type": "boolean", "default": False}}, ["path", "content"]),
             fn("list_dir", "List a directory", {"path": {"type": "string"}}, ["path"]),
             fn("run_command", "Run a shell command in the project",
                {"cmd": {"type": "string"}, "cwd": {"type": "string"},
@@ -1281,14 +1317,21 @@ class ThinkingManager:
 # ============================================================================
 
 class AutoMode:
-    """Native tool-calling agent loop."""
+    """Native tool-calling agent loop with turn budget and cost tracking."""
 
-    def __init__(self, goal: str, tools: 'ToolRegistry', lai_instance: 'LAI', max_iterations: int = 10):
+    def __init__(self, goal: str, tools: 'ToolRegistry', lai_instance: 'LAI', 
+                 max_iterations: int = 10, max_turns: int = 20, 
+                 track_cost: bool = True):
         self.goal = goal
         self.tools = tools
         self.lai = lai_instance
         self.max_iterations = max_iterations
+        self.max_turns = max_turns
+        self.track_cost = track_cost
         self.iteration = 0
+        self.turns_used = 0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
         self.messages: List[Dict] = [
             {
                 "role": "system",
@@ -1319,6 +1362,12 @@ class AutoMode:
                 transcript.append(f"Iteration {iteration}: error: {response['error']}")
                 break
 
+            # Track token usage if available
+            usage = response.get("usage")
+            if self.track_cost and usage:
+                self.total_prompt_tokens += usage.get("prompt_tokens", 0)
+                self.total_completion_tokens += usage.get("completion_tokens", 0)
+
             content = response.get("content") or ""
             tool_calls = response.get("tool_calls") or []
             assistant: Dict = {"role": "assistant", "content": content}
@@ -1332,6 +1381,11 @@ class AutoMode:
                 break
 
             for call in tool_calls:
+                self.turns_used += 1
+                if self.turns_used >= self.max_turns:
+                    transcript.append(f"Max turns ({self.max_turns}) reached. Stopping.")
+                    return "\n".join(transcript)
+
                 function = call.get("function") or {}
                 name = function.get("name", "")
                 raw_args = function.get("arguments", "{}")
@@ -1365,6 +1419,14 @@ class AutoMode:
                 transcript.append(f"[{name}] {result[:1200]}")
         else:
             transcript.append("Max iterations reached without a final answer.")
+        
+        # Cost summary
+        if self.track_cost and (self.total_prompt_tokens or self.total_completion_tokens):
+            # Rough estimate: Qwen3-8B local = $0, but track for cloud comparison
+            transcript.append("\n--- Cost Summary ---")
+            transcript.append(f"Prompt tokens: {self.total_prompt_tokens}")
+            transcript.append(f"Completion tokens: {self.total_completion_tokens}")
+            transcript.append(f"Turns used: {self.turns_used}/{self.max_turns}")
         return "\n".join(transcript)
 
 # ============================================================================
@@ -1646,8 +1708,8 @@ class LAI:
     def think(self, problem: str) -> str:
         return self.chat(problem, thinking=True)
 
-    def auto_mode_run(self, goal: str, max_iterations: int = 10):
-        auto = AutoMode(goal, self.tools, self, max_iterations)
+    def auto_mode_run(self, goal: str, max_iterations: int = 10, max_turns: int = 20, track_cost: bool = True):
+        auto = AutoMode(goal, self.tools, self, max_iterations, max_turns, track_cost)
         return auto.run()
 
     def code(self, description: str, filename: str, auto: bool = False, yolo: bool = False, max_iterations: int = 3):
@@ -2194,7 +2256,12 @@ def code_cmd(lai: LAI, args):
 
 def auto_cmd(lai: LAI, args):
     print(f"Auto mode: {args.goal}")
-    result = lai.auto_mode_run(args.goal, max_iterations=args.max_iterations)
+    result = lai.auto_mode_run(
+        args.goal, 
+        max_iterations=args.max_iterations,
+        max_turns=getattr(args, 'max_turns', 20),
+        track_cost=not getattr(args, 'no_cost', False),
+    )
     print(result)
 
 def run_cmd(lai: LAI, args):
@@ -2323,6 +2390,44 @@ Code:
 
     if args.format == 'json':
         print(json.dumps(all_results, indent=2, ensure_ascii=False))
+        return
+
+    if args.format == 'sarif':
+        sarif = {
+            "version": "2.1.0",
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "runs": [{
+                "tool": {
+                    "driver": {
+                        "name": "lai-review",
+                        "version": get_version(),
+                        "informationUri": "https://github.com/kubuntu/lai",
+                        "rules": []
+                    }
+                },
+                "results": []
+            }]
+        }
+        rule_id = 0
+        for entry in all_results:
+            for finding_text in entry['findings']:
+                # Parse findings for SARIF (simplified)
+                lines = finding_text.strip().split('\n')
+                for line in lines:
+                    if 'P0' in line or 'P1' in line or 'P2' in line:
+                        rule_id += 1
+                        sarif["runs"][0]["results"].append({
+                            "ruleId": f"LAI-{rule_id:04d}",
+                            "level": "error" if 'P0' in line else "warning" if 'P1' in line else "note",
+                            "message": {"text": line.strip()},
+                            "locations": [{
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": entry['file']},
+                                    "region": {"startLine": 1}
+                                }
+                            }]
+                        })
+        print(json.dumps(sarif, indent=2, ensure_ascii=False))
         return
 
     for entry in all_results:
@@ -2679,6 +2784,10 @@ def models_cmd(lai: LAI, args):
 def tools_cmd(lai: LAI, args):
     lai.tools_list()
 
+def version_cmd():
+    """Show lai version."""
+    print(f"lai {get_version()}")
+
 # ============================================================================
 # MAIN CLI
 # ============================================================================
@@ -2759,6 +2868,8 @@ Examples:
     auto_parser = subparsers.add_parser('auto', help='Auto mode')
     auto_parser.add_argument('goal', help='Goal')
     auto_parser.add_argument('--max-iterations', type=int, default=10, help='Max iterations')
+    auto_parser.add_argument('--max-turns', type=int, default=20, help='Max tool turns (default: 20)')
+    auto_parser.add_argument('--no-cost', action='store_true', help='Disable cost tracking')
     auto_parser.set_defaults(func=lambda a: auto_cmd(get_lai_instance(), a))
     
     # Run
@@ -2783,6 +2894,10 @@ Examples:
     # Tools
     tools_parser = subparsers.add_parser('tools', help='List tools')
     tools_parser.set_defaults(func=lambda a: tools_cmd(get_lai_instance(), a))
+    
+    # Version
+    version_parser = subparsers.add_parser('version', help='Show version')
+    version_parser.set_defaults(func=lambda _: version_cmd())
     
     # Search
     search_parser = subparsers.add_parser('search', help='Search code/files')
@@ -2818,7 +2933,7 @@ Examples:
     review_parser = subparsers.add_parser('review', help='Code review')
     review_parser.add_argument('path', help='File or directory to review')
     review_parser.add_argument('--focus', choices=['security', 'performance', 'style', 'bugs', 'all'], default='all')
-    review_parser.add_argument('--format', choices=['text', 'json', 'markdown'], default='text')
+    review_parser.add_argument('--format', choices=['text', 'json', 'markdown', 'sarif'], default='text')
     review_parser.set_defaults(func=lambda a: review_cmd(get_lai_instance(), a))
     
     # Diff
