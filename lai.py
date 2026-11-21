@@ -1707,6 +1707,7 @@ class LAI:
         self.temp: float = 0.7
         self.max_tokens: int = 4096
         self.history_max_tokens: int = 12000  # ~48000 chars / 4
+        self.lang: str = "es"
 
     def _trim_history(self) -> None:
         """Trim conversation history to stay within token budget.
@@ -1794,7 +1795,7 @@ class LAI:
 
         try:
             # Prepare messages with history
-            messages = self.conversation_history.copy()
+            messages = self._ensure_system_prompt(self.conversation_history.copy())
 
             if stream:
                 # Streaming: print chunks as they arrive
@@ -1897,6 +1898,35 @@ class LAI:
             if match:
                 return match.group(1).strip()
         return text.strip()
+
+    def _system_prompt(self) -> Dict[str, str]:
+        """Return the system prompt for the configured language (default: Spanish)."""
+        if self.lang == "es":
+            return {
+                "role": "system",
+                "content": (
+                    "Eres Lai, un asistente de código local que usa modelos de IA abiertos ejecutados localmente. "
+                    "Responde SIEMPRE en español. Eres experto en programación, revisión de código, depuración y "
+                    "arquitectura de software. Sé conciso, práctico y directo. Cuando el usuario te pida escribir o "
+                    "modificar código, proporciona bloques de código completos y funcionales. Usa las herramientas "
+                    "disponibles cuando sea necesario para leer, escribir o analizar archivos del proyecto."
+                ),
+            }
+        return {
+            "role": "system",
+            "content": (
+                "You are Lai, a local code assistant using open local AI models. "
+                "Always reply in English. You are an expert in programming, code review, debugging, and software "
+                "architecture. Be concise, practical, and direct. When asked to write or modify code, provide "
+                "complete, working code blocks. Use available tools when needed to read, write, or analyze project files."
+            ),
+        }
+
+    def _ensure_system_prompt(self, messages: List[Dict]) -> List[Dict]:
+        """Ensure the messages list starts with a system prompt in the configured language."""
+        if messages and messages[0].get("role") == "system":
+            return messages
+        return [self._system_prompt()] + messages
 
     def chat_messages(self, messages: List[Dict], tools: Optional[List[Dict]] = None,
                       tool_choice: str = "auto", stream: bool = False,
@@ -2551,7 +2581,7 @@ Output ONLY the complete Python code for file: {filename}"""
 # Global LAI instance for session persistence
 _lai_instance: Optional[LAI] = None
 
-def get_lai_instance(model: str = "qwen3-8b", base_url: str = "http://localhost:8080/v1") -> LAI:
+def get_lai_instance(model: str = "qwen3-8b", base_url: str = "http://localhost:8080/v1", lang: str = "es") -> LAI:
     """Get or create the singleton LAI instance.
 
     Recreate it when the requested model or endpoint changes; previously the
@@ -2564,10 +2594,11 @@ def get_lai_instance(model: str = "qwen3-8b", base_url: str = "http://localhost:
         or _lai_instance.base_url != base_url
     ):
         _lai_instance = LAI(model=model, base_url=base_url)
+    _lai_instance.lang = lang
     return _lai_instance
 
 def chat_cmd(args):
-    lai = get_lai_instance(model=args.model, base_url=args.base_url)
+    lai = get_lai_instance(model=args.model, base_url=args.base_url, lang=getattr(args, 'lang', 'es'))
     stream = args.stream if args.stream else (not args.no_stream)
     thinking = args.thinking if args.thinking else (not args.no_thinking)
     temp = args.temp or 0.7
@@ -3406,6 +3437,7 @@ Examples:
 
     parser.add_argument('-m', '--model', default='qwen3-8b', help='Model to use')
     parser.add_argument('-u', '--base-url', default='http://localhost:8080/v1', help='Base URL for API')
+    parser.add_argument('-l', '--lang', default='es', choices=['es', 'en'], help='Language (es|en, default: es)')
     parser.add_argument('-t', '--temp', type=float, default=0.7, help='Temperature')
     parser.add_argument('--max-tokens', type=int, default=4096, help='Max tokens')
     parser.add_argument('--stream', action='store_true', help='Stream output')
@@ -3605,7 +3637,17 @@ Examples:
     args = parser.parse_args()
 
     if not hasattr(args, 'func') or args.command is None:
-        parser.print_help()
+        # No command provided: enter interactive chat mode by default
+        interactive_args = argparse.Namespace(
+            model=args.model, base_url=args.base_url,
+            stream=False, no_stream=False,
+            thinking=False, no_thinking=False,
+            temp=args.temp or 0.7,
+            max_tokens=args.max_tokens or 4096,
+            interactive=True,
+            prompt=[],
+        )
+        chat_cmd(interactive_args)
         return
 
     if args.quiet:
@@ -3614,7 +3656,7 @@ Examples:
 
     # Configure the singleton before dispatch so --model/--base-url and the
     # global generation flags are not silently ignored by command lambdas.
-    lai = get_lai_instance(model=args.model, base_url=args.base_url)
+    lai = get_lai_instance(model=args.model, base_url=args.base_url, lang=getattr(args, 'lang', 'es'))
     lai.temp = args.temp
     lai.max_tokens = args.max_tokens
     if getattr(args, 'stream', False):

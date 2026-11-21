@@ -2,6 +2,9 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = ["lai"]
+
 [project]
 name = "lai"
 version = "0.0.2"
@@ -56,7 +59,7 @@ quality = [
 ]
 
 [project.scripts]
-lai = "lai:main"
+lai = "lai:cli"
 
 [tool.ruff]
 target-version = "py310"
