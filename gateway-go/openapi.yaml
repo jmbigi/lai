@@ -1,0 +1,1316 @@
+openapi: 3.1.0
+info:
+  title: Local AI Gateway
+  description: |
+    Modern AI Gateway compatible with llama.cpp and OpenAI API 2.3.0 spec.
+    Features: Context compression, semantic caching, streaming, structured outputs,
+    reasoning traces, speculative decoding, fallback chains.
+  version: "3.0.0"
+  contact:
+    name: Local AI Gateway
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:8081/v1
+    description: Local gateway server
+  - url: http://localhost:8080/v1
+    description: Direct llama.cpp server
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Chat
+    description: Chat completions with advanced features
+  - name: Completions
+    description: Legacy completions endpoint
+  - name: Models
+    description: Model management
+  - name: Embeddings
+    description: Vector embeddings
+  - name: Cache
+    description: Cache management
+  - name: Metrics
+    description: Observability
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "Bearer token (use 'dummy' for local models)"
+
+  schemas:
+    # ===== CORE TYPES =====
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool, function]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ContentPart'
+        name:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCall'
+        tool_call_id:
+          type: string
+        function_call:
+          $ref: '#/components/schemas/FunctionCall'
+
+    ContentPart:
+      type: object
+      required: [type]
+      discriminator:
+        propertyName: type
+        mapping:
+          text: TextContent
+          image_url: ImageContent
+          audio: AudioContent
+          file: FileContent
+      properties:
+        type:
+          type: string
+          enum: [text, image_url, audio, file]
+
+    TextContent:
+      allOf:
+        - $ref: '#/components/schemas/ContentPart'
+        - type: object
+          properties:
+            type:
+              type: string
+              const: text
+            text:
+              type: string
+
+    ImageContent:
+      allOf:
+        - $ref: '#/components/schemas/ContentPart'
+        - type: object
+          properties:
+            type:
+              type: string
+              const: image_url
+            image_url:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                detail:
+                  type: string
+                  enum: [auto, low, high]
+                  default: auto
+
+    AudioContent:
+      allOf:
+        - $ref: '#/components/schemas/ContentPart'
+        - type: object
+          properties:
+            type:
+              type: string
+              const: audio
+            audio:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  format: base64
+                format:
+                  type: string
+                  enum: [wav, mp3, flac, opus]
+
+    FileContent:
+      allOf:
+        - $ref: '#/components/schemas/ContentPart'
+        - type: object
+          properties:
+            type:
+              type: string
+              const: file
+            file:
+              type: object
+              required: [filename, file_data]
+              properties:
+                filename:
+                  type: string
+                file_data:
+                  type: string
+                  format: base64
+
+    FunctionCall:
+      type: object
+      required: [name, arguments]
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+          description: JSON string of arguments
+
+    ToolCall:
+      type: object
+      required: [id, type, function]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: function
+        function:
+          $ref: '#/components/schemas/FunctionCall'
+
+    Tool:
+      type: object
+      required: [type, function]
+      properties:
+        type:
+          type: string
+          const: function
+        function:
+          $ref: '#/components/schemas/FunctionDefinition'
+
+    FunctionDefinition:
+      type: object
+      required: [name, parameters]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          description: JSON Schema
+        strict:
+          type: boolean
+          default: false
+
+    # ===== CHAT COMPLETION REQUEST =====
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Model identifier (e.g., qwen3-8b, llama-3.1-8b)
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+          minItems: 1
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+          description: Sampling temperature
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+          description: Nucleus sampling
+        top_k:
+          type: integer
+          minimum: 1
+          description: Top-k sampling (llama.cpp specific)
+        n:
+          type: integer
+          minimum: 1
+          maximum: 128
+          default: 1
+        stream:
+          type: boolean
+          default: false
+        stream_options:
+          $ref: '#/components/schemas/StreamOptions'
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Stop sequences
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: Maximum completion tokens
+        max_completion_tokens:
+          type: integer
+          minimum: 1
+          description: Alias for max_tokens (OpenAI 2.3+)
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+          default: 0
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+          default: 0
+        repetition_penalty:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 1.1
+          description: llama.cpp specific repetition penalty
+        logit_bias:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Token bias map
+        logprobs:
+          type: boolean
+          default: false
+        top_logprobs:
+          type: integer
+          minimum: 0
+          maximum: 20
+        user:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tool'
+        tool_choice:
+          oneOf:
+            - type: string
+              enum: [none, auto, required]
+            - type: object
+              properties:
+                type:
+                  type: string
+                  const: function
+                function:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+        parallel_tool_calls:
+          type: boolean
+          default: true
+        response_format:
+          $ref: '#/components/schemas/ResponseFormat'
+        seed:
+          type: integer
+          description: Random seed for reproducibility
+        stop_token_ids:
+          type: array
+          items:
+            type: integer
+          description: Additional stop token IDs (llama.cpp)
+        min_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Min-p sampling (llama.cpp)
+        typical_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Typical sampling (llama.cpp)
+        xtc_probability:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: XTC probability (llama.cpp)
+        xtc_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+        grammar:
+          type: string
+          description: GBNF grammar for constrained generation (llama.cpp)
+        json_schema:
+          type: object
+          description: JSON schema for structured output
+        mirostat:
+          type: integer
+          enum: [0, 1, 2]
+          description: Mirostat sampling mode (llama.cpp)
+        mirostat_eta:
+          type: number
+          description: Mirostat learning rate
+        mirostat_tau:
+          type: number
+          description: Mirostat target entropy
+
+    StreamOptions:
+      type: object
+      properties:
+        include_usage:
+          type: boolean
+          default: true
+
+    ResponseFormat:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [text, json_object, json_schema]
+          default: text
+        json_schema:
+          type: object
+          properties:
+            name:
+              type: string
+            strict:
+              type: boolean
+            schema:
+              type: object
+
+    # ===== CHAT COMPLETION RESPONSE =====
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion
+        created:
+          type: integer
+          format: unix-time
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatChoice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+        system_fingerprint:
+          type: string
+
+    ChatChoice:
+      type: object
+      required: [index, message, finish_reason]
+      properties:
+        index:
+          type: integer
+        message:
+          $ref: '#/components/schemas/Message'
+        finish_reason:
+          type: string
+          enum: [stop, length, tool_calls, content_filter, function_call]
+        logprobs:
+          $ref: '#/components/schemas/LogProbs'
+
+    LogProbs:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenLogProb'
+
+    TokenLogProb:
+      type: object
+      required: [token, logprob, bytes]
+      properties:
+        token:
+          type: string
+        logprob:
+          type: number
+        bytes:
+          type: array
+          items:
+            type: integer
+        top_logprobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopLogProb'
+
+    TopLogProb:
+      type: object
+      required: [token, logprob, bytes]
+      properties:
+        token:
+          type: string
+        logprob:
+          type: number
+        bytes:
+          type: array
+          items:
+            type: integer
+
+    Usage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        prompt_tokens_details:
+          $ref: '#/components/schemas/PromptTokensDetails'
+        completion_tokens_details:
+          $ref: '#/components/schemas/CompletionTokensDetails'
+
+    PromptTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: integer
+        audio_tokens:
+          type: integer
+
+    CompletionTokensDetails:
+      type: object
+      properties:
+        reasoning_tokens:
+          type: integer
+        audio_tokens:
+          type: integer
+
+    # ===== STREAMING =====
+    ChatCompletionChunk:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion.chunk
+        created:
+          type: integer
+          format: unix-time
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkChoice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+        system_fingerprint:
+          type: string
+
+    ChunkChoice:
+      type: object
+      required: [index, delta, finish_reason]
+      properties:
+        index:
+          type: integer
+        delta:
+          $ref: '#/components/schemas/DeltaMessage'
+        finish_reason:
+          type: string
+          enum: [stop, length, tool_calls, content_filter, function_call, null]
+          nullable: true
+        logprobs:
+          $ref: '#/components/schemas/LogProbs'
+
+    DeltaMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool, function]
+        content:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeltaToolCall'
+        function_call:
+          $ref: '#/components/schemas/FunctionCall'
+
+    DeltaToolCall:
+      type: object
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        type:
+          type: string
+        function:
+          $ref: '#/components/schemas/DeltaFunction'
+
+    DeltaFunction:
+      type: object
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+
+    # ===== MODELS =====
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+
+    Model:
+      type: object
+      required: [id, object, created, owned_by]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: model
+        created:
+          type: integer
+          format: unix-time
+        owned_by:
+          type: string
+        permission:
+          type: array
+          items:
+            type: object
+        root:
+          type: string
+        parent:
+          type: string
+        max_tokens:
+          type: integer
+        context_window:
+          type: integer
+        architecture:
+          type: string
+        quantization:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [chat, completion, embedding, vision, audio, function_calling, reasoning, streaming, speculative]
+
+    # ===== EMBEDDINGS =====
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+            - type: array
+              items:
+                type: integer
+            - type: array
+              items:
+                type: array
+                  items:
+                    type: integer
+        encoding_format:
+          type: string
+          enum: [float, base64]
+          default: float
+        dimensions:
+          type: integer
+          minimum: 1
+        user:
+          type: string
+
+    EmbeddingResponse:
+      type: object
+      required: [object, data, model, usage]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Embedding'
+        model:
+          type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    Embedding:
+      type: object
+      required: [object, index, embedding]
+      properties:
+        object:
+          type: string
+          const: embedding
+        index:
+          type: integer
+        embedding:
+          type: array
+          items:
+            type: number
+
+    # ===== ERRORS =====
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+    Error:
+      type: object
+      required: [message, type, code]
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+          enum: [invalid_request_error, authentication_error, permission_error, rate_limit_error, server_error, not_found_error]
+        code:
+          type: string
+        param:
+          type: string
+
+    # ===== CACHE =====
+    CacheStats:
+      type: object
+      properties:
+        entries:
+          type: integer
+        max_entries:
+          type: integer
+        hit_rate:
+          type: number
+        hits:
+          type: integer
+        misses:
+          type: integer
+        memory_bytes:
+          type: integer
+        oldest_entry_age_seconds:
+          type: number
+
+    CacheClearResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        cleared_entries:
+          type: integer
+
+    # ===== HEALTH =====
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        version:
+          type: string
+        upstream:
+          type: string
+        max_context:
+          type: integer
+        cache_size:
+          type: integer
+        uptime_seconds:
+          type: number
+        upstream_latency_ms:
+          type: number
+
+    # ===== METRICS =====
+    MetricsResponse:
+      type: object
+      properties:
+        requests_total:
+          type: integer
+        requests_per_second:
+          type: number
+        avg_latency_ms:
+          type: number
+        p50_latency_ms:
+          type: number
+        p95_latency_ms:
+          type: number
+        p99_latency_ms:
+          type: number
+        cache_hit_rate:
+          type: number
+        cache_hits:
+          type: integer
+        cache_misses:
+          type: integer
+        upstream_latency_ms:
+          type: number
+        error_rate:
+          type: number
+        active_connections:
+          type: integer
+        tokens_per_second:
+          type: number
+        cache_size:
+          type: integer
+
+paths:
+  # ===== CHAT COMPLETIONS =====
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      summary: Create chat completion
+      operationId: createChatCompletion
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionChunk'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===== COMPLETIONS (Legacy) =====
+  /v1/completions:
+    post:
+      tags: [Completions]
+      summary: Create completion (legacy)
+      operationId: createCompletion
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model:
+                  type: string
+                prompt:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                max_tokens:
+                  type: integer
+                temperature:
+                  type: number
+                top_p:
+                  type: number
+                stream:
+                  type: boolean
+                stop:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+                logprobs:
+                  type: integer
+                echo:
+                  type: boolean
+      responses:
+        '200':
+          description: Completion response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  object:
+                    type: string
+                    const: text_completion
+                  created:
+                    type: integer
+                  model:
+                    type: string
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text:
+                          type: string
+                        index:
+                          type: integer
+                        logprobs:
+                          type: object
+                        finish_reason:
+                          type: string
+
+  # ===== MODELS =====
+  /v1/models:
+    get:
+      tags: [Models]
+      summary: List available models
+      operationId: listModels
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+
+  /v1/models/{model}:
+    get:
+      tags: [Models]
+      summary: Get model details
+      operationId: getModel
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '404':
+          description: Model not found
+
+  # ===== EMBEDDINGS =====
+  /v1/embeddings:
+    post:
+      tags: [Embeddings]
+      summary: Create embeddings
+      operationId: createEmbeddings
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: Embeddings response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400':
+          description: Invalid request
+
+  # ===== CACHE =====
+  /v1/cache/stats:
+    get:
+      tags: [Cache]
+      summary: Get cache statistics
+      operationId: getCacheStats
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Cache statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheStats'
+
+  /v1/cache/clear:
+    post:
+      tags: [Cache]
+      summary: Clear cache
+      operationId: clearCache
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Cache cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheClearResponse'
+
+  # ===== HEALTH =====
+  /health:
+    get:
+      tags: [Metrics]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags: [Metrics]
+      summary: Readiness check
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Ready status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready, not_ready]
+                  upstream_latency_ms:
+                    type: number
+
+  # ===== METRICS =====
+  /metrics:
+    get:
+      tags: [Metrics]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/metrics:
+    get:
+      tags: [Metrics]
+      summary: JSON metrics
+      operationId: getJsonMetrics
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: JSON metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+  # ===== CACHE MANAGEMENT =====
+  /v1/cache/clear:
+    post:
+      tags: [Cache]
+      summary: Clear cache
+      operationId: clearCache
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Cache cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheClearResponse'
+
+  # ===== UPSTREAM MANAGEMENT =====
+  /v1/upstreams:
+    get:
+      tags: [Models]
+      summary: List upstreams
+      operationId: listUpstreams
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Upstream list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  upstreams:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        url:
+                          type: string
+                        healthy:
+                          type: boolean
+                        latency_ms:
+                          type: number
+                        weight:
+                          type: integer
+
+    post:
+      tags: [Models]
+      summary: Add upstream
+      operationId: addUpstream
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+                weight:
+                  type: integer
+                  default: 100
+      responses:
+        '201':
+          description: Upstream added
+
+  /v1/upstreams/{name}:
+    delete:
+      tags: [Models]
+      summary: Remove upstream
+      operationId: removeUpstream
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upstream removed
+
+  # ===== ADVANCED FEATURES =====
+  /v1/chat/completions/stream:
+    post:
+      tags: [Chat]
+      summary: Streaming chat completion (SSE)
+      operationId: createChatCompletionStream
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ChatCompletionRequest'
+                - type: object
+                  properties:
+                    stream:
+                      type: boolean
+                      const: true
+      responses:
+        '200':
+          description: Server-Sent Events stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionChunk'
+
+  /v1/chat/completions/compress:
+    post:
+      tags: [Chat]
+      summary: Compress prompt only
+      operationId: compressPrompt
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Message'
+                max_tokens:
+                  type: integer
+                compression_ratio:
+                  type: number
+                  minimum: 0.1
+                  maximum: 1.0
+                method:
+                  type: string
+                  enum: [truncate, summarize, semantic, longllmlingua]
+                  default: truncate
+      responses:
+        '200':
+          description: Compressed prompt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  compressed_messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  original_tokens:
+                    type: integer
+                  compressed_tokens:
+                    type: integer
+                  compression_ratio:
+                    type: number
+
+  /v1/context/analyze:
+    post:
+      tags: [Chat]
+      summary: Analyze context usage
+      operationId: analyzeContext
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Message'
+                model:
+                  type: string
+      responses:
+        '200':
+          description: Context analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_tokens:
+                    type: integer
+                  message_count:
+                    type: integer
+                  avg_tokens_per_message:
+                    type: number
+                  largest_message_tokens:
+                    type: integer
+                  code_block_count:
+                    type: integer
+                  estimated_cost:
+                    type: number
+                  fits_in_context:
+                    type: boolean
+                  recommended_action:
+                    type: string
+                    enum: [none, truncate, compress, split]
+
+  # ===== BATCH PROCESSING =====
+  /v1/batch:
+    post:
+      tags: [Chat]
+      summary: Batch chat completions
+      operationId: createBatch
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requests]
+              properties:
+                requests:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: Batch response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, processing, completed, failed]
+                  results:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: '#/components/schemas/ChatCompletionResponse'
+                        - $ref: '#/components/schemas/ErrorResponse'

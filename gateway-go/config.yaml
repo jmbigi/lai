@@ -1,0 +1,93 @@
+# Gateway Go Configuration
+server:
+  host: "0.0.0.0"
+  port: 8081
+  read_timeout: 30s
+  write_timeout: 300s
+  idle_timeout: 120s
+  max_request_size: 52428800  # 50MB
+
+upstream:
+  llama_cpp:
+    url: "http://127.0.0.1:8080"
+    weight: 100
+    timeout: 300s
+    max_connections: 100
+  ollama:
+    url: "http://127.0.0.1:11434"
+    weight: 0
+    timeout: 300s
+    max_connections: 50
+
+context:
+  max_tokens: 32768
+  compression_threshold: 1024
+  preserve_code_blocks: true
+
+cache:
+  enabled: true
+  max_entries: 5000
+  ttl: 1h
+  max_key_size: 1024
+
+filter:
+  enabled: true
+  keywords:
+    - "TaskOutput"
+    - "TaskStop"
+    - "TodoList"
+    - "UpdateGoal"
+    - "WaitFor"
+    - "auto permission mode"
+    - "Never Ask"
+    - "Plan mode"
+    - "system reminder"
+    - "Kimi K3.1 Pro"
+    - "session_"
+    - "Permission mode:"
+    - "Everything runs"
+    - "only plans in Plan mode"
+    - "Switched to"
+    - "thinking on"
+    - "thinking off"
+    - "Use this tool"
+    - "function"
+    - "parameters"
+    - "description"
+    - "crush"
+    - "Crush"
+    - "charm.land"
+    - "catwalk"
+    - "fang"
+    - "bubbletea"
+    - "lipgloss"
+    - "glamour"
+    - "tone"
+    - "ultraviolet"
+    - "x/ansi"
+    - "opencode"
+    - "OpenCode"
+    - "Nemotron"
+    - "nvidia"
+    - "Use this tool"
+    - "function"
+    - "parameters"
+    - "description"
+    - "system_prompt"
+    - "system_prompt:"
+    - "<|system|>"
+    - "<|user|>"
+    - "<|assistant|>"
+
+metrics:
+  enabled: true
+  path: "/metrics"
+
+logging:
+  level: "info"
+  format: "json"
+  access_log: true
+
+rate_limit:
+  enabled: false
+  requests_per_minute: 1000
