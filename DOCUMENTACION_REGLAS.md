@@ -6,6 +6,22 @@
 
 ---
 
+## 0. Misión y Principio Fundacional
+
+**LAI existe para impulsar el uso de IAs locales, abiertas y soberanas.**
+
+Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este principio:
+
+- **Open source first:** Preferir modelos, herramientas y licencias abiertas.
+- **Sin dependencia de claves (API keys):** El usuario no debe necesitar cuentas en la nube, suscripciones ni tokens externos para usar LAI.
+- **Sin dependencia de cuentas en la nube:** La inferencia, el almacenamiento y el procesamiento ocurren localmente por defecto.
+- **Software gratuito y de calidad:** Promover modelos abiertos (Qwen, Llama, Gemma, etc.) servidos localmente con llama.cpp/Ollama, que igualan o superan a alternativas cerradas en tareas de código.
+- **Privacidad por diseño:** El código y los datos del usuario nunca salen de su máquina salvo decisión explícita.
+
+> **Regla 0:** *Cualquier feature, arquitectura o dependencia que introduzca dependencia obligatoria de cloud, API keys, cuentas externas o software propietario será rechazada salvo aprobación explícita y documentada del operador.*
+
+---
+
 ## 1. Reglas
 
 1. **Seguir las reglas de [thinker](https://github.com/jmbigi/thinker/).**

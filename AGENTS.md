@@ -2,6 +2,18 @@
 
 This file provides guidance for AI agents working on the lai codebase.
 
+## Project Mission (Regla 0)
+
+**lai existe para impulsar el uso de IAs locales, abiertas y soberanas.**
+
+- **Open source first:** Modelos, herramientas y licencias abiertas.
+- **Sin dependencia de claves/API keys:** El usuario no necesita cuentas en la nube, suscripciones ni tokens externos.
+- **Sin dependencia de cuentas en la nube:** Inferencia, almacenamiento y procesamiento ocurren localmente por defecto.
+- **Software gratuito y de calidad:** Modelos abiertos (Qwen, Llama, Gemma) servidos localmente con llama.cpp/Ollama.
+- **Privacidad por diseño:** Código y datos del usuario nunca salen de su máquina salvo decisión explícita.
+
+> **Regla 0:** *Cualquier feature, arquitectura o dependencia que introduzca dependencia obligatoria de cloud, API keys, cuentas externas o software propietario será rechazada salvo aprobación explícita y documentada del operador.*
+
 ## Project Overview
 
 **lai** (Local AI Code Assistant) is a CLI tool that uses local LLMs (via llama.cpp) to review, repair, and improve code projects. It follows a strict rule: all code generation must use local models; cloud APIs are only for configuring lai itself.

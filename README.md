@@ -9,6 +9,18 @@ Gateway IA Local es una infraestructura completa para ejecutar LLMs locales (Qwe
 - **Harness Python** - Gestor de sesiones, thinking extraction, tool calling, auto-mode
 - **OpenAPI 3.1 Spec** - Especificación completa compatible con OpenAI API 2.3.0
 
+## Misión y Principio Fundacional (Regla 0)
+
+**lai existe para impulsar el uso de IAs locales, abiertas y soberanas.**
+
+- **Open source first:** Modelos, herramientas y licencias abiertas.
+- **Sin dependencia de claves/API keys:** El usuario no necesita cuentas en la nube, suscripciones ni tokens externos.
+- **Sin dependencia de cuentas en la nube:** Inferencia, almacenamiento y procesamiento ocurren localmente por defecto.
+- **Software gratuito y de calidad:** Modelos abiertos (Qwen, Llama, Gemma) servidos localmente con llama.cpp/Ollama.
+- **Privacidad por diseño:** Código y datos del usuario nunca salen de su máquina salvo decisión explícita.
+
+> **Regla 0:** *Cualquier feature, arquitectura o dependencia que introduzca dependencia obligatoria de cloud, API keys, cuentas externas o software propietario será rechazada salvo aprobación explícita y documentada del operador.*
+
 ## Reglas del Proyecto
 
 1. **Seguir las reglas de https://github.com/jmbigi/thinker/**
@@ -16,7 +28,7 @@ Gateway IA Local es una infraestructura completa para ejecutar LLMs locales (Qwe
 3. **Seguir las reglas de https://github.com/jmbigi/better-project/**
 4. **Todo el código fuente debe ser generado por LLMs locales, sin excepciones**
 5. **Las IAs, LLMs y modelos cloud sólo pueden configurar y/o generar scripts genéricos, no deben reparar ni generar código específico**
-3. **Honestidad 100%**
+6. **Honestidad 100%**
 7. **Exactitud 99%**
 8. **El proyecto chess debe ser generado con LLMs y harness locales**
 

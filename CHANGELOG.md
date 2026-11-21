@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Regla 0 (Misión Fundacional):** lai existe para impulsar IAs locales, abiertas y soberanas. Open source first, sin dependencia de claves/API keys, sin dependencia de cuentas en la nube, software gratuito y de calidad, privacidad por diseño. Cualquier feature que introduzca dependencia obligatoria de cloud requiere aprobación explícita.
+
 ## [v0.0.2] - 2026-11-20
 
 ### Fixed
