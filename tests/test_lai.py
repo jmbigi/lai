@@ -3,11 +3,23 @@
 import tempfile
 import os
 import sys
+import json
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lai
+
+
+def _check_service_url(url: str) -> bool:
+    """Check if a service is available."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 
 class TestIsLocalUrl:
@@ -219,6 +231,219 @@ class TestCLI:
         assert result.returncode == 0
         assert "read_file" in result.stdout
         assert "write_file" in result.stdout
+
+
+class TestIntegration:
+    """Integration tests requiring live services (llama.cpp, gateway)."""
+
+    @pytest.fixture(scope="class")
+    def lai_instance(self):
+        """Create LAI instance connected to local services."""
+        return lai.LAI(model="qwen3-8b", base_url="http://localhost:8080/v1")
+
+    @pytest.fixture(scope="class")
+    def gateway_url(self):
+        return "http://localhost:8081/v1"
+
+    @staticmethod
+    def _check_service_static(url: str) -> bool:
+        """Check if a service is available (static for skipif)."""
+        try:
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    def _check_service(self, url: str) -> bool:
+        """Check if a service is available."""
+        return self._check_service_static(url)
+
+    def test_llama_health(self):
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8080/health", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data.get("status") == "ok"
+
+    def test_gateway_health(self):
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8081/health", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data.get("status") == "ok"
+
+    def test_gateway_models(self):
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8081/v1/models", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert "data" in data
+            assert len(data["data"]) > 0
+
+    def test_gateway_tool_calling_non_stream(self):
+        """Test tool calling through gateway (non-streaming)."""
+        import urllib.request
+        payload = {
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": False,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "add",
+                    "description": "Add two numbers",
+                    "parameters": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}
+                }
+            }],
+            "tool_choice": "auto"
+        }
+        req = urllib.request.Request(
+            "http://localhost:8081/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            message = data["choices"][0]["message"]
+            assert message.get("tool_calls") is not None
+            assert len(message["tool_calls"]) > 0
+            assert message["tool_calls"][0]["function"]["name"] == "add"
+
+    def test_gateway_tool_calling_stream(self):
+        """Test tool calling through gateway (streaming)."""
+        import urllib.request
+        payload = {
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": True,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "add",
+                    "description": "Add two numbers",
+                    "parameters": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}
+                }
+            }],
+            "tool_choice": "auto"
+        }
+        req = urllib.request.Request(
+            "http://localhost:8081/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            assert resp.status == 200
+            saw_tool_call = False
+            for raw_line in resp:
+                decoded = raw_line.decode().strip()
+                if decoded.startswith("data: ") and decoded != "data: [DONE]":
+                    chunk = json.loads(decoded[6:])
+                    delta = chunk["choices"][0].get("delta", {})
+                    if delta.get("tool_calls"):
+                        saw_tool_call = True
+                        break
+        assert saw_tool_call, "Expected tool_calls in streaming response"
+
+    @pytest.mark.skipif(
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082"
+    )
+    def test_serve_health(self):
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8082/health", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data.get("status") == "ok"
+
+    @pytest.mark.skipif(
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082"
+    )
+    def test_serve_tool_calling_non_stream(self):
+        """Test tool calling through lai serve (non-streaming)."""
+        import urllib.request
+        payload = {
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": False,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "add",
+                    "description": "Add two numbers",
+                    "parameters": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}
+                }
+            }],
+            "tool_choice": "auto"
+        }
+        req = urllib.request.Request(
+            "http://localhost:8082/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            message = data["choices"][0]["message"]
+            assert message.get("tool_calls") is not None
+            assert len(message["tool_calls"]) > 0
+            assert message["tool_calls"][0]["function"]["name"] == "add"
+
+    @pytest.mark.skipif(
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082"
+    )
+    def test_serve_tool_calling_stream(self):
+        """Test tool calling through lai serve (streaming)."""
+        import urllib.request
+        payload = {
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": True,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "add",
+                    "description": "Add two numbers",
+                    "parameters": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}
+                }
+            }],
+            "tool_choice": "auto"
+        }
+        req = urllib.request.Request(
+            "http://localhost:8082/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            assert resp.status == 200
+            for raw_line in resp:
+                decoded = raw_line.decode().strip()
+                if decoded.startswith("data: ") and decoded != "data: [DONE]":
+                    chunk = json.loads(decoded[6:])
+                    delta = chunk["choices"][0].get("delta", {})
+                    if delta.get("tool_calls"):
+                        return  # Found tool_calls in stream
+        pytest.fail("Expected tool_calls in streaming response from serve")
+
+    def test_automode_multi_tool(self, lai_instance):
+        """Test AutoMode with multiple tool calls."""
+        result = lai_instance.auto_mode_run(
+            "List Python files in current directory and show first 5 lines of fib.py",
+            max_iterations=3,
+            max_turns=10
+        )
+        assert "fib.py" in result or "Python" in result
 
 
 if __name__ == "__main__":
