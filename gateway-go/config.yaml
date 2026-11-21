@@ -91,3 +91,15 @@ logging:
 rate_limit:
   enabled: false
   requests_per_minute: 1000
+
+circuit_breaker:
+  enabled: true
+  max_failures: 5
+  timeout: 30s
+  half_open_requests: 3
+
+semantic_cache:
+  enabled: true
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  threshold: 0.95
+  max_entries: 500

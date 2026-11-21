@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -34,14 +35,15 @@ import (
 // ============================================================================
 
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Upstream   UpstreamConfig   `yaml:"upstream"`
-	Context    ContextConfig    `yaml:"context"`
-	Cache      CacheConfig      `yaml:"cache"`
-	Filter     FilterConfig     `yaml:"filter"`
-	Metrics    MetricsConfig    `yaml:"metrics"`
-	Logging    LoggingConfig    `yaml:"logging"`
-	Compression CompressionConfig `yaml:"compression"`
+	Server            ServerConfig            `yaml:"server"`
+	Upstream          UpstreamConfig          `yaml:"upstream"`
+	Context           ContextConfig           `yaml:"context"`
+	Cache             CacheConfig             `yaml:"cache"`
+	Filter            FilterConfig            `yaml:"filter"`
+	Metrics           MetricsConfig           `yaml:"metrics"`
+	Logging           LoggingConfig           `yaml:"logging"`
+	Compression       CompressionConfig       `yaml:"compression"`
+	CircuitBreaker    CircuitBreakerConfig    `yaml:"circuit_breaker"`
 }
 
 type ServerConfig struct {
@@ -105,6 +107,104 @@ type CompressionConfig struct {
 	PreserveCodeBlocks bool   `yaml:"preserve_code_blocks"`
 	MinCompressionRatio float64 `yaml:"min_compression_ratio"`
 	Methods           []string `yaml:"methods"`
+}
+
+type CircuitBreakerConfig struct {
+	Enabled          bool          `yaml:"enabled"`
+	MaxFailures      int           `yaml:"max_failures"`
+	Timeout          time.Duration `yaml:"timeout"`
+	HalfOpenRequests int           `yaml:"half_open_requests"`
+}
+
+type CircuitBreakerState int
+
+const (
+	CircuitClosed CircuitBreakerState = iota
+	CircuitOpen
+	CircuitHalfOpen
+)
+
+type CircuitBreaker struct {
+	name             string
+	state            CircuitBreakerState
+	failures         int
+	successes        int
+	lastFailure      time.Time
+	maxFailures      int
+	timeout          time.Duration
+	halfOpenRequests int
+	halfOpenSuccesses int
+	mu               sync.RWMutex
+}
+
+func NewCircuitBreaker(name string, config CircuitBreakerConfig) *CircuitBreaker {
+	return &CircuitBreaker{
+		name:             name,
+		state:            CircuitClosed,
+		maxFailures:      config.MaxFailures,
+		timeout:          config.Timeout,
+		halfOpenRequests: config.HalfOpenRequests,
+	}
+}
+
+func (cb *CircuitBreaker) Allow() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	switch cb.state {
+	case CircuitClosed:
+		return true
+	case CircuitOpen:
+		if time.Since(cb.lastFailure) > cb.timeout {
+			cb.state = CircuitHalfOpen
+			cb.halfOpenSuccesses = 0
+			return true
+		}
+		return false
+	case CircuitHalfOpen:
+		return cb.halfOpenSuccesses < cb.halfOpenRequests
+	}
+	return false
+}
+
+func (cb *CircuitBreaker) RecordSuccess() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	switch cb.state {
+	case CircuitClosed:
+		cb.failures = 0
+	case CircuitHalfOpen:
+		cb.halfOpenSuccesses++
+		if cb.halfOpenSuccesses >= cb.halfOpenRequests {
+			cb.state = CircuitClosed
+			cb.failures = 0
+			cb.halfOpenSuccesses = 0
+		}
+	}
+}
+
+func (cb *CircuitBreaker) RecordFailure() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	cb.failures++
+	cb.lastFailure = time.Now()
+
+	switch cb.state {
+	case CircuitClosed:
+		if cb.failures >= 5 { // Default max failures
+			cb.state = CircuitOpen
+		}
+	case CircuitHalfOpen:
+		cb.state = CircuitOpen
+	}
+}
+
+func (cb *CircuitBreaker) State() CircuitBreakerState {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state
 }
 
 // ============================================================================
@@ -361,13 +461,17 @@ type ErrorDetail struct {
 // ============================================================================
 
 type Gateway struct {
-	config     *Config
-	cache      *LRUCache
-	upstreams  map[string]*httputil.ReverseProxy
-	client     *http.Client
-	filterRegex *regexp.Regexp
-	semanticCache *SemanticCache
-	metrics     *Metrics
+	config           *Config
+	cache            *LRUCache
+	upstreams        map[string]*httputil.ReverseProxy
+	client           *http.Client
+	filterRegex      *regexp.Regexp
+	semanticCache    *SemanticCache
+	metrics          *Metrics
+	circuitBreakers  map[string]*CircuitBreaker
+	upstreamConfigs  map[string]UpstreamServer
+	requestCounts    map[string]int64
+	mu               sync.RWMutex
 }
 
 type LRUCache struct {
@@ -661,9 +765,12 @@ func NewMetrics() *Metrics {
 
 func NewGateway(config *Config) (*Gateway, error) {
 	g := &Gateway{
-		config:    config,
-		cache:     NewLRUCache(config.Cache.MaxEntries, config.Cache.TTL),
-		upstreams: make(map[string]*httputil.ReverseProxy),
+		config:          config,
+		cache:           NewLRUCache(config.Cache.MaxEntries, config.Cache.TTL),
+		upstreams:       make(map[string]*httputil.ReverseProxy),
+		circuitBreakers: make(map[string]*CircuitBreaker),
+		upstreamConfigs: make(map[string]UpstreamServer),
+		requestCounts:   make(map[string]int64),
 		client: &http.Client{
 			Timeout: config.Upstream.LlamaCPP.Timeout,
 			Transport: &http.Transport{
@@ -690,7 +797,19 @@ func NewGateway(config *Config) (*Gateway, error) {
 		g.filterRegex = re
 	}
 
-	// Create reverse proxies
+	// Initialize circuit breakers for each upstream
+	for name, upstream := range map[string]UpstreamServer{
+		"llama_cpp": config.Upstream.LlamaCPP,
+		"ollama":    config.Upstream.Ollama,
+	} {
+		if upstream.URL == "" {
+			continue
+		}
+		g.upstreamConfigs[name] = upstream
+		g.circuitBreakers[name] = NewCircuitBreaker(name, config.CircuitBreaker)
+	}
+
+	// Create reverse proxies for primary upstreams
 	for name, upstream := range map[string]UpstreamServer{
 		"llama_cpp": config.Upstream.LlamaCPP,
 		"ollama":    config.Upstream.Ollama,
@@ -717,7 +836,6 @@ func NewGateway(config *Config) (*Gateway, error) {
 		}
 		proxy.FlushInterval = 50 * time.Millisecond
 		proxy.ModifyResponse = func(resp *http.Response) error {
-			// Add custom headers
 			return nil
 		}
 		g.upstreams[name] = proxy
@@ -740,6 +858,8 @@ func NewGateway(config *Config) (*Gateway, error) {
 		}
 		proxy.FlushInterval = 50 * time.Millisecond
 		g.upstreams[fb.Name] = proxy
+		g.upstreamConfigs[fb.Name] = fb
+		g.circuitBreakers[fb.Name] = NewCircuitBreaker(fb.Name, config.CircuitBreaker)
 	}
 
 	return g, nil
@@ -972,19 +1092,46 @@ func (g *Gateway) handleChat(c *gin.Context) {
 		return
 	}
 
+	var resp *http.Response
+
 	upstreamStart := time.Now()
-	resp, err := g.client.Do(upstreamReq)
+
+	// Check circuit breaker before request
+	cb := g.circuitBreakers[upstreamName]
+	if cb != nil && !cb.Allow() {
+		// Circuit open, try fallback
+		if fallbackResp, fbErr := g.tryFallback(upstreamReq); fbErr == nil {
+			resp = fallbackResp
+		} else {
+			g.metrics.requestsTotal.WithLabelValues("POST", "/v1/chat/completions", "503").Inc()
+			c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: ErrorDetail{Message: "Upstream circuit open, all fallbacks failed", Type: "server_error", Code: "circuit_open"}})
+			return
+		}
+	} else {
+		resp, err = g.client.Do(upstreamReq)
+	}
+
 	upstreamLatency := time.Since(upstreamStart)
 	g.metrics.upstreamLatency.WithLabelValues(upstreamName).Observe(upstreamLatency.Seconds())
 
 	if err != nil {
+		// Record failure in circuit breaker
+		if cb != nil {
+			cb.RecordFailure()
+		}
 		// Try fallback
 		if fallbackResp, fbErr := g.tryFallback(upstreamReq); fbErr == nil {
 			resp = fallbackResp
+			err = nil
 		} else {
 			g.metrics.requestsTotal.WithLabelValues("POST", "/v1/chat/completions", "502").Inc()
 			c.JSON(http.StatusBadGateway, ErrorResponse{Error: ErrorDetail{Message: "Upstream error: " + err.Error(), Type: "server_error", Code: "upstream_error"}})
 			return
+		}
+	} else {
+		// Record success in circuit breaker
+		if cb != nil {
+			cb.RecordSuccess()
 		}
 	}
 	defer resp.Body.Close()
@@ -1052,17 +1199,89 @@ func (g *Gateway) tryFallback(req *http.Request) (*http.Response, error) {
 }
 
 func (g *Gateway) selectUpstream() string {
-	// Simple: prefer llama_cpp, fallback to ollama
-	if _, ok := g.upstreams["llama_cpp"]; ok {
-		return "llama_cpp"
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	type candidate struct {
+		name   string
+		weight int
+		score  float64
 	}
-	if _, ok := g.upstreams["ollama"]; ok {
-		return "ollama"
+
+	var candidates []candidate
+
+	for name, upstream := range g.upstreamConfigs {
+		cb := g.circuitBreakers[name]
+		
+		// Skip if circuit breaker is open
+		if cb != nil && !cb.Allow() {
+			continue
+		}
+
+		// Calculate score based on weight, latency, and error rate
+		weight := float64(upstream.Weight)
+		if weight <= 0 {
+			weight = 1
+		}
+
+		// Adjust score based on circuit breaker state
+		cbState := CircuitClosed
+		if cb != nil {
+			cbState = cb.State()
+		}
+		
+		var statePenalty float64 = 1.0
+		switch cbState {
+		case CircuitClosed:
+			statePenalty = 1.0
+		case CircuitHalfOpen:
+			statePenalty = 0.5
+		case CircuitOpen:
+			continue // Skip open circuits
+		}
+
+		// Adjust for request count (prefer less loaded)
+		reqCount := float64(g.requestCounts[name])
+		loadPenalty := 1.0 / (1.0 + reqCount/100.0)
+
+		score := weight * statePenalty * loadPenalty
+
+		candidates = append(candidates, candidate{
+			name:   name,
+			weight: upstream.Weight,
+			score:  score,
+		})
 	}
-	for name := range g.upstreams {
-		if name != "llama_cpp" && name != "ollama" {
+
+	if len(candidates) == 0 {
+		// All circuits open, return first available
+		for name := range g.upstreams {
 			return name
 		}
+		return "llama_cpp"
+	}
+
+	// Weighted random selection
+	totalScore := 0.0
+	for _, c := range candidates {
+		totalScore += c.score
+	}
+
+	r := rand.Float64() * totalScore
+	accumulated := 0.0
+	for _, c := range candidates {
+		accumulated += c.score
+		if r <= accumulated {
+			// Increment request count for load balancing
+			g.requestCounts[c.name]++
+			return c.name
+		}
+	}
+
+	// Fallback
+	if len(candidates) > 0 {
+		g.requestCounts[candidates[0].name]++
+		return candidates[0].name
 	}
 	return "llama_cpp"
 }
