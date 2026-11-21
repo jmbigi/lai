@@ -44,6 +44,8 @@ type Config struct {
 	Logging           LoggingConfig           `yaml:"logging"`
 	Compression       CompressionConfig       `yaml:"compression"`
 	CircuitBreaker    CircuitBreakerConfig    `yaml:"circuit_breaker"`
+	Auth              AuthConfig              `yaml:"auth"`
+	RateLimit         RateLimitConfig         `yaml:"rate_limit"`
 }
 
 type ServerConfig struct {
@@ -115,6 +117,28 @@ type CircuitBreakerConfig struct {
 	MaxFailures      int           `yaml:"max_failures"`
 	Timeout          time.Duration `yaml:"timeout"`
 	HalfOpenRequests int           `yaml:"half_open_requests"`
+}
+
+type AuthConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	OpenKey            string   `yaml:"open_key"`
+	ValidKeys          []string `yaml:"valid_keys"`
+	RateLimit          RateLimitAuthConfig `yaml:"rate_limit"`
+}
+
+type RateLimitAuthConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"`
+}
+
+type RateLimitConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"`
+}
+
+type clientInfo struct {
+	count       int
+	windowStart time.Time
 }
 
 type CircuitBreakerState int
@@ -1434,6 +1458,166 @@ func (g *Gateway) cacheSize() int {
 	return len(g.cache.entries)
 }
 
+// cleanupRateLimiters periodically cleans up expired rate limiter entries
+func (g *Gateway) cleanupRateLimiters(openKeyLimiters, keyLimiters *map[string]*clientInfo, mu *sync.Mutex) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		mu.Lock()
+		now := time.Now()
+		for ip, info := range *openKeyLimiters {
+			if now.Sub(info.windowStart) > time.Minute {
+				delete(*openKeyLimiters, ip)
+			}
+		}
+		for key, info := range *keyLimiters {
+			if now.Sub(info.windowStart) > time.Minute {
+				delete(*keyLimiters, key)
+			}
+		}
+		mu.Unlock()
+	}
+}
+
+// authMiddleware validates API key
+func (g *Gateway) authMiddleware() gin.HandlerFunc {
+	// Build set of valid keys for O(1) lookup
+	validKeys := make(map[string]bool)
+	for _, k := range g.config.Auth.ValidKeys {
+		validKeys[k] = true
+	}
+	// Ensure open key is always valid
+	openKey := g.config.Auth.OpenKey
+	if openKey == "" {
+		openKey = "open"
+	}
+	validKeys[openKey] = true
+
+	return func(c *gin.Context) {
+		// Skip auth for health/ready endpoints
+		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/ready" {
+			c.Next()
+			return
+		}
+
+		// Extract API key from Authorization header
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "Missing Authorization header",
+					"type":    "auth_error",
+					"code":    "missing_api_key",
+				},
+			})
+			return
+		}
+
+		// Support "Bearer <key>" and raw key
+		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+		apiKey = strings.TrimSpace(apiKey)
+
+		// Check if key is valid
+		if !validKeys[apiKey] {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "Invalid API key",
+					"type":    "auth_error",
+					"code":    "invalid_api_key",
+				},
+			})
+			return
+		}
+
+		// Store key for rate limiting
+		c.Set("api_key", apiKey)
+		c.Set("is_open_key", apiKey == openKey)
+
+		c.Next()
+	}
+}
+
+// rateLimitMiddleware implements per-IP rate limiting for open key
+// and per-key rate limiting for valid keys
+func (g *Gateway) rateLimitMiddleware() gin.HandlerFunc {
+	openKeyLimiters := make(map[string]*clientInfo) // IP -> info for "open" key
+	keyLimiters := make(map[string]*clientInfo)     // API key -> info for other keys
+
+	var mu sync.Mutex
+
+	// Start cleanup goroutine
+	go g.cleanupRateLimiters(&openKeyLimiters, &keyLimiters, &mu)
+
+	return func(c *gin.Context) {
+		if !g.config.RateLimit.Enabled {
+			c.Next()
+			return
+		}
+
+		apiKey, _ := c.Get("api_key")
+		isOpenKey, _ := c.Get("is_open_key")
+		keyStr := ""
+		if apiKey != nil {
+			keyStr = apiKey.(string)
+		}
+		isOpen := false
+		if isOpenKey != nil {
+			isOpen = isOpenKey.(bool)
+		}
+
+		clientIP := c.ClientIP()
+		now := time.Now()
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if isOpen {
+			// Rate limit "open" key by IP
+			limit := g.config.Auth.RateLimit.RequestsPerMinute
+			if limit <= 0 {
+				limit = 60
+			}
+			info, exists := openKeyLimiters[clientIP]
+			if !exists || now.Sub(info.windowStart) >= time.Minute {
+				openKeyLimiters[clientIP] = &clientInfo{count: 1, windowStart: now}
+			} else if info.count >= limit {
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error": gin.H{
+						"message": fmt.Sprintf("Rate limit exceeded for open key (%d req/min per IP)", limit),
+						"type":    "rate_limit_error",
+						"code":    "rate_limit_exceeded",
+					},
+				})
+				return
+			} else {
+				info.count++
+			}
+		} else if keyStr != "" {
+			// Rate limit valid keys by key
+			limit := g.config.RateLimit.RequestsPerMinute
+			if limit <= 0 {
+				limit = 1000
+			}
+			info, exists := keyLimiters[keyStr]
+			if !exists || now.Sub(info.windowStart) >= time.Minute {
+				keyLimiters[keyStr] = &clientInfo{count: 1, windowStart: now}
+			} else if info.count >= limit {
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error": gin.H{
+						"message": fmt.Sprintf("Rate limit exceeded (%d req/min)", limit),
+						"type":    "rate_limit_error",
+						"code":    "rate_limit_exceeded",
+					},
+				})
+				return
+			} else {
+				info.count++
+			}
+		}
+		c.Next()
+	}
+}
+
 func (g *Gateway) handleCacheStats(c *gin.Context) {
 	g.cache.mu.RLock()
 	defer g.cache.mu.RUnlock()
@@ -1680,6 +1864,16 @@ func main() {
 		}
 		c.Next()
 	})
+
+	// Auth middleware
+	if config.Auth.Enabled {
+		r.Use(gateway.authMiddleware())
+	}
+
+	// Rate limit middleware
+	if config.RateLimit.Enabled {
+		r.Use(gateway.rateLimitMiddleware())
+	}
 
 	// Routes
 	r.GET("/health", gateway.handleHealth)

@@ -81,10 +81,6 @@ logging:
   format: "json"
   access_log: true
 
-rate_limit:
-  enabled: false
-  requests_per_minute: 1000
-
 compression:
   enabled: true
   threshold: 1024
@@ -120,12 +116,6 @@ auth:
 rate_limit:
   enabled: true
   requests_per_minute: 1000
-
-circuit_breaker:
-  enabled: true
-  max_failures: 5
-  timeout: 30s
-  half_open_requests: 3
 
 semantic_cache:
   enabled: true
