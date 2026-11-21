@@ -5,12 +5,15 @@ Dimensiones (basadas en benchmarks 2026: StaminaBench, WORKFLOWPERTURB,
 ReliabilityBench, XPerf, AIGatewayBench, MCP-Injector, agitracker):
 
 1. Concurrency sweep   — c=1,4,16,64,128,256 con p50/p95/p99 y RPS
-2. Multi-turn stamina  — sesiones de N turnos consecutivos por agente
-3. Fault injection     — 401, 429, 500, bad key, rotating key, timeout
-4. Large context       — prompts 1k / 10k / 100k tokens
-5. Streaming           — TTFT + inter-chunk latencia bajo carga
-6. Security key flood  — claves API inválidas/rotadas a tasa controlada
-7. Repeated trials     — N trials por celda, mediana + min/max
+2. Multi-turn stamina  — sesiones de N turnos consecutivos por agente (StaminaBench)
+3. Fault injection     — 401, 429, 500, bad key, rotating key, timeout (MCP-Injector)
+4. Large context       — prompts 1k / 10k / 100k tokens (AIGatewayBench large_context)
+5. Streaming           — TTFT + inter-chunk latencia bajo carga (AIGatewayBench streaming_turn)
+6. Security key flood  — claves API inválidas/rotadas a tasa controlada (AIGatewayBench security_key_flood)
+7. Repeated trials     — N trials por celda, mediana + min/max (agitracker)
+8. Workflow perturbation — pasos faltantes/comprimidos/cambiados (WORKFLOWPERTURB)
+9. Reliability under infra failure — fallos de infraestructura (ReliabilityBench)
+10. XPerf multi-problem — múltiples problemas simultáneos (XPerf)
 
 Diseño robusto:
   - Warm-up antes de medir (descarta primera corrida)
@@ -46,7 +49,6 @@ SHORT_PROMPTS_ES = [
     "¿Cuál es la diferencia entre una lista y una tupla en Python?",
     "Crea un ejemplo de uso de asyncio en Python.",
 ]
-
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -291,18 +293,15 @@ class HttpClient:
                         .get("message", {})
                         .get("content", "")
                     )
-
-                # Validate content (accept content OR reasoning_content)
-                if stream:
-                    reasoning = ""
-                else:
                     reasoning = (
                         (data.get("choices") or [{}])[0]
                         .get("message", {})
                         .get("reasoning_content", "")
                     )
-                if not content or len(content.strip()) == 0:
-                    content = reasoning
+                    if not content or len(content.strip()) == 0:
+                        content = reasoning
+
+                # Validate content (accept content OR reasoning_content)
                 if not content or len(content.strip()) == 0:
                     return Result(
                         success=False, latency_ms=(time.perf_counter() - start) * 1000,
@@ -694,6 +693,149 @@ def run_security(
 
 
 # ---------------------------------------------------------------------------
+# WORKFLOWPERTURB suite: missing steps, compressed steps, changed descriptions
+# ---------------------------------------------------------------------------
+
+
+def run_workflow_perturb(
+    http: HttpClient,
+    concurrency: int,
+    total: int,
+    trials: int,
+    breaker: Optional[CircuitBreaker] = None,
+) -> Cell:
+    """WORKFLOWPERTURB: perturba flujos de agentes (pasos faltantes, comprimidos, cambios de descripción)."""
+    cell = Cell(name=f"workflow_perturb concurrency={concurrency} total={total}")
+    # Three perturbation variants
+    variants = {
+        "missing_step": (
+            "Resuelve este problema en español pero OMITE el paso de validación. "
+            "Solo da el resultado final. Problema: Calcula la suma de 1 a 100."
+        ),
+        "compressed": (
+            "Resuelve en español, comprime todos los pasos en una sola respuesta corta. "
+            "Problema: ¿Cuál es el factorial de 5?"
+        ),
+        "changed_description": (
+            "Responde en español. El problema ahora se llama 'Suma de Gauss'. "
+            "Calcula: suma de números del 1 al 50."
+        ),
+    }
+    for tr in range(1, trials + 1):
+        trial = Trial(name=f"workflow_perturb concurrency={concurrency} total={total}")
+        prompts = [
+            variants[list(variants.keys())[i % len(variants)]]
+            for i in range(total)
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = [ex.submit(http.post_chat, p, False) for p in prompts]
+            for fut in concurrent.futures.as_completed(futs):
+                r = fut.result()
+                trial.add(r)
+                if breaker:
+                    breaker.record(r.success)
+                    if breaker.should_trip():
+                        print(
+                            f"  [CIRCUIT BREAKER] trip at workflow_perturb trial {tr}"
+                        )
+                        cell.add_trial(trial)
+                        return cell
+        cell.add_trial(trial)
+    cell.report()
+    return cell
+
+
+# ---------------------------------------------------------------------------
+# ReliabilityBench: infrastructure failure simulation
+# ---------------------------------------------------------------------------
+
+
+def run_reliability(
+    http: HttpClient,
+    failure_rate: float,
+    total: int,
+    concurrency: int,
+    trials: int,
+    breaker: Optional[CircuitBreaker] = None,
+) -> Cell:
+    """ReliabilityBench: confiabilidad bajo condiciones de estrés de producción (fallos de infraestructura)."""
+    import random
+    random.seed(123)
+    cell = Cell(name=f"reliability failure_rate={failure_rate} concurrency={concurrency}")
+    for tr in range(1, trials + 1):
+        trial = Trial(name=f"reliability failure_rate={failure_rate} concurrency={concurrency}")
+        prompts = [
+            SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = []
+            for i, p in enumerate(prompts):
+                fault = None
+                if random.random() < failure_rate:
+                    fault = random.choice(["timeout", "bad_key", "no_key"])
+                futs.append(ex.submit(http.post_chat, p, False, fault, tr))
+            for fut in concurrent.futures.as_completed(futs):
+                r = fut.result()
+                trial.add(r)
+                if breaker:
+                    breaker.record(r.success)
+                    if breaker.should_trip():
+                        print(
+                            f"  [CIRCUIT BREAKER] trip at reliability trial {tr}"
+                        )
+                        cell.add_trial(trial)
+                        return cell
+        cell.add_trial(trial)
+    cell.report()
+    return cell
+
+
+# ---------------------------------------------------------------------------
+# XPerf: multi-problem simultaneous (reasoning under load)
+# ---------------------------------------------------------------------------
+
+
+def run_xperf(
+    http: HttpClient,
+    concurrency: int,
+    total: int,
+    trials: int,
+    breaker: Optional[CircuitBreaker] = None,
+) -> Cell:
+    """XPerf: stress test de modelos de razonamiento con múltiples problemas simultáneos."""
+    cell = Cell(name=f"xperf concurrency={concurrency} total={total}")
+    # Complex reasoning problems in Spanish
+    complex_problems = [
+        "Resuelve paso a paso: Si un tren sale de Madrid a las 8:00 a 80 km/h y otro de Barcelona a las 9:00 a 100 km/h, ¿cuándo y dónde se cruzan? (distancia 600 km)",
+        "Explica la diferencia entre clase y instancia en POO con un ejemplo completo en Python.",
+        "Escribe una función recursiva para calcular Fibonacci y explica su complejidad temporal.",
+        "Diseña una API REST para un sistema de inventario con endpoints, códigos HTTP y validaciones.",
+        "Compara SQL vs NoSQL: cuándo usar cada uno y ejemplos concretos.",
+    ]
+    for tr in range(1, trials + 1):
+        trial = Trial(name=f"xperf concurrency={concurrency} total={total}")
+        prompts = [
+            complex_problems[i % len(complex_problems)] for i in range(total)
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = [ex.submit(http.post_chat, p, False) for p in prompts]
+            for fut in concurrent.futures.as_completed(futs):
+                r = fut.result()
+                trial.add(r)
+                if breaker:
+                    breaker.record(r.success)
+                    if breaker.should_trip():
+                        print(
+                            f"  [CIRCUIT BREAKER] trip at xperf trial {tr}"
+                        )
+                        cell.add_trial(trial)
+                        return cell
+        cell.add_trial(trial)
+    cell.report()
+    return cell
+
+
+# ---------------------------------------------------------------------------
 # Warm-up
 # ---------------------------------------------------------------------------
 
@@ -756,7 +898,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Stress test a prueba de balas para lai")
     parser.add_argument(
         "--suite", default="concurrency",
-        choices=["concurrency", "stamina", "faults", "context", "streaming", "security", "full"],
+        choices=["concurrency", "stamina", "faults", "context", "streaming", "security",
+                 "workflow", "reliability", "xperf", "full"],
         help="Suite de pruebas a ejecutar",
     )
     parser.add_argument("--concurrency", type=int, default=10, help="Peticiones concurrentes")
@@ -837,6 +980,21 @@ def main() -> int:
         if args.suite in ("security", "full"):
             all_cells.append(
                 run_security(http, args.flood_rate, args.total, args.trials, breaker=breaker)
+            )
+
+        if args.suite in ("workflow", "full"):
+            all_cells.append(
+                run_workflow_perturb(http, args.concurrency, args.total, args.trials, breaker=breaker)
+            )
+
+        if args.suite in ("reliability", "full"):
+            all_cells.append(
+                run_reliability(http, args.fault_rate, args.total, args.concurrency, args.trials, breaker=breaker)
+            )
+
+        if args.suite in ("xperf", "full"):
+            all_cells.append(
+                run_xperf(http, args.concurrency, args.total, args.trials, breaker=breaker)
             )
 
         report = global_report(all_cells)
