@@ -7,7 +7,6 @@ using local LLMs (Qwen3-8B via llama.cpp)
 
 import argparse
 import ast
-import asyncio
 import fnmatch
 import glob
 import http.server
@@ -316,15 +315,51 @@ class ToolRegistry:
         except Exception as e:
             return [f"Error listing directory: {str(e)}"]
 
-    def run_command(self, cmd: str, cwd: str = None, timeout: int = 60, max_output: int = 8000) -> str:
+    def run_command(self, cmd: str, cwd: str = None, timeout: int = 60, max_output: int = 8000,
+                    sandbox: bool = True) -> str:
         """Run a shell command with a timeout and bounded output.
 
-        Commands run in the project by default. This is not a security sandbox:
-        only enable AutoMode on repositories you trust.
+        If sandbox=True (default), runs inside bubblewrap with restricted namespaces.
+        Only enable AutoMode on repositories you trust.
         """
+        # Build bubblewrap command for sandboxing
+        if sandbox:
+            # Allow read access to project dir, write to /tmp, no network, no new privs
+            project_root = os.path.abspath(cwd) if cwd else os.getcwd()
+            # Find python executable path for sandbox
+            python_bin = sys.executable
+            python_real = os.path.realpath(python_bin)
+            python_dir = os.path.dirname(python_real)
+            
+            bwrap_cmd = [
+                "bwrap",
+                "--ro-bind", "/usr", "/usr",
+                "--ro-bind", "/lib", "/lib",
+                "--ro-bind", "/lib64", "/lib64",
+                "--ro-bind", "/bin", "/bin",
+                "--ro-bind", "/sbin", "/sbin",
+                "--ro-bind", "/etc", "/etc",
+                "--bind", project_root, project_root,
+                "--bind", "/tmp", "/tmp",
+                "--ro-bind", python_dir, python_dir,
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "--unshare-all",
+                "--die-with-parent",
+                "--new-session",
+                "--cap-drop", "ALL",
+                "--",
+                "bash", "-c", cmd
+            ]
+            full_cmd = bwrap_cmd
+            use_shell = False
+        else:
+            full_cmd = cmd
+            use_shell = True
+
         try:
             result = subprocess.run(
-                cmd, shell=True, cwd=cwd, capture_output=True, text=True,
+                full_cmd, shell=use_shell, cwd=cwd, capture_output=True, text=True,
                 timeout=timeout,
             )
             output = result.stdout or ""
@@ -526,15 +561,50 @@ class ToolRegistry:
             return f"Error in web search: {str(e)}"
 
     def run_python(self, code: str, args: List[str] = None, timeout: int = 30,
-                   max_output: int = 8000) -> str:
-        """Run Python code in a temporary file and always clean it up."""
+                   max_output: int = 8000, sandbox: bool = True) -> str:
+        """Run Python code in a temporary file and always clean it up.
+
+        If sandbox=True (default), runs inside bubblewrap with restricted namespaces.
+        """
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
                 f.write(code)
                 temp_path = f.name
+
+            if sandbox:
+                # Sandboxed execution with bubblewrap
+                project_root = os.path.dirname(os.path.abspath(temp_path))
+                python_bin = sys.executable
+                python_real = os.path.realpath(python_bin)
+                python_dir = os.path.dirname(python_real)
+                
+                bwrap_cmd = [
+                    "bwrap",
+                    "--ro-bind", "/usr", "/usr",
+                    "--ro-bind", "/lib", "/lib",
+                    "--ro-bind", "/lib64", "/lib64",
+                    "--ro-bind", "/bin", "/bin",
+                    "--ro-bind", "/sbin", "/sbin",
+                    "--ro-bind", "/etc", "/etc",
+                    "--bind", project_root, project_root,
+                    "--bind", "/tmp", "/tmp",
+                    "--ro-bind", python_dir, python_dir,
+                    "--proc", "/proc",
+                    "--dev", "/dev",
+                    "--unshare-all",
+                    "--die-with-parent",
+                    "--new-session",
+                    "--cap-drop", "ALL",
+                    "--",
+                    sys.executable, temp_path
+                ] + (args or [])
+                full_cmd = bwrap_cmd
+            else:
+                full_cmd = [sys.executable, temp_path] + (args or [])
+
             result = subprocess.run(
-                [sys.executable, temp_path] + (args or []),
+                full_cmd,
                 capture_output=True, text=True, timeout=timeout,
             )
             output = result.stdout or ""
@@ -1151,9 +1221,10 @@ class ToolRegistry:
             fn("write_file", "Write a file. Python files are syntax-checked first. Use strict=true for ruff+mypy checks.",
                {"path": {"type": "string"}, "content": {"type": "string"}, "strict": {"type": "boolean", "default": False}}, ["path", "content"]),
             fn("list_dir", "List a directory", {"path": {"type": "string"}}, ["path"]),
-            fn("run_command", "Run a shell command in the project",
+            fn("run_command", "Run a shell command in the project. Sandboxed with bubblewrap by default.",
                {"cmd": {"type": "string"}, "cwd": {"type": "string"},
-                "timeout": {"type": "integer", "default": 60}}, ["cmd"]),
+                "timeout": {"type": "integer", "default": 60},
+                "sandbox": {"type": "boolean", "default": True}}, ["cmd"]),
             fn("grep", "Search text in files",
                {"pattern": {"type": "string"}, "path": {"type": "string"},
                 "ignore_case": {"type": "boolean", "default": False},
@@ -1164,9 +1235,10 @@ class ToolRegistry:
             fn("repo_map", "Show Python classes/functions as a compact repository map",
                {"path": {"type": "string", "default": "."},
                 "max_chars": {"type": "integer", "default": 8000}}, []),
-            fn("run_python", "Run a Python snippet",
+            fn("run_python", "Run a Python snippet. Sandboxed with bubblewrap by default.",
                {"code": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}},
-                "timeout": {"type": "integer", "default": 30}}, ["code"]),
+                "timeout": {"type": "integer", "default": 30},
+                "sandbox": {"type": "boolean", "default": True}}, ["code"]),
             fn("run_tests", "Run pytest",
                {"path": {"type": "string", "default": "."},
                 "pattern": {"type": "string", "default": "test_*.py"},
@@ -1449,7 +1521,30 @@ class LAI:
         self.last_error: Optional[str] = None
         self.temp: float = 0.7
         self.max_tokens: int = 4096
-        self.history_max_chars: int = 48000
+        self.history_max_tokens: int = 12000  # ~48000 chars / 4
+
+    def _trim_history(self) -> None:
+        """Trim conversation history to stay within token budget.
+        
+        Keeps the most recent messages, removing oldest first.
+        Uses rough token estimation: ~4 chars per token.
+        """
+        if not self.conversation_history:
+            return
+        
+        total_tokens = 0
+        for msg in self.conversation_history:
+            content = msg.get("content", "")
+            total_tokens += len(content) // 4
+        
+        if total_tokens <= self.history_max_tokens:
+            return
+        
+        # Remove oldest messages (but keep system messages if possible)
+        while total_tokens > self.history_max_tokens and len(self.conversation_history) > 1:
+            removed = self.conversation_history.pop(0)
+            content = removed.get("content", "")
+            total_tokens -= len(content) // 4
 
     async def _chat(self, prompt: str, stream: bool = True, thinking: bool = True, temp: float = 0.7, max_tokens: int = 4096) -> str:
         """Chat with the model with proper streaming support."""
@@ -1492,6 +1587,11 @@ class LAI:
             return f"Error: {e}"
 
     def chat(self, prompt: str, stream: bool = True, thinking: bool = True, temp: float = 0.7, max_tokens: int = 4096) -> str:
+        """Chat with the model using conversation history.
+        
+        Delegates to chat_messages() for native tool calling and reasoning support.
+        Handles conversation history trimming and streaming display.
+        """
         # Rule 4: LAI output must always be generated by a local model.
         if not is_local_url(self.base_url):
             message = (
@@ -1501,157 +1601,118 @@ class LAI:
             print(message, file=sys.stderr)
             return message
 
-        # Add to conversation history
+        # Trim history before adding new message
+        self._trim_history()
+        
+        # Add user message to history
         self.conversation_history.append({"role": "user", "content": prompt})
         
         try:
-            # Include conversation history
+            # Prepare messages with history
             messages = self.conversation_history.copy()
-            if thinking and messages:
-                # Wrap last message with thinking tags
-                messages[-1]["content"] = f"<thinking>\n{messages[-1]['content']}\n</thinking>\n\nProvide the solution."
             
-            async def _do_chat():
-                async with httpx.AsyncClient(timeout=120) as client:
-                    # Add /no_think system message to suppress thinking when disabled
-                    final_messages = messages.copy()
-                    if not thinking:
-                        # Insert /no_think as system message at the beginning
-                        final_messages.insert(0, {"role": "system", "content": "/no_think"})
+            if stream:
+                # Streaming: print chunks as they arrive
+                content_buffer = []
+                thinking_buffer = []
+                
+                for chunk in self.chat_messages(
+                    messages=messages,
+                    tools=None,
+                    tool_choice="auto",
+                    stream=True,
+                    thinking=thinking,
+                    temp=temp,
+                    max_tokens=max_tokens,
+                ):
+                    if isinstance(chunk, dict) and chunk.get("error"):
+                        return f"Error: {chunk['error']}"
                     
-                    payload = {
-                        "model": self.model,
-                        "messages": final_messages,
-                        "max_tokens": max_tokens,
-                        "temperature": temp,
-                        "stream": stream,
-                    }
+                    content = chunk.get("content", "")
+                    thinking_content = chunk.get("reasoning_content", "")
+                    finish_reason = chunk.get("finish_reason")
                     
-                    headers = {"Content-Type": "application/json"}
-                    # Bypass cache for non-streaming requests
-                    if not stream:
-                        headers["Cache-Control"] = "no-cache"
-                        headers["X-No-Cache"] = "true"
+                    if content:
+                        print(content, end="", flush=True)
+                        content_buffer.append(content)
+                    if thinking_content:
+                        print(thinking_content, end="", flush=True)
+                        thinking_buffer.append(thinking_content)
                     
-                    if stream:
-                        content_buffer = []
-                        async with client.stream("POST", f"{self.base_url}/chat/completions", json=payload, headers=headers) as resp:
-                            async for line in resp.aiter_lines():
-                                if line.startswith("data: "):
-                                    data = line[6:]
-                                    if data.strip() == "[DONE]":
-                                        break
-                                    try:
-                                        data = json.loads(data)
-                                        content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                        if content:
-                                            print(content, end="", flush=True)
-                                            content_buffer.append(content)
-                                    except Exception:
-                                        pass
-                            print()
-                            return "".join(content_buffer)
-                    else:
-                        resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers, timeout=120)
-                        # Handle both streaming and non-streaming responses from gateway
-                        content_type = resp.headers.get("content-type", "")
-                        if "text/event-stream" in content_type:
-                            # Gateway returned streaming format - parse chunks
-                            content_buffer = []
-                            text = resp.text
-                            for line in text.split('\n'):
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    if data_str.strip() == "[DONE]":
-                                        break
-                                    try:
-                                        data = json.loads(data_str)
-                                        content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                        if content:
-                                            content_buffer.append(content)
-                                    except Exception:
-                                        pass
-                            return "".join(content_buffer)
-                        else:
-                            data = resp.json()
-                            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if finish_reason:
+                        print()
+                        break
+                
+                response = "".join(content_buffer)
+                thinking_full = "".join(thinking_buffer)
+            else:
+                # Non-streaming
+                result = self.chat_messages(
+                    messages=messages,
+                    tools=None,
+                    tool_choice="auto",
+                    stream=False,
+                    thinking=thinking,
+                    temp=temp,
+                    max_tokens=max_tokens,
+                )
+                
+                if isinstance(result, dict) and result.get("error"):
+                    return f"Error: {result['error']}"
+                
+                response = result.get("content", "")
+                thinking_full = result.get("reasoning_content", "")
             
-            response = asyncio.run(_do_chat())
+            # Add assistant response to history
             self.conversation_history.append({"role": "assistant", "content": response})
+            self._trim_history()
             
-            # Extract thinking only if explicitly enabled
-            if thinking and self.thinking_manager.enabled:
-                thinking_content, clean_content = self.thinking_manager.extract_reasoning(response)
-                if thinking_content:
-                    response = self.thinking_manager.format_thinking_for_display(thinking_content, clean_content)
-            elif not thinking:
-                # When thinking is disabled, ensure we don't have thinking artifacts
-                # The model might still output <thinking>...</thinking>, <thinking>...</thinking>, "question...回答" format, or "questions...</thinking>"
-                
-                import re
-                
-                # Handle <thinking>...</thinking> format (full)
-                if "<thinking>" in response and "</thinking>" in response:
-                    response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL).strip()
-                
-                # Handle <thinking>...</thinking> format (abbreviated, Qwen3 style)
-                if "<thinking>" in response and "</thinking>" in response:
-                    response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL).strip()
-                
-                # Handle generic <think>...</think> format
-                if "<think>" in response and "</think>" in response:
-                    response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
-                
-                # Handle "question...回答" format (model outputs "question" as prefix)
-                if "question" in response.lower() and "回答" in response:
-                    response = re.sub(r"question.*?回答", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
-                
-                # Handle "thinking...回答" format (some models)
-                if "thinking" in response.lower() and "回答" in response:
-                    response = re.sub(r"thinking.*?回答", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
-                
-                # Handle "questions...回答" format (DeepSeek style)
-                if "回答" in response:
-                    parts = response.split("回答")
-                    if len(parts) > 1:
-                        response = parts[-1].strip()
-                
-                # Handle "questions...</thinking>" format (some models)
-                if "questions" in response.lower() and "</thinking>" in response:
-                    response = re.sub(r"questions\s*(.*?)\s*</thinking>", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
-                
-                # Handle "questions...</thinking>" format (abbreviated)
-                if "questions" in response.lower() and "</thinking>" in response:
-                    response = re.sub(r"questions\s*(.*?)\s*</thinking>", "", response, flags=re.DOTALL | re.IGNORECASE).strip()
-                
-                # Also strip markdown code fences if present (handle cases with leading text)
-                response = response.strip()
-                # Extract code from markdown fences if present
-                if "```python" in response:
-                    # Extract content between ```python and ```
-                    match = re.search(r'```python\n(.*?)\n```', response, re.DOTALL)
-                    if match:
-                        response = match.group(1).strip()
-                elif "```" in response:
-                    # Extract content between ``` and ```
-                    match = re.search(r'```\n(.*?)\n```', response, re.DOTALL)
-                    if match:
-                        response = match.group(1).strip()
+            # Handle thinking display
+            if thinking and thinking_full:
+                # Show thinking if enabled
+                if self.thinking_manager.enabled:
+                    return self.thinking_manager.format_thinking_for_display(thinking_full, response)
                 else:
-                    # Fallback: strip leading ```python or ``` if at start
-                    response = response.strip()
-                    if response.startswith("```python"):
-                        response = response[9:]
-                    elif response.startswith("```"):
-                        response = response[3:]
-                    if response.endswith("```"):
-                        response = response[:-3]
-                    response = response.strip()
+                    # Return just the clean response
+                    return response
+            elif not thinking:
+                # Ensure no thinking artifacts in response
+                return self._strip_thinking_artifacts(response)
             
             return response
+            
         except Exception as e:
             return f"Error: {e}"
-    
+
+    def _strip_thinking_artifacts(self, text: str) -> str:
+        """Remove thinking artifacts from model response when thinking is disabled."""
+        import re
+        
+        # Remove <thinking>...</thinking> tags
+        text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+        # Remove 思考...回答 patterns
+        text = re.sub(r"思考.*?回答", "", text, flags=re.DOTALL)
+        # Remove thinking...回答 patterns
+        text = re.sub(r"thinking.*?回答", "", text, flags=re.DOTALL | re.IGNORECASE)
+        # Remove question...回答 patterns
+        text = re.sub(r"question.*?回答", "", text, flags=re.DOTALL | re.IGNORECASE)
+        # Remove 回答 prefix
+        if "回答" in text:
+            parts = text.split("回答")
+            if len(parts) > 1:
+                text = parts[-1].strip()
+        # Remove markdown code fences if present
+        text = text.strip()
+        if "```python" in text:
+            match = re.search(r'```python\n(.*?)\n```', text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        elif "```" in text:
+            match = re.search(r'```\n(.*?)\n```', text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return text.strip()
+
     def chat_messages(self, messages: List[Dict], tools: Optional[List[Dict]] = None,
                       tool_choice: str = "auto", stream: bool = False,
                       thinking: bool = False, temp: float = 0.1,
