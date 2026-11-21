@@ -330,7 +330,7 @@ class ToolRegistry:
             python_bin = sys.executable
             python_real = os.path.realpath(python_bin)
             python_dir = os.path.dirname(python_real)
-            
+
             bwrap_cmd = [
                 "bwrap",
                 "--ro-bind", "/usr", "/usr",
@@ -513,47 +513,47 @@ class ToolRegistry:
             from urllib.parse import quote_plus
 
             import requests
-            
+
             # Use DuckDuckGo HTML endpoint
             url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
-            
+
             resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
-            
+
             # Parse HTML for results
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
+
             results = []
             for result in soup.select('.result__body'):
                 title_elem = result.select_one('.result__title')
                 snippet_elem = result.select_one('.result__snippet')
                 url_elem = result.select_one('.result__url')
-                
+
                 title = title_elem.get_text(strip=True) if title_elem else ''
                 snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
                 url = url_elem.get_text(strip=True) if url_elem else ''
-                
+
                 if title and snippet:
                     results.append({
                         'title': title,
                         'snippet': snippet,
                         'url': url
                     })
-                    
+
                 if len(results) >= num_results:
                     break
-            
+
             if not results:
                 return "No results found"
-            
+
             output = []
             for i, r in enumerate(results, 1):
                 output.append(f"{i}. {r['title']}\n   {r['snippet'][:200]}\n   {r['url']}\n")
-            
+
             return "\n".join(output)
         except ImportError:
             return "Error: beautifulsoup4 not installed. Run: pip install beautifulsoup4"
@@ -578,7 +578,7 @@ class ToolRegistry:
                 python_bin = sys.executable
                 python_real = os.path.realpath(python_bin)
                 python_dir = os.path.dirname(python_real)
-                
+
                 bwrap_cmd = [
                     "bwrap",
                     "--ro-bind", "/usr", "/usr",
@@ -634,7 +634,7 @@ class ToolRegistry:
                 cmd.extend(['-k', pattern])
             if coverage:
                 cmd.extend(['--cov=.', '--cov-report=term-missing'])
-            result = subprocess.run(['python3', '-m', 'pytest'] + (['-k', pattern] if pattern else []) + 
+            result = subprocess.run(['python3', '-m', 'pytest'] + (['-k', pattern] if pattern else []) +
                                   (['--cov=.', '--cov-report=term-missing'] if coverage else []) + [path],
                                    capture_output=True, text=True, timeout=120)
             output = result.stdout
@@ -660,7 +660,7 @@ class ToolRegistry:
     def format_code(self, path: str, line_length: int = 88) -> str:
         """Format Python code with black."""
         try:
-            result = subprocess.run(['black', '--line-length', str(line_length), path], 
+            result = subprocess.run(['black', '--line-length', str(line_length), path],
                                   capture_output=True, text=True, timeout=60)
             return result.stdout if result.stdout else result.stderr
         except Exception as e:
@@ -677,7 +677,7 @@ class ToolRegistry:
     def analyze_complexity(self, path: str) -> str:
         """Analyze code complexity using radon."""
         try:
-            result = subprocess.run(['radon', 'cc', '-a', '-nc', path], 
+            result = subprocess.run(['radon', 'cc', '-a', '-nc', path],
                                   capture_output=True, text=True, timeout=60)
             return result.stdout if result.stdout else result.stderr
         except FileNotFoundError:
@@ -708,7 +708,7 @@ class ToolRegistry:
     def find_todos(self, path: str) -> str:
         """Find TODO/FIXME comments in code."""
         try:
-            result = subprocess.run(['grep', '-rn', '-E', '(TODO|FIXME|XXX|HACK)', path], 
+            result = subprocess.run(['grep', '-rn', '-E', '(TODO|FIXME|XXX|HACK)', path],
                                   capture_output=True, text=True, timeout=30)
             return result.stdout if result.stdout else "No TODOs found"
         except Exception as e:
@@ -737,7 +737,7 @@ class ToolRegistry:
     def analyze_dependencies(self, path: str) -> str:
         """Analyze imports and dependencies."""
         try:
-            result = subprocess.run(['pydeps', path, '--no-output', '--show-deps'], 
+            result = subprocess.run(['pydeps', path, '--no-output', '--show-deps'],
                                   capture_output=True, text=True, timeout=60)
             return result.stdout if result.stdout else result.stderr
         except FileNotFoundError:
@@ -753,7 +753,7 @@ class ToolRegistry:
         try:
             path = os.path.abspath(path)
             errors = []
-            
+
             if os.path.isfile(path):
                 files = [path] if path.endswith('.py') else []
             else:
@@ -763,7 +763,7 @@ class ToolRegistry:
                     for f in files:
                         if f.endswith('.py'):
                             files.append(os.path.join(root, f))
-            
+
             for f in files:
                 try:
                     with open(f, 'r', encoding='utf-8') as fh:
@@ -772,7 +772,7 @@ class ToolRegistry:
                     errors.append(f"{f}:{e.lineno}:{e.offset}: {e.msg}")
                 except Exception as e:
                     errors.append(f"{f}: {str(e)}")
-            
+
             if errors:
                 return "Syntax Errors Found:\n" + "\n".join(errors)
             return f"✅ Syntax OK for {len(files)} Python files"
@@ -784,7 +784,7 @@ class ToolRegistry:
         try:
             path = os.path.abspath(path)
             errors = []
-            
+
             if os.path.isfile(path):
                 files = [path] if path.endswith('.py') else []
             else:
@@ -794,12 +794,12 @@ class ToolRegistry:
                     for f in files:
                         if f.endswith('.py'):
                             files.append(os.path.join(root, f))
-            
+
             for f in files:
                 try:
                     with open(f, 'r', encoding='utf-8') as fh:
                         content = fh.read()
-                    
+
                     import ast
                     tree = ast.parse(content, filename=f)
                     for node in ast.walk(tree):
@@ -815,7 +815,7 @@ class ToolRegistry:
                     errors.append(f"{f}:{e.lineno}: Syntax error - {e.msg}")
                 except Exception as e:
                     errors.append(f"{f}: {str(e)}")
-            
+
             if errors:
                 return "Import Errors Found:\n" + "\n".join(errors)
             return f"✅ All imports valid for {len(files)} Python files"
@@ -837,7 +837,7 @@ class ToolRegistry:
     def validate_types(self, path: str) -> str:
         """Run mypy type checking with detailed output."""
         try:
-            result = subprocess.run(['mypy', '--strict', '--show-error-codes', path], 
+            result = subprocess.run(['mypy', '--strict', '--show-error-codes', path],
                                   capture_output=True, text=True, timeout=120)
             output = result.stdout
             if result.stderr:
@@ -855,7 +855,7 @@ class ToolRegistry:
         results = []
         results.append(f"🔍 Project Validation: {path}")
         results.append("=" * 50)
-        
+
         results.append(self.validate_syntax(path))
         results.append("\n=== IMPORTS ===")
         results.append(self.validate_imports(path))
@@ -869,7 +869,7 @@ class ToolRegistry:
         results.append(self.check_security(path))
         results.append("\n=== TESTS ===")
         results.append(self.run_tests(path))
-        
+
         return "\n".join(results)
 
     # ========================================================================
@@ -879,7 +879,7 @@ class ToolRegistry:
         """Auto-fix imports using ruff."""
         try:
             path = os.path.abspath(path)
-            result = subprocess.run(['ruff', 'check', '--select', 'I', '--fix', path], 
+            result = subprocess.run(['ruff', 'check', '--select', 'I', '--fix', path],
                                   capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 return "✅ Imports fixed"
@@ -894,18 +894,18 @@ class ToolRegistry:
             if os.path.isfile(path):
                 with open(path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
+
                 fixed = content
-                
+
                 # Fix missing colons after control structures
                 fixed = re.sub(r'^(    )*(if|elif|else|for|while|def|class|with|try|except|finally)\b([^:]*?)$', r'\1\2:', fixed, flags=re.MULTILINE)
-                
+
                 # Fix missing parentheses in print
                 fixed = re.sub(r'\bprint\s+([^(\s][^)]*)$', r'print(\1)', fixed, flags=re.MULTILINE)
-                
+
                 # Fix bare except
                 fixed = re.sub(r'except:\s*', 'except Exception:', fixed)
-                
+
                 if fixed != content:
                     with open(path, 'w', encoding='utf-8') as f:
                         f.write(fixed)
@@ -928,7 +928,7 @@ class ToolRegistry:
     def fix_types(self, path: str) -> str:
         """Add missing type hints using mypy stubgen."""
         try:
-            result = subprocess.run(['mypy', '--install-types', '--non-interactive', path], 
+            result = subprocess.run(['mypy', '--install-types', '--non-interactive', path],
                                   capture_output=True, text=True, timeout=60)
             return f"Type fixes attempted:\n{result.stdout}"
         except Exception as e:
@@ -938,27 +938,27 @@ class ToolRegistry:
         """Run all auto-fix tools in sequence."""
         results = []
         path = os.path.abspath(path)
-        
+
         results.append("🔧 Running auto-fix suite...")
-        
+
         results.append("\n1. Fixing imports...")
         results.append(self.fix_imports(path))
-        
+
         results.append("\n2. Formatting code...")
         results.append(self.fix_formatting(path))
-        
+
         results.append("\n3. Fixing syntax...")
         results.append(self.fix_syntax(path))
-        
+
         results.append("\n4. Linting...")
         results.append(self.lint_file(path, fix=True))
-        
+
         results.append("\n4. Formatting...")
         results.append(self.format_code(path))
-        
+
         results.append("\n5. Validating...")
         results.append(self.validate_syntax(path))
-        
+
         return "\n".join(results)
 
     # ========================================================================
@@ -969,7 +969,7 @@ class ToolRegistry:
         path = os.path.abspath(path)
         results = []
         total_lines = 0
-        
+
         py_files = []
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules', '.git', 'venv', 'env', '.venv')]
@@ -983,12 +983,12 @@ class ToolRegistry:
                             total_lines += lines
                     except Exception:
                         pass
-        
+
         results.append(f"📁 Project Analysis: {path}")
         results.append("=" * 50)
         results.append(f"Python files: {len(py_files)}")
         results.append(f"Total lines: {total_lines}")
-        
+
         # Structure
         results.append("\n📂 Structure:")
         for root, dirs, files in os.walk(path):
@@ -998,27 +998,27 @@ class ToolRegistry:
             for f in files:
                 if f.endswith('.py'):
                     results.append(f"{indent}  🐍 {f}")
-        
+
         # Check for key files
         key_files = ['requirements.txt', 'setup.py', 'pyproject.toml', 'Dockerfile', 'docker-compose.yml', 'README.md', 'setup.cfg', 'tox.ini']
         results.append("\n📄 Key Files:")
         for kf in key_files:
             exists = os.path.exists(os.path.join(path, kf))
             results.append(f"  {'✅' if exists else '❌'} {kf}")
-        
+
         # Test structure
         test_dirs = ['tests', 'test']
         results.append("\n🧪 Tests:")
         for td in test_dirs:
             exists = os.path.exists(os.path.join(path, td))
             results.append(f"  {'✅' if exists else '❌'} {td}/")
-        
+
         return "\n".join(results)
 
     def get_project_structure(self, path: str) -> str:
         """Get detailed project structure as tree."""
         path = os.path.abspath(path)
-        
+
         def build_tree(dir_path, prefix=""):
             items = []
             try:
@@ -1029,7 +1029,7 @@ class ToolRegistry:
                     full = os.path.join(dir_path, entry)
                     is_last = i == len(entries) - 1
                     connector = "└── " if is_last else "├── "
-                    
+
                     if os.path.isdir(full):
                         items.append(f"{prefix}{connector}{entry}/")
                         items.extend(build_tree(full, prefix + ("    " if is_last else "│   ")))
@@ -1039,7 +1039,7 @@ class ToolRegistry:
             except Exception:
                 pass
             return items
-        
+
         tree = [os.path.basename(path) + "/"]
         tree.extend(build_tree(path))
         return "\n".join(tree)
@@ -1047,7 +1047,7 @@ class ToolRegistry:
     def find_duplicates(self, path: str) -> str:
         """Find duplicate code blocks."""
         try:
-            result = subprocess.run(['radon', 'raw', '--duplicates', path], 
+            result = subprocess.run(['radon', 'raw', '--duplicates', path],
                                   capture_output=True, text=True, timeout=60)
             if result.stdout:
                 return result.stdout
@@ -1060,7 +1060,7 @@ class ToolRegistry:
     def check_circular_imports(self, path: str) -> str:
         """Check for circular imports."""
         try:
-            result = subprocess.run(['pydeps', path, '--noshow', '--dot'], 
+            result = subprocess.run(['pydeps', path, '--noshow', '--dot'],
                                   capture_output=True, text=True, timeout=60)
             if result.stdout:
                 return f"Dependency graph generated. Check for cycles in output.\n{result.stdout[:2000]}"
@@ -1077,10 +1077,10 @@ class ToolRegistry:
         """Add missing __init__.py files to Python packages."""
         path = os.path.abspath(path)
         created = []
-        
+
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules', '.git', 'venv', 'env')]
-            
+
             py_files = [f for f in files if f.endswith('.py')]
             if py_files and '__init__.py' not in files:
                 init_path = os.path.join(root, '__init__.py')
@@ -1088,7 +1088,7 @@ class ToolRegistry:
                     with open(init_path, 'w') as f:
                         f.write('"""Package initialization."""\n')
                     created.append(os.path.relpath(init_path, path))
-        
+
         if created:
             return f"✅ Created {len(created)} __init__.py files:\n" + "\n".join(f"  {f}" for f in created)
         return "No missing __init__.py files found"
@@ -1096,15 +1096,15 @@ class ToolRegistry:
     def fix_circular_imports(self, path: str) -> str:
         """Analyze and suggest fixes for circular imports."""
         try:
-            result = subprocess.run(['pydeps', path, '--noshow', '--dot'], 
+            result = subprocess.run(['pydeps', path, '--noshow', '--dot'],
                                   capture_output=True, text=True, timeout=60)
-            
+
             cycles = []
             if result.stdout:
                 for line in result.stdout.split('\n'):
                     if '->' in line and '->' in line.split('->')[-1]:
                         cycles.append(line.strip())
-            
+
             if cycles:
                 return "Potential circular imports detected:\n" + "\n".join(cycles[:10]) + "\n\nManual refactoring needed."
             return "No obvious circular imports detected"
@@ -1114,7 +1114,7 @@ class ToolRegistry:
     def fix_relative_imports(self, path: str) -> str:
         """Convert absolute imports to relative where appropriate."""
         path = os.path.abspath(path)
-        
+
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules', '.git', 'venv', 'env')]
             for f in files:
@@ -1124,7 +1124,7 @@ class ToolRegistry:
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         content = f.read()
-                    
+
                     # This is complex - just report what would be changed
                     import re
                     lines = content.split('\n')
@@ -1134,10 +1134,10 @@ class ToolRegistry:
                             module = match.group(2)
                             if module.startswith(os.path.basename(path)):
                                 pass  # Could be made relative
-                    
+
                 except Exception:
                     pass
-        
+
         return "Relative import analysis complete. Manual review recommended for complex cases."
 
     def normalize_imports(self, path: str) -> str:
@@ -1160,7 +1160,7 @@ class ToolRegistry:
         results = []
         results.append(f"🔍 Quality Check: {path}")
         results.append("=" * 50)
-        
+
         results.append(self.validate_syntax(path))
         results.append("\n🔍 Linting (ruff):")
         results.append(self.lint_file(path))
@@ -1176,13 +1176,13 @@ class ToolRegistry:
         results.append(self.analyze_complexity(path))
         results.append("\n🔒 Security (bandit):")
         results.append(self.check_security(path))
-        
+
         return "\n".join(results)
 
     def generate_type_stubs(self, path: str) -> str:
         """Generate .pyi type stubs for Python files."""
         try:
-            result = subprocess.run(['mypy', '--install-types', '--non-interactive', path], 
+            result = subprocess.run(['mypy', '--install-types', '--non-interactive', path],
                                   capture_output=True, text=True, timeout=120)
             return f"Type stub generation attempted:\n{result.stdout}"
         except Exception as e:
@@ -1280,7 +1280,7 @@ class SessionManager:
             history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
         self.history_dir = history_dir
         os.makedirs(history_dir, exist_ok=True)
-    
+
     def create_session(self, session_id: Optional[str] = None) -> str:
         if session_id is None:
             session_id = str(uuid.uuid4())
@@ -1288,22 +1288,22 @@ class SessionManager:
         if not os.path.exists(session_path):
             self._save_session(session_id, [])
         return session_id
-    
+
     def get_session(self, session_id: str) -> List[Dict]:
         session_path = os.path.join(self.history_dir, f"{session_id}.json")
         if os.path.exists(session_path):
             with open(session_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         return []
-    
+
     def save_session(self, session_id: str, messages: List[Dict]):
         self._save_session(session_id, messages)
-    
+
     def _save_session(self, session_id: str, messages: List[Dict]):
         session_path = os.path.join(self.history_dir, f"{session_id}.json")
         with open(session_path, "w", encoding="utf-8") as f:
             json.dump(messages, f, indent=2, ensure_ascii=False)
-    
+
     def list_sessions(self) -> List[str]:
         if not os.path.exists(self.history_dir):
             return []
@@ -1312,7 +1312,7 @@ class SessionManager:
             for f in os.listdir(self.history_dir)
             if f.endswith(".json")
         ]
-    
+
     def delete_session(self, session_id: str):
         session_path = os.path.join(self.history_dir, f"{session_id}.json")
         if os.path.exists(session_path):
@@ -1333,12 +1333,12 @@ class ThinkingManager:
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
         self.thinking_blocks: List[ThinkingBlock] = []
-    
+
     def extract_reasoning(self, content: str) -> tuple[str, str]:
         """Extract reasoning content from model response."""
         if not self.enabled:
             return "", content
-        
+
         patterns = [
             r"<thinking>\s*(.*?)\s*</thinking>",           # Qwen3 standard
             r"questions\s*(.*?)\s*回答",                   # DeepSeek style (questions...回答)
@@ -1346,14 +1346,14 @@ class ThinkingManager:
             r"think\s*(.*?)\s*</thinking>",               # think... with </thinking>
             r"\|begin_thinking\|(.*?)\|end_thinking\|",   # Some models
         ]
-        
+
         for pattern in patterns:
             matches = list(re.finditer(pattern, content, re.DOTALL))
             if matches:
                 match = matches[-1]
                 thinking = match.group(1).strip()
                 clean_content = re.sub(pattern, "", content, flags=re.DOTALL).strip()
-                
+
                 block = ThinkingBlock(
                     content=thinking,
                     start_time=time.time() - 1,
@@ -1362,25 +1362,25 @@ class ThinkingManager:
                 )
                 self.thinking_blocks.append(block)
                 return thinking, clean_content
-        
+
         return "", content
-    
+
     def format_thinking_for_display(self, thinking: str, content: str) -> str:
         if self.enabled and thinking:
             return f"\033[93m<thinking>\n{thinking}\n</thinking>\033[0m\n\n{content}"
         return content
-    
+
     def get_thinking_summary(self) -> Dict[str, Any]:
         total_tokens = sum(b.tokens for b in self.thinking_blocks)
         return {
             "blocks": len(self.thinking_blocks),
             "total_tokens": total_tokens,
             "blocks_detail": [
-                {"tokens": b.tokens, "preview": b.content[:100]} 
+                {"tokens": b.tokens, "preview": b.content[:100]}
                 for b in self.thinking_blocks
             ]
         }
-    
+
     def clear(self):
         self.thinking_blocks.clear()
 
@@ -1391,8 +1391,8 @@ class ThinkingManager:
 class AutoMode:
     """Native tool-calling agent loop with turn budget and cost tracking."""
 
-    def __init__(self, goal: str, tools: 'ToolRegistry', lai_instance: 'LAI', 
-                 max_iterations: int = 10, max_turns: int = 20, 
+    def __init__(self, goal: str, tools: 'ToolRegistry', lai_instance: 'LAI',
+                 max_iterations: int = 10, max_turns: int = 20,
                  track_cost: bool = True):
         self.goal = goal
         self.tools = tools
@@ -1491,7 +1491,7 @@ class AutoMode:
                 transcript.append(f"[{name}] {result[:1200]}")
         else:
             transcript.append("Max iterations reached without a final answer.")
-        
+
         # Cost summary
         if self.track_cost and (self.total_prompt_tokens or self.total_completion_tokens):
             # Rough estimate: Qwen3-8B local = $0, but track for cloud comparison
@@ -1525,21 +1525,21 @@ class LAI:
 
     def _trim_history(self) -> None:
         """Trim conversation history to stay within token budget.
-        
+
         Keeps the most recent messages, removing oldest first.
         Uses rough token estimation: ~4 chars per token.
         """
         if not self.conversation_history:
             return
-        
+
         total_tokens = 0
         for msg in self.conversation_history:
             content = msg.get("content", "")
             total_tokens += len(content) // 4
-        
+
         if total_tokens <= self.history_max_tokens:
             return
-        
+
         # Remove oldest messages (but keep system messages if possible)
         while total_tokens > self.history_max_tokens and len(self.conversation_history) > 1:
             removed = self.conversation_history.pop(0)
@@ -1551,7 +1551,7 @@ class LAI:
         try:
             if thinking:
                 prompt = f"<thinking>\n{prompt}\n</thinking>\n\nProvide the solution."
-            
+
             async with httpx.AsyncClient(timeout=120) as client:
                 payload = {
                     "model": self.model,
@@ -1560,7 +1560,7 @@ class LAI:
                     "temperature": temp,
                     "stream": stream,
                 }
-                
+
                 if stream:
                     content_buffer = []
                     async with client.stream("POST", f"{self.base_url}/chat/completions", json=payload) as resp:
@@ -1588,7 +1588,7 @@ class LAI:
 
     def chat(self, prompt: str, stream: bool = True, thinking: bool = True, temp: float = 0.7, max_tokens: int = 4096) -> str:
         """Chat with the model using conversation history.
-        
+
         Delegates to chat_messages() for native tool calling and reasoning support.
         Handles conversation history trimming and streaming display.
         """
@@ -1603,19 +1603,19 @@ class LAI:
 
         # Trim history before adding new message
         self._trim_history()
-        
+
         # Add user message to history
         self.conversation_history.append({"role": "user", "content": prompt})
-        
+
         try:
             # Prepare messages with history
             messages = self.conversation_history.copy()
-            
+
             if stream:
                 # Streaming: print chunks as they arrive
                 content_buffer = []
                 thinking_buffer = []
-                
+
                 for chunk in self.chat_messages(
                     messages=messages,
                     tools=None,
@@ -1627,22 +1627,22 @@ class LAI:
                 ):
                     if isinstance(chunk, dict) and chunk.get("error"):
                         return f"Error: {chunk['error']}"
-                    
+
                     content = chunk.get("content", "")
                     thinking_content = chunk.get("reasoning_content", "")
                     finish_reason = chunk.get("finish_reason")
-                    
+
                     if content:
                         print(content, end="", flush=True)
                         content_buffer.append(content)
                     if thinking_content:
                         print(thinking_content, end="", flush=True)
                         thinking_buffer.append(thinking_content)
-                    
+
                     if finish_reason:
                         print()
                         break
-                
+
                 response = "".join(content_buffer)
                 thinking_full = "".join(thinking_buffer)
             else:
@@ -1656,17 +1656,17 @@ class LAI:
                     temp=temp,
                     max_tokens=max_tokens,
                 )
-                
+
                 if isinstance(result, dict) and result.get("error"):
                     return f"Error: {result['error']}"
-                
+
                 response = result.get("content", "")
                 thinking_full = result.get("reasoning_content", "")
-            
+
             # Add assistant response to history
             self.conversation_history.append({"role": "assistant", "content": response})
             self._trim_history()
-            
+
             # Handle thinking display
             if thinking and thinking_full:
                 # Show thinking if enabled
@@ -1678,16 +1678,16 @@ class LAI:
             elif not thinking:
                 # Ensure no thinking artifacts in response
                 return self._strip_thinking_artifacts(response)
-            
+
             return response
-            
+
         except Exception as e:
             return f"Error: {e}"
 
     def _strip_thinking_artifacts(self, text: str) -> str:
         """Remove thinking artifacts from model response when thinking is disabled."""
         import re
-        
+
         # Remove <thinking>...</thinking> tags
         text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
         # Remove 思考...回答 patterns
@@ -1814,7 +1814,7 @@ class LAI:
 
     def code(self, description: str, filename: str, auto: bool = False, yolo: bool = False, max_iterations: int = 3):
         """Generate high-quality code using the local LLM with iterative refinement."""
-        
+
         # Enhanced prompt with more specific requirements
         base_prompt = """Generate ONLY valid Python code, no explanations, no markdown, no comments about the code itself.
 
@@ -1858,13 +1858,13 @@ class MyDataClass:
 
 def helper_function(param: str) -> bool:
     \"\"\"Brief description of what the function does.
-    
+
     Args:
         param: Description of parameter.
-        
+
     Returns:
         Description of return value.
-        
+
     Raises:
         ValueError: When param is invalid.
     \"\"\"
@@ -1875,21 +1875,21 @@ def helper_function(param: str) -> bool:
 
 class MyClass:
     \"\"\"Class docstring describing purpose.\"\"\"
-    
+
     def __init__(self, config: Optional[Dict] = None):
         \"\"\"Initialize the class.
-        
+
         Args:
             config: Optional configuration dictionary.
         \"\"\"
         self.config = config or {{}}
-    
+
     def process(self, data: List[str]) -> Dict[str, int]:
         \"\"\"Process the input data.
-        
+
         Args:
             data: List of strings to process.
-            
+
         Returns:
             Dictionary mapping items to counts.
         \"\"\"
@@ -1923,15 +1923,15 @@ Generate ONLY the complete Python code for file: {filename}
 IMPORTANT: Use straight quotes (') or ("), NO curly quotes. Use pure ASCII. NO markdown, no explanations."""
 
         max_iterations = max(1, max_iterations)
-        
+
         for iteration in range(max_iterations):
             try:
                 response = self.chat(prompt, stream=False, thinking=False, temp=0.0, max_tokens=4096)
                 code = response.strip()
-                
+
                 # Robust markdown/code fence extraction
                 code = self._extract_code_from_response(code)
-                
+
                 # Validate syntax
                 try:
                     compile(code, filename, 'exec')
@@ -1952,16 +1952,16 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                     else:
                         print(f"Warning: Generated code has syntax error: {e}")
                         code = f"# Generated: {description}\nprint('Error: Could not generate valid code')"
-                
+
                 # Additional validation: check for undefined names
                 try:
                     import ast
                     tree = ast.parse(code)
-                    
+
                     # Collect all defined names
                     defined_names = set()
                     imported_names = set()
-                    
+
                     for node in ast.walk(tree):
                         if isinstance(node, ast.FunctionDef):
                             defined_names.add(node.name)
@@ -2006,7 +2006,7 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                         elif isinstance(node, ast.AsyncFor):
                             if isinstance(node.target, ast.Name):
                                 defined_names.add(node.target.id)
-                    
+
                     # Check for undefined names in the code
                     undefined_names = []
                     for node in ast.walk(tree):
@@ -2017,7 +2017,7 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                                 if name not in ('__name__', '__main__', 'self', 'cls', 'True', 'False', 'None', 'Exception', 'ValueError', 'TypeError', 'ZeroDivisionError', 'FileNotFoundError', 'PermissionError', 'eval', 'input', 'print', 'len', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'open', 'range', 'enumerate', 'zip', 'map', 'filter', 'sum', 'max', 'min', 'abs', 'round', 'isinstance', 'issubclass', 'hasattr', 'getattr', 'setattr', 'delattr', 'super', 'property', 'staticmethod', 'classmethod', 'object', 'type', 'BaseException', 'KeyboardInterrupt', 'SystemExit', 'GeneratorExit', 'StopIteration', 'StopAsyncIteration', 'ArithmeticError', 'OverflowError', 'FloatingPointError', 'ZeroDivisionError', 'AssertionError', 'AttributeError', 'BufferError', 'EOFError', 'ImportError', 'ModuleNotFoundError', 'LookupError', 'IndexError', 'KeyError', 'MemoryError', 'NameError', 'OSError', 'RecursionError', 'ReferenceError', 'RuntimeError', 'SyntaxError', 'IndentationError', 'TabError', 'SystemError', 'TypeError', 'UnboundLocalError', 'UnicodeError', 'UnicodeEncodeError', 'UnicodeDecodeError', 'UnicodeTranslateError', 'ValueError', 'Warning', 'DeprecationWarning', 'PendingDeprecationWarning', 'RuntimeWarning', 'SyntaxWarning', 'UserWarning', 'FutureWarning', 'ImportWarning', 'UnicodeWarning', 'BytesWarning', 'ResourceWarning'):
                                     # Check if it's likely a module attribute (e.g., sys.exit)
                                     undefined_names.append(name)
-                    
+
                     if undefined_names:
                         # Filter to only show likely real issues
                         likely_issues = [n for n in undefined_names if not n.startswith('_')]
@@ -2039,10 +2039,10 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                                 continue
                             else:
                                 print(f"Warning: Generated code has undefined names: {', '.join(unique_issues)}")
-                            
+
                 except Exception as e:
                     print(f"Warning: Could not validate undefined names: {e}")
-                
+
                 # Check for f-string issues (double braces)
                 if '{{' in code and '}}' in code:
                     print("Warning: Detected double braces in f-strings, fixing...")
@@ -2063,7 +2063,7 @@ Fix the syntax error and generate ONLY the corrected Python code for: {descripti
 
 Output ONLY the corrected complete Python code for file: {filename}"""
                             continue
-                
+
                 if not yolo and iteration == max_iterations - 1:
                     print(f"Generated code for: {description}")
                     print("-" * 40)
@@ -2073,14 +2073,14 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                     if confirm.lower() != 'y':
                         print("Cancelled.")
                         return False
-                
+
                 os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
-                
+
                 with open(filename, 'w', encoding='utf-8') as f:
                     f.write(code)
                 print(f"Code saved to {filename}")
                 return True
-                
+
             except Exception as e:
                 print(f"Error generating code: {e}")
                 if iteration == max_iterations - 1:
@@ -2090,13 +2090,13 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                         f.write(fallback_code)
                     print(f"Fallback code saved to {filename}")
                 return False
-        
+
         return False
 
     def _extract_code_from_response(self, response: str) -> str:
         """Robustly extract Python code from model response."""
         code = response.strip()
-        
+
         # Handle markdown code fences
         if "```python" in code:
             match = re.search(r'```python\n(.*?)\n```', code, re.DOTALL)
@@ -2107,7 +2107,7 @@ Output ONLY the corrected complete Python code for file: {filename}"""
             match = re.search(r'```\n(.*?)\n```', code, re.DOTALL)
             if match:
                 code = match.group(1).strip()
-        
+
         # Remove any remaining markdown fences
         code = code.strip()
         if code.startswith("```python"):
@@ -2117,11 +2117,11 @@ Output ONLY the corrected complete Python code for file: {filename}"""
         if code.endswith("```"):
             code = code[:-3]
         code = code.strip()
-        
+
         # Remove common model artifacts
         if code.startswith("# Generated:"):
             pass  # Keep header
-        
+
         return code
 
     def _generate_with_feedback(self, description: str, filename: str, previous_code: str, error: str) -> str:
@@ -2387,7 +2387,7 @@ def chat_cmd(args):
     thinking = args.thinking if args.thinking else (not args.no_thinking)
     temp = args.temp or 0.7
     max_tokens = args.max_tokens or 4096
-    
+
     if args.interactive:
         print("Interactive mode - type 'exit' or 'quit' to quit")
         print("Type 'clear' to clear conversation history")
@@ -2428,7 +2428,7 @@ def code_cmd(lai: LAI, args):
 def auto_cmd(lai: LAI, args):
     print(f"Auto mode: {args.goal}")
     result = lai.auto_mode_run(
-        args.goal, 
+        args.goal,
         max_iterations=args.max_iterations,
         max_turns=getattr(args, 'max_turns', 20),
         track_cost=not getattr(args, 'no_cost', False),
@@ -2612,7 +2612,7 @@ Code:
 def diff_cmd(lai: LAI, args):
     import difflib
     with open(args.file1) as f1, open(args.file2) as f2:
-        diff = difflib.unified_diff(f1.readlines(), f2.readlines(), 
+        diff = difflib.unified_diff(f1.readlines(), f2.readlines(),
                                      fromfile=args.file1, tofile=args.file2,
                                      n=args.context)
         sys.stdout.writelines(diff)
@@ -2669,13 +2669,13 @@ def project_cmd(lai: LAI, args):
     if not description:
         print("Error: No project description provided")
         return
-    
+
     path = args.path or "."
     os.makedirs(path, exist_ok=True)
-    
+
     print("🎯 Analyzing project description...")
     print(f"📁 Target path: {os.path.abspath(path)}")
-    
+
     # Step 1: Analyze the description and create a project plan
     plan_prompt = f"""Analyze this project description and create a detailed project plan.
 
@@ -2703,10 +2703,10 @@ Output ONLY a JSON object with this structure:
 }}
 
 The plan should be appropriate for the described project. Include all necessary files for a production-ready project."""
-    
+
     print("🤖 Generating project plan...")
     plan_response = lai.chat(plan_prompt, stream=False, thinking=False, temp=0.1, max_tokens=2048)
-    
+
     # Extract JSON from response
     import re
     json_match = re.search(r'\{.*\}', plan_response, re.DOTALL)
@@ -2714,7 +2714,7 @@ The plan should be appropriate for the described project. Include all necessary 
         print("❌ Failed to generate project plan")
         print(f"Raw response: {plan_response[:500]}")
         return
-    
+
     try:
         import json
         plan = json.loads(json_match.group(0))
@@ -2722,36 +2722,36 @@ The plan should be appropriate for the described project. Include all necessary 
         print(f"❌ Failed to parse project plan: {e}")
         print(f"Raw: {plan_response[:500]}")
         return
-    
+
     print(f"✅ Project plan generated: {plan.get('name', 'unnamed')} ({plan.get('project_type', 'unknown')})")
     print(f"📋 Features: {', '.join(plan.get('features', []))}")
     print(f"📄 Files to generate: {len(plan.get('files', []))}")
-    
+
     if not args.yes and not args.yolo:
         confirm = input("\nProceed with generation? (y/n): ")
         if confirm.lower() != 'y':
             print("Cancelled.")
             return
-    
+
     # Step 2: Generate each file
     print("\n🔨 Generating project files...")
-    
+
     # Clear conversation history for clean generation
     lai.conversation_history.clear()
-    
+
     success_count = 0
     failed_count = 0
-    
+
     for i, file_info in enumerate(plan.get('files', []), 1):
         file_path = file_info.get('path', '')
         purpose = file_info.get('purpose', '')
-        
+
         if not file_path:
             continue
-        
+
         print(f"\n[{i}/{len(plan.get('files', []))}] Generating {file_path}...")
         print(f"   Purpose: {purpose}")
-        
+
         is_python = file_path.endswith('.py')
         language = 'Python' if is_python else 'the exact file format'
         file_prompt = f"""Generate ONLY the complete content for {file_path}.
@@ -2812,20 +2812,20 @@ Requirements:
     if args.git:
         subprocess.run(['git', 'init'], cwd=path)
         print("\n📦 Git repository initialized")
-    
+
     # Step 4: Install dependencies if requirements.txt exists
     req_path = os.path.join(path, 'requirements.txt')
     if os.path.exists(req_path) and args.install:
         print("\n📦 Installing dependencies...")
         subprocess.run(['pip', 'install', '-r', req_path], cwd=path)
-    
+
     # Summary
     print(f"\n{'='*50}")
     print("🎉 Project generation complete!")
     print(f"✅ Successful: {success_count}")
     print(f"❌ Failed: {failed_count}")
     print(f"📁 Location: {os.path.abspath(path)}")
-    
+
     if failed_count == 0:
         print("\n🚀 Ready to run! Try:")
         print(f"   cd {path}")
@@ -2970,17 +2970,17 @@ def completion_cmd(args):
 
 def _generate_completion(shell: str) -> str:
     """Generate shell completion script for lai."""
-    if shell == "bash":
+    if shell == "bash":  # noqa: SIM116
         return '''# lai bash completion
 _lai_complete() {
     local cur prev opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    
+
     local commands="chat generate code think auto run serve status models tools search find fix repair review diff test init project config install update exec doctor clean version"
     local global_opts="-m --model -u --base-url -t --temp --max-tokens --stream --no-stream --thinking --no-thinking --tools --no-tools --auto --yolo -v --verbose -q --quiet --help"
-    
+
     case "${prev}" in
         lai)
             COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- ${cur}) )
@@ -3096,12 +3096,12 @@ _lai() {
         "${global_opts[@]}" \
         '1: :($commands)' \
         '*::arg:->subcmds' && return 0
-    
+
     if (( CURRENT == 1 )); then
         compadd -a commands
         return
     fi
-    
+
     case "${words[1]}" in
         chat|generate)
             _arguments "${global_opts[@]}" ;;
@@ -3146,6 +3146,51 @@ _lai() {
 }
 compdef _lai lai
 '''
+    elif shell == "fish":
+        return '''# lai fish completion
+function __fish_lai_complete
+    set -l commands chat generate code think auto run serve status models tools search find fix repair review diff test init project config install update exec doctor clean version
+    set -l global_opts -m --model -u --base-url -t --temp --max-tokens --stream --no-stream --thinking --no-thinking --tools --no-tools --auto --yolo -v --verbose -q --quiet --help
+
+    set -l cmd (commandline -opc)
+    if test (count $cmd) -eq 1
+        echo $commands $global_opts
+        return
+    end
+
+    switch $cmd[1]
+        case lai
+            echo $commands $global_opts
+        case "-m" "--model"
+            echo "qwen3-8b qwen3:8b phi-3.5-mini"
+        case "-u" "--base-url"
+            echo "http://localhost:8080/v1 http://localhost:8081/v1 http://localhost:11434/v1"
+        case "--max-tokens" "-t" "--temp"
+        case chat generate
+            echo $global_opts
+        case auto
+            echo "--max-iterations --max-turns --no-cost $global_opts"
+        case serve
+            echo "--host --port $global_opts"
+        case review
+            echo "--focus --format $global_opts"
+        case code
+            echo "--auto --yolo --max-iterations $global_opts"
+        case fix repair
+            echo "--type $global_opts"
+        case search find
+            echo "--type -i --ignore-case -r --recursive --max-depth $global_opts"
+        case config
+            echo "get set list edit --global $global_opts"
+        case install update
+            echo "--dev --dry-run --all --requirements --packages $global_opts"
+        case "*"
+            echo "$commands $global_opts"
+    end
+end
+
+complete -c lai -f -a "(__fish_lai_complete)"
+'''
     else:
         return f"Unsupported shell: {shell}"
 
@@ -3173,7 +3218,7 @@ Examples:
   lai run script.py --yolo
         """
     )
-    
+
     parser.add_argument('-m', '--model', default='qwen3-8b', help='Model to use')
     parser.add_argument('-u', '--base-url', default='http://localhost:8080/v1', help='Base URL for API')
     parser.add_argument('-t', '--temp', type=float, default=0.7, help='Temperature')
@@ -3188,9 +3233,9 @@ Examples:
     parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output')
     parser.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Commands')
-    
+
     # Chat
     chat_parser = subparsers.add_parser('chat', help='Chat with AI')
     chat_parser.add_argument('prompt', nargs='*', help='Prompt')
@@ -3202,12 +3247,12 @@ Examples:
     chat_parser.add_argument('--temp', type=float, help='Temperature')
     chat_parser.add_argument('--max-tokens', type=int, help='Max tokens')
     chat_parser.set_defaults(func=chat_cmd)
-    
+
     # Generate
     gen_parser = subparsers.add_parser('generate', help='Generate text')
     gen_parser.add_argument('prompt', nargs='*', help='Prompt')
     gen_parser.set_defaults(func=generate_cmd)
-    
+
     # Code
     code_parser = subparsers.add_parser('code', help='Generate code')
     code_parser.add_argument('description', help='Description')
@@ -3216,12 +3261,12 @@ Examples:
     code_parser.add_argument('--yolo', action='store_true')
     code_parser.add_argument('--max-iterations', type=int, default=3, help='Max iterations for code generation')
     code_parser.set_defaults(func=lambda a: code_cmd(get_lai_instance(), a))
-    
+
     # Think
     think_parser = subparsers.add_parser('think', help='Thinking mode')
     think_parser.add_argument('problem', help='Problem')
     think_parser.set_defaults(func=lambda a: think_cmd(get_lai_instance(), a))
-    
+
     # Auto
     auto_parser = subparsers.add_parser('auto', help='Auto mode')
     auto_parser.add_argument('goal', help='Goal')
@@ -3229,39 +3274,39 @@ Examples:
     auto_parser.add_argument('--max-turns', type=int, default=20, help='Max tool turns (default: 20)')
     auto_parser.add_argument('--no-cost', action='store_true', help='Disable cost tracking')
     auto_parser.set_defaults(func=lambda a: auto_cmd(get_lai_instance(), a))
-    
+
     # Run
     run_parser = subparsers.add_parser('run', help='Run script')
     run_parser.add_argument('script', help='Script file')
     run_parser.set_defaults(func=lambda a: run_cmd(get_lai_instance(), a))
-    
+
     # Serve
     serve_parser = subparsers.add_parser('serve', help='Start API server')
     serve_parser.add_argument('--host', default='127.0.0.1', help='Bind address (default: loopback)')
     serve_parser.add_argument('--port', type=int, default=8082, help='Port (default: 8082)')
     serve_parser.set_defaults(func=lambda a: serve_cmd(get_lai_instance(), a))
-    
+
     # Status
     status_parser = subparsers.add_parser('status', help='Check status')
     status_parser.set_defaults(func=lambda a: status_cmd(get_lai_instance(), a))
-    
+
     # Models
     models_parser = subparsers.add_parser('models', help='List models')
     models_parser.set_defaults(func=lambda a: models_cmd(get_lai_instance(), a))
-    
+
     # Tools
     tools_parser = subparsers.add_parser('tools', help='List tools')
     tools_parser.set_defaults(func=lambda a: tools_cmd(get_lai_instance(), a))
-    
+
     # Version
     version_parser = subparsers.add_parser('version', help='Show version')
     version_parser.set_defaults(func=lambda _: version_cmd())
-    
+
     # Completion
     completion_parser = subparsers.add_parser('completion', help='Generate shell completion script')
-    completion_parser.add_argument('shell', choices=['bash', 'zsh'], default='bash', nargs='?', help='Shell type (bash|zsh)')
+    completion_parser.add_argument('shell', choices=['bash', 'zsh', 'fish'], default='bash', nargs='?', help='Shell type (bash|zsh|fish)')
     completion_parser.set_defaults(func=lambda a: completion_cmd(a))
-    
+
     # Search
     search_parser = subparsers.add_parser('search', help='Search code/files')
     search_parser.add_argument('pattern', help='Pattern to search')
@@ -3270,7 +3315,7 @@ Examples:
     search_parser.add_argument('-i', '--ignore-case', action='store_true', help='Case insensitive')
     search_parser.add_argument('-r', '--recursive', action='store_true', help='Recursive search')
     search_parser.set_defaults(func=lambda a: search_cmd(get_lai_instance(), a))
-    
+
     # Find
     find_parser = subparsers.add_parser('find', help='Find files')
     find_parser.add_argument('pattern', help='File name pattern')
@@ -3278,34 +3323,34 @@ Examples:
     find_parser.add_argument('--type', choices=['f', 'd', 'l'], help='File type (f=file, d=dir, l=link)')
     find_parser.add_argument('--max-depth', type=int, help='Max depth')
     find_parser.set_defaults(func=lambda a: find_cmd(get_lai_instance(), a))
-    
+
     # Fix
     fix_parser = subparsers.add_parser('fix', help='Fix code issues')
     fix_parser.add_argument('path', help='File or directory to fix')
     fix_parser.add_argument('--auto', action='store_true', help='Auto-fix without confirmation')
     fix_parser.add_argument('--type', choices=['lint', 'format', 'imports', 'types', 'all'], default='all', help='Type of fix')
     fix_parser.set_defaults(func=lambda a: fix_cmd(get_lai_instance(), a))
-    
+
     # Fix (alias for fix)
     fix_parser2 = subparsers.add_parser('repair', help='Alias for fix')
     fix_parser2.add_argument('path', help='File or directory to repair')
     fix_parser2.add_argument('--auto', action='store_true')
     fix_parser2.set_defaults(func=lambda a: fix_cmd(get_lai_instance(), a))
-    
+
     # Review
     review_parser = subparsers.add_parser('review', help='Code review')
     review_parser.add_argument('path', help='File or directory to review')
     review_parser.add_argument('--focus', choices=['security', 'performance', 'style', 'bugs', 'all'], default='all')
     review_parser.add_argument('--format', choices=['text', 'json', 'markdown', 'sarif'], default='text')
     review_parser.set_defaults(func=lambda a: review_cmd(get_lai_instance(), a))
-    
+
     # Diff
     diff_parser = subparsers.add_parser('diff', help='Show diff')
     diff_parser.add_argument('file1', help='First file')
     diff_parser.add_argument('file2', help='Second file')
     diff_parser.add_argument('--context', type=int, default=3, help='Context lines')
     diff_parser.set_defaults(func=lambda a: diff_cmd(get_lai_instance(), a))
-    
+
     # Test
     test_parser = subparsers.add_parser('test', help='Run tests')
     test_parser.add_argument('path', nargs='?', default='.', help='Path to test')
@@ -3313,7 +3358,7 @@ Examples:
     test_parser.add_argument('-v', '--verbose', action='store_true')
     test_parser.add_argument('--coverage', action='store_true')
     test_parser.set_defaults(func=lambda a: test_cmd(get_lai_instance(), a))
-    
+
     # Init
     init_parser = subparsers.add_parser('init', help='Initialize project')
     init_parser.add_argument('type', choices=['python', 'fastapi', 'flask', 'django', 'react', 'vue', 'svelte', 'cli', 'lib'], help='Project type')
@@ -3321,7 +3366,7 @@ Examples:
     init_parser.add_argument('--path', default='.', help='Target directory')
     init_parser.add_argument('--git', action='store_true', help='Initialize git repo')
     init_parser.set_defaults(func=lambda a: init_cmd(get_lai_instance(), a))
-    
+
     # Project
     project_parser = subparsers.add_parser('project', help='Generate complete project from description')
     project_parser.add_argument('description', nargs='+', help='Project description')
@@ -3331,7 +3376,7 @@ Examples:
     project_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
     project_parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
     project_parser.set_defaults(func=lambda a: project_cmd(get_lai_instance(), a))
-    
+
     # Config
     config_parser = subparsers.add_parser('config', help='Manage configuration')
     config_parser.add_argument('action', choices=['get', 'set', 'list', 'edit'], help='Action')
@@ -3339,45 +3384,45 @@ Examples:
     config_parser.add_argument('value', nargs='?', help='Config value')
     config_parser.add_argument('--global', action='store_true', help='Global config')
     config_parser.set_defaults(func=lambda a: config_cmd(get_lai_instance(), a))
-    
+
     # Install
     install_parser = subparsers.add_parser('install', help='Install dependencies')
     install_parser.add_argument('packages', nargs='*', help='Packages to install')
     install_parser.add_argument('--requirements', '-r', help='Requirements file')
     install_parser.add_argument('--dev', action='store_true', help='Install dev dependencies')
     install_parser.set_defaults(func=lambda a: install_cmd(get_lai_instance(), a))
-    
+
     # Update
     update_parser = subparsers.add_parser('update', help='Update dependencies')
     update_parser.add_argument('packages', nargs='*', help='Packages to update')
     update_parser.add_argument('--all', action='store_true', help='Update all')
     update_parser.add_argument('--dry-run', action='store_true')
     update_parser.set_defaults(func=lambda a: update_cmd(get_lai_instance(), a))
-    
+
     # Exec
     exec_parser = subparsers.add_parser('exec', help='Execute command in project context')
     exec_parser.add_argument('command', nargs=argparse.REMAINDER, help='Command to execute')
     exec_parser.add_argument('--cwd', help='Working directory')
     exec_parser.set_defaults(func=lambda a: exec_cmd(get_lai_instance(), a))
-    
+
     # Doctor
     doctor_parser = subparsers.add_parser('doctor', help='Diagnose environment')
     doctor_parser.add_argument('--fix', action='store_true', help='Auto-fix issues')
     doctor_parser.set_defaults(func=lambda a: doctor_cmd(get_lai_instance(), a))
-    
+
     # Clean
     clean_parser = subparsers.add_parser('clean', help='Clean build artifacts')
     clean_parser.add_argument('--all', action='store_true', help='Clean all')
     clean_parser.add_argument('--cache', action='store_true', help='Clean cache')
     clean_parser.add_argument('--build', action='store_true', help='Clean build artifacts')
     clean_parser.set_defaults(func=lambda a: clean_cmd(get_lai_instance(), a))
-    
+
     args = parser.parse_args()
-    
+
     if not hasattr(args, 'func') or args.command is None:
         parser.print_help()
         return
-    
+
     if args.quiet:
         import logging
         logging.getLogger().setLevel(logging.WARNING)
@@ -3403,7 +3448,7 @@ Examples:
         for name, info in SERVICES.items():
             status = "Running" if info['running'] else "Stopped"
             print(f"  {name}: {status} (Port {info['port']})")
-    
+
     args.func(args)
 
 if __name__ == "__main__":

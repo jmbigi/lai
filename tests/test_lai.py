@@ -275,7 +275,7 @@ class TestIntegration:
 
     def test_gateway_models(self):
         import urllib.request
-        with urllib.request.urlopen("http://localhost:8081/v1/models", timeout=5) as resp:
+        with urllib.request.urlopen(urllib.request.Request("http://localhost:8081/v1/models", headers={"Authorization": "Bearer open"}), timeout=5) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
             assert "data" in data
@@ -303,7 +303,7 @@ class TestIntegration:
         req = urllib.request.Request(
             "http://localhost:8081/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"}
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
@@ -335,7 +335,7 @@ class TestIntegration:
         req = urllib.request.Request(
             "http://localhost:8081/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"}
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
@@ -387,7 +387,7 @@ class TestIntegration:
         req = urllib.request.Request(
             "http://localhost:8082/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"}
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
@@ -423,7 +423,7 @@ class TestIntegration:
         req = urllib.request.Request(
             "http://localhost:8082/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"}
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
