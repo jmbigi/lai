@@ -100,6 +100,33 @@ circuit_breaker:
   timeout: 30s
   half_open_requests: 3
 
+auth:
+  enabled: true
+  # Clave "open" siempre válida (backward compatibility)
+  open_key: "open"
+  # Rate limit para clave "open" por IP
+  open_key_rate_limit:
+    enabled: true
+    requests_per_minute: 60
+  # Otras claves válidas (se validan contra esta lista)
+  valid_keys:
+    - "open"
+    # - "tu-clave-secreta-aqui"
+  # Rate limit general para claves válidas
+  rate_limit:
+    enabled: true
+    requests_per_minute: 1000
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 1000
+
+circuit_breaker:
+  enabled: true
+  max_failures: 5
+  timeout: 30s
+  half_open_requests: 3
+
 semantic_cache:
   enabled: true
   model: "sentence-transformers/all-MiniLM-L6-v2"
