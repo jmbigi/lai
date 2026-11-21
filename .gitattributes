@@ -1,0 +1,31 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python files
+*.py text diff=python
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+*.rst text
+
+# Config
+*.yaml text
+*.yml text
+*.json text
+*.toml text
+*.ini text
+*.cfg text
+
+# Scripts
+*.sh text eol=lf
+*.py text eol=lf
+
+# Binary files (no diff, no line ending conversion)
+*.gguf binary
+*.exe binary
+*.so binary
+*.dylib binary
+
+# Gateway binary
+gateway-go/gateway binary

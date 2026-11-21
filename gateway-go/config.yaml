@@ -1,6 +1,6 @@
 # Gateway Go Configuration
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8081
   read_timeout: 30s
   write_timeout: 300s
@@ -21,6 +21,7 @@ upstream:
 
 context:
   max_tokens: 32768
+  max_output_tokens: 4096
   compression_threshold: 1024
   preserve_code_blocks: true
 
@@ -50,10 +51,6 @@ filter:
     - "Switched to"
     - "thinking on"
     - "thinking off"
-    - "Use this tool"
-    - "function"
-    - "parameters"
-    - "description"
     - "crush"
     - "Crush"
     - "charm.land"
@@ -69,10 +66,6 @@ filter:
     - "OpenCode"
     - "Nemotron"
     - "nvidia"
-    - "Use this tool"
-    - "function"
-    - "parameters"
-    - "description"
     - "system_prompt"
     - "system_prompt:"
     - "<|system|>"
@@ -91,6 +84,15 @@ logging:
 rate_limit:
   enabled: false
   requests_per_minute: 1000
+
+compression:
+  enabled: true
+  threshold: 1024
+  preserve_code_blocks: true
+  min_compression_ratio: 0.7
+  methods:
+    - "whitespace"
+    - "truncate"
 
 circuit_breaker:
   enabled: true

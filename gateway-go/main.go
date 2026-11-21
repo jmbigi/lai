@@ -72,6 +72,7 @@ type UpstreamServer struct {
 
 type ContextConfig struct {
 	MaxTokens             int  `yaml:"max_tokens"`
+	MaxOutputTokens       int  `yaml:"max_output_tokens"`
 	CompressionThreshold  int  `yaml:"compression_threshold"`
 	PreserveCodeBlocks    bool `yaml:"preserve_code_blocks"`
 	SemanticCompression   bool `yaml:"semantic_compression"`
@@ -288,6 +289,7 @@ type ChatCompletionRequest struct {
 	Tools             []Tool          `json:"tools,omitempty"`
 	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 	ResponseFormat    *ResponseFormat `json:"response_format,omitempty"`
 	Seed              *int64          `json:"seed,omitempty"`
 	StopTokenIDs      []int           `json:"stop_token_ids,omitempty"`
@@ -866,11 +868,24 @@ func NewGateway(config *Config) (*Gateway, error) {
 }
 
 func (g *Gateway) cacheKey(req *ChatCompletionRequest) string {
+	stream := false
+	if req.Stream != nil {
+		stream = *req.Stream
+	}
 	data, _ := json.Marshal(map[string]interface{}{
-		"messages":    req.Messages,
-		"temperature": req.Temperature,
-		"max_tokens":  req.MaxTokens,
-		"model":       req.Model,
+		"messages":      req.Messages,
+		"temperature":   req.Temperature,
+		"max_tokens":    req.MaxTokens,
+		"model":         req.Model,
+		"stream":        stream,
+		"tools":         req.Tools,
+		"tool_choice":   req.ToolChoice,
+		"top_p":         req.TopP,
+		"top_k":         req.TopK,
+		"presence_pen":  req.PresencePenalty,
+		"frequency_pen": req.FrequencyPenalty,
+		"repetition_pen": req.RepetitionPenalty,
+		"chat_tmpl_kw":  req.ChatTemplateKwargs,
 	})
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
@@ -885,10 +900,10 @@ func (g *Gateway) estimateTokens(text string) int {
 }
 
 func (g *Gateway) compressContent(text string) string {
-	if text == "" {
+	if text == "" || !g.config.Compression.Enabled {
 		return text
 	}
-	if !g.config.Compression.PreserveCodeBlocks {
+	if !g.config.Compression.PreserveCodeBlocks && !g.config.Context.PreserveCodeBlocks {
 		text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
 		text = regexp.MustCompile(`\n{3,}`).ReplaceAllString(text, "\n\n")
 		return strings.TrimSpace(text)
@@ -925,14 +940,24 @@ func (g *Gateway) filterMessages(messages []Message) []Message {
 
 	filtered := make([]Message, 0, len(messages))
 	for _, msg := range messages {
-		if msg.Role == "system" {
-			if len(msg.Content) < 500 && !g.isSystemNoise(string(msg.Content)) {
-				filtered = append(filtered, msg)
-			}
+		// Never drop structural messages: system prompts, tool definitions or
+		// results, and assistant turns that carry tool calls. Dropping these
+		// breaks the OpenAI tool-calling contract.
+		if msg.Role == "system" || msg.Role == "tool" || len(msg.ToolCalls) > 0 || msg.ToolCallID != "" {
+			filtered = append(filtered, msg)
 			continue
 		}
-		if g.isSystemNoise(string(msg.Content)) {
-			continue
+		// Only drop short assistant messages that are entirely noise. Long
+		// messages and user messages are preserved even if they contain a
+		// keyword such as "function" or "parameters".
+		if msg.Role == "assistant" {
+			var content string
+			if err := json.Unmarshal(msg.Content, &content); err == nil {
+				trimmed := strings.TrimSpace(content)
+				if trimmed != "" && len(trimmed) < 200 && g.isSystemNoise(trimmed) {
+					continue
+				}
+			}
 		}
 		filtered = append(filtered, msg)
 	}
@@ -945,11 +970,23 @@ func (g *Gateway) compressContext(messages []Message, maxTokens int) []Message {
 		return filtered
 	}
 
-	for i := range filtered {
-		var content string
-		json.Unmarshal(filtered[i].Content, &content)
-		content = g.compressContent(content)
-		filtered[i].Content = json.RawMessage(fmt.Sprintf("%q", content))
+	// Compress only plain-text system/user content. Tool calls, tool results
+	// and multimodal content are left untouched.
+	if g.config.Compression.Enabled {
+		for i := range filtered {
+			if filtered[i].Role != "system" && filtered[i].Role != "user" {
+				continue
+			}
+			var content string
+			if err := json.Unmarshal(filtered[i].Content, &content); err != nil {
+				continue
+			}
+			content = g.compressContent(content)
+			encoded, err := json.Marshal(content)
+			if err == nil {
+				filtered[i].Content = encoded
+			}
+		}
 	}
 
 	totalTokens := 0
@@ -960,6 +997,14 @@ func (g *Gateway) compressContext(messages []Message, maxTokens int) []Message {
 	}
 	if totalTokens <= maxTokens {
 		return filtered
+	}
+
+	// Do not trim a conversation that contains tool calls: dropping an
+	// assistant/tool pair breaks the OpenAI tool-calling protocol.
+	for _, msg := range filtered {
+		if msg.Role == "tool" || len(msg.ToolCalls) > 0 || msg.ToolCallID != "" {
+			return filtered
+		}
 	}
 
 	result := make([]Message, 0, len(filtered))
@@ -978,7 +1023,8 @@ func (g *Gateway) compressContext(messages []Message, maxTokens int) []Message {
 		json.Unmarshal(msg.Content, &content)
 		msgTokens := g.estimateTokens(content)
 		isLastUser := i == lastUserIdx
-		if isLastUser || msgTokens <= remaining {
+		isSystem := msg.Role == "system"
+		if isLastUser || isSystem || msgTokens <= remaining {
 			result = append([]Message{msg}, result...)
 			remaining -= msgTokens
 		} else {
@@ -990,7 +1036,10 @@ func (g *Gateway) compressContext(messages []Message, maxTokens int) []Message {
 
 func (g *Gateway) transformRequest(req *ChatCompletionRequest) ChatCompletionRequest {
 	if req.MaxTokens == nil {
-		def := g.config.Context.MaxTokens
+		def := g.config.Context.MaxOutputTokens
+		if def <= 0 {
+			def = 4096
+		}
 		req.MaxTokens = &def
 	}
 	if req.Temperature == nil {
@@ -1006,9 +1055,8 @@ func (g *Gateway) transformRequest(req *ChatCompletionRequest) ChatCompletionReq
 		req.Stream = &def
 	}
 
-	req.Tools = nil
-	req.ToolChoice = nil
-
+	// Tools and tool_choice are part of the request contract. Never strip
+	// them here: the model needs the schemas to call tools.
 	if len(req.Messages) > 0 {
 		req.Messages = g.compressContext(req.Messages, g.config.Context.MaxTokens)
 	}
@@ -1319,9 +1367,6 @@ func (g *Gateway) handleStream(c *gin.Context, proxy *httputil.ReverseProxy, req
 		defer resp.Body.Close()
 
 		reader := bufio.NewReader(resp.Body)
-		var cacheBuffer strings.Builder
-		isFirstChunk := true
-
 		for {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
@@ -1331,23 +1376,14 @@ func (g *Gateway) handleStream(c *gin.Context, proxy *httputil.ReverseProxy, req
 				return false
 			}
 
-			cacheBuffer.Write(line)
-
 			// Forward chunk immediately
 			c.Header("Content-Type", "text/event-stream")
 			c.Writer.Write(line)
 			c.Writer.Flush()
-
-			if isFirstChunk {
-				isFirstChunk = false
-			}
 		}
 
-		// Cache complete stream response
-		if g.config.Cache.Enabled && resp.StatusCode == http.StatusOK {
-			g.cache.Set(cacheKey, []byte(cacheBuffer.String()))
-		}
-
+		// Do NOT cache streaming responses: they are ephemeral, can be huge,
+		// and the cache key differs by stream flag anyway.
 		g.metrics.requestsTotal.WithLabelValues("POST", "/v1/chat/completions", fmt.Sprintf("%d", resp.StatusCode)).Inc()
 		g.metrics.requestDuration.WithLabelValues("POST", "/v1/chat/completions").Observe(time.Since(start).Seconds())
 		return false

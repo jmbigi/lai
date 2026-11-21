@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv
+venv/
+env/
+.env
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+/tmp/gateway.log
+/tmp/llama.log
+
+# Local model sessions
+sessions/
+
+# Compiled binaries
+gateway-go/gateway
+gateway-go/*.exe
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+
+# Environment files (sensitive)
+.env.local
+.env.*.local
+
+# ollama / llama.cpp model files (large, regenerated)
+/home/kubuntu/models/*.gguf
+
+# Gateway logs (rotated)
+gateway-go/*.log
