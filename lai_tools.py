@@ -82,6 +82,13 @@ class ToolRegistry:
             'ocr_image': self.ocr_image,
             'ocr_image_best': self.ocr_image_best,
             'ocr_screenshot': self.ocr_screenshot,
+            # Git tools (auto-commit + rollback)
+            'git_init': self.git_init,
+            'git_add': self.git_add,
+            'git_commit': self.git_commit,
+            'git_rollback': self.git_rollback,
+            'git_status': self.git_status,
+            'git_diff': self.git_diff,
         }
 
         # Aprobación humana para herramientas sensibles (Cline-style)
@@ -91,6 +98,7 @@ class ToolRegistry:
             'fix_imports', 'fix_syntax', 'fix_formatting', 'fix_types',
             'auto_fix', 'fix_missing_init', 'fix_circular_imports',
             'fix_relative_imports', 'normalize_imports',
+            'git_init', 'git_add', 'git_commit', 'git_rollback',
         }
         # Envolver herramientas sensibles con verificación de aprobación
         for name in self._sensitive_tools:
@@ -1563,6 +1571,91 @@ class ToolRegistry:
         except Exception as e:
             return f'Error en OCR de screenshot: {str(e)}'
 
+    # ------------------------------------------------------------------
+    # Git tools (auto-commit + rollback)
+    # ------------------------------------------------------------------
+
+    def git_init(self, path: str = '.') -> str:
+        """Inicializa un repositorio git en el directorio dado."""
+        try:
+            result = subprocess.run(
+                ['git', 'init', path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return f'Repositorio git inicializado en {path}'
+            return f'Error git init: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git init: {str(e)}'
+
+    def git_add(self, path: str = '.') -> str:
+        """Agrega archivos al staging area de git."""
+        try:
+            result = subprocess.run(
+                ['git', 'add', path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return f'Archivos agregados al staging: {path}'
+            return f'Error git add: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git add: {str(e)}'
+
+    def git_commit(self, message: str, path: str = '.') -> str:
+        """Hace commit de cambios staged con el mensaje dado."""
+        try:
+            result = subprocess.run(
+                ['git', '-C', path, 'commit', '-m', message],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                return f'Commit exitoso: {result.stdout.strip()}'
+            return f'Error git commit: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git commit: {str(e)}'
+
+    def git_rollback(self, path: str = '.') -> str:
+        """Deshace el último commit (git reset --hard HEAD~1).
+
+        ADVERTENCIA: Esto descarta los cambios del último commit.
+        """
+        try:
+            result = subprocess.run(
+                ['git', '-C', path, 'reset', '--hard', 'HEAD~1'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return f'Rollback completado: {result.stdout.strip()}'
+            return f'Error git rollback: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git rollback: {str(e)}'
+
+    def git_status(self, path: str = '.') -> str:
+        """Muestra el estado actual del repositorio git."""
+        try:
+            result = subprocess.run(
+                ['git', '-C', path, 'status'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip() or 'Repositorio limpio, sin cambios.'
+            return f'Error git status: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git status: {str(e)}'
+
+    def git_diff(self, path: str = '.') -> str:
+        """Muestra el diff de cambios no staged."""
+        try:
+            result = subprocess.run(
+                ['git', '-C', path, 'diff'],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip() or 'Sin diferencias.'
+            return f'Error git diff: {result.stderr.strip()}'
+        except Exception as e:
+            return f'Error git diff: {str(e)}'
+
     def get_tools_schema(self) -> List[Dict]:
         """OpenAI-compatible tool schema for native llama.cpp tool calling."""
 
@@ -1744,6 +1837,45 @@ class ToolRegistry:
                     'region': {'type': 'string'},
                     'lang': {'type': 'string', 'default': 'spa+eng'},
                 },
+                [],
+            ),
+            fn(
+                'git_init',
+                'Initialize a git repository in the given directory',
+                {'path': {'type': 'string', 'default': '.'}},
+                [],
+            ),
+            fn(
+                'git_add',
+                'Add files to git staging area',
+                {'path': {'type': 'string', 'default': '.'}},
+                [],
+            ),
+            fn(
+                'git_commit',
+                'Commit staged changes with a message',
+                {
+                    'message': {'type': 'string'},
+                    'path': {'type': 'string', 'default': '.'},
+                },
+                ['message'],
+            ),
+            fn(
+                'git_rollback',
+                'Undo the last commit (git reset --hard HEAD~1). WARNING: discards changes.',
+                {'path': {'type': 'string', 'default': '.'}},
+                [],
+            ),
+            fn(
+                'git_status',
+                'Show git repository status',
+                {'path': {'type': 'string', 'default': '.'}},
+                [],
+            ),
+            fn(
+                'git_diff',
+                'Show unstaged diff of changes',
+                {'path': {'type': 'string', 'default': '.'}},
                 [],
             ),
         ]
