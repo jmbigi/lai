@@ -88,13 +88,17 @@ class SubAgent:
         self.max_iterations = max_iterations
         self.results: list[SubAgentResult] = []
 
-    async def _chat(self, prompt: str, stream: bool = False) -> str:
+    async def _chat(self, prompt: str, stream: bool = False, context: str = '') -> str:
         """Envía un mensaje al modelo local y devuelve la respuesta."""
         headers = {}
         if self.api_key:
             headers['Authorization'] = f'Bearer {self.api_key}'
 
-        full_prompt = f'{self.system_prompt}\n\nUsuario: {prompt}\n\nAsistente:'
+        system_prompt = self.system_prompt
+        if context:
+            system_prompt = f'{system_prompt}\n\n{context}'
+
+        full_prompt = f'{system_prompt}\n\nUsuario: {prompt}\n\nAsistente:'
 
         async with httpx.AsyncClient(timeout=120, headers=headers) as client:
             payload = {
@@ -114,10 +118,14 @@ class SubAgent:
                 content = message.get('reasoning_content', '') or ''
             return content
 
-    def run(self, task: str) -> SubAgentResult:
-        """Ejecuta una tarea usando el sub-agente."""
+    def run(self, task: str, context: str = '') -> SubAgentResult:
+        """Ejecuta una tarea usando el sub-agente.
+
+        ``context`` se inyecta solo en esta ejecución (no muta el prompt
+        permanente del agente).
+        """
         try:
-            response = asyncio.run(self._chat(task))
+            response = asyncio.run(self._chat(task, context=context))
             result = SubAgentResult(
                 agent_name=self.name,
                 task=task,
@@ -147,21 +155,35 @@ class SharedMemory:
     """
 
     def __init__(self, collection_name: str = "shared_agent_memory"):
-        self.rag = get_rag()
         self.collection = collection_name
+        # RAG es opcional (requiere sentence-transformers). Si no está
+        # disponible, los sub-agentes siguen funcionando sin memoria.
+        try:
+            self.rag = get_rag()
+        except Exception:
+            self.rag = None
+
+    @property
+    def available(self) -> bool:
+        """True si la memoria vectorial está operativa."""
+        return self.rag is not None
 
     def store(self, text: str, metadata: dict | None = None) -> str:
         """Almacena un fragmento de conocimiento en la memoria compartida."""
+        if self.rag is None:
+            return ''
         meta = metadata or {}
-        doc_id = self.rag.add_document(
+        ids = self.rag.add_documents(
             collection=self.collection,
-            text=text,
-            metadata=meta,
+            documents=[text],
+            metadatas=[meta],
         )
-        return doc_id
+        return ids[0] if ids else ''
 
     def search(self, query: str, top_k: int = 5) -> list[dict]:
         """Busca conocimiento relevante en la memoria compartida."""
+        if self.rag is None:
+            return []
         return self.rag.search(
             query=query,
             collection=self.collection,
@@ -237,12 +259,9 @@ class MultiAgentOrchestrator:
                 success=False,
             )
 
-        # Inyectar contexto de memoria compartida en el prompt del agente
+        # Inyectar contexto de memoria compartida en esta ejecución
         memory_context = self.shared_memory.get_context(task, top_k=3)
-        if memory_context:
-            agent.system_prompt = agent.system_prompt + "\n\n" + memory_context
-
-        result = agent.run(task)
+        result = agent.run(task, context=memory_context)
 
         # Almacenar resultado exitoso en memoria compartida
         if result.success and result.output:

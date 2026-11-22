@@ -10,22 +10,18 @@ from __future__ import annotations
 
 import ast
 import fnmatch
-import glob
-import ipaddress
 import json
 import os
 import re
-import shutil
+import select
 import subprocess
 import sys
 import tempfile
-import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.parse import quote_plus, urlparse
+from typing import Dict, List
+from urllib.parse import quote_plus
 
 import httpx
+
 
 class ToolRegistry:
     def __init__(self):
@@ -124,8 +120,9 @@ class ToolRegistry:
         """Construye una descripción legible de la acción para aprobación."""
         if tool_name == 'write_file':
             path = args[0] if args else kwargs.get('path', '?')
-            content_preview = (args[1] if len(args) > 1 else kwargs.get('content', ''))[:80]
-            return f"Escribir archivo '{path}' ({len(str(content_preview))} chars)"
+            content = args[1] if len(args) > 1 else kwargs.get('content', '')
+            preview = str(content)[:80].replace('\n', ' ')
+            return f"Escribir '{path}' ({len(str(content))} chars): {preview}"
         if tool_name == 'run_command':
             cmd = args[0] if args else kwargs.get('command', '?')
             return f"Ejecutar comando: {cmd[:100]}"
@@ -144,12 +141,12 @@ class ToolRegistry:
         
         Devuelve True si el usuario aprueba, False si lo rechaza.
         """
-        print(f'\n╔════════════════════════════════════════════════╗')
-        print(f'║  APROBACIÓN REQUERIDA                         ║')
-        print(f'╠════════════════════════════════════════════════╣')
-        print(f'║  Herramienta: {tool_name:<40}║')
-        print(f'║  Acción:      {description:<40}║')
-        print(f'╚════════════════════════════════════════════════╝')
+        print('\n╔════════════════════════════════════════════════╗')
+        print('║  APROBACIÓN REQUERIDA                         ║')
+        print('╠════════════════════════════════════════════════╣')
+        print(f'║  Herramienta: {tool_name[:40]:<40}║')
+        print(f'║  Acción:      {description[:40]:<40}║')
+        print('╚════════════════════════════════════════════════╝')
         try:
             resp = input('¿Aprobar? [s/N]: ').strip().lower()
             return resp in ('s', 'si', 'sí', 'y', 'yes')
@@ -495,17 +492,13 @@ class ToolRegistry:
     def web_search(self, query: str, num_results: int = 5) -> str:
         """Search the web for information using DuckDuckGo HTML scraping."""
         try:
-            from urllib.parse import quote_plus
-
-            import requests
-
-            # Use DuckDuckGo HTML endpoint
+            # Use DuckDuckGo HTML endpoint (httpx is already a dependency)
             url = f'https://html.duckduckgo.com/html/?q={quote_plus(query)}'
             headers = {
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
 
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
             resp.raise_for_status()
 
             # Parse HTML for results
@@ -737,13 +730,12 @@ class ToolRegistry:
     def _lsp_request(self, method: str, params: Dict, timeout: int = 30) -> Dict:
         """Send an LSP request to python-lsp-server and return the response."""
         try:
-            # Start pylsp server
+            # Start pylsp server (binary pipes: LSP frames are byte-oriented)
             proc = subprocess.Popen(
                 ['python', '-m', 'pylsp'],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
             )
 
             # Initialize
@@ -754,7 +746,7 @@ class ToolRegistry:
                 'workspaceSettings': {},
             }
             self._lsp_send(proc, 'initialize', init_params)
-            init_response = self._lsp_receive(proc)
+            init_response = self._lsp_receive(proc, expected_id=1)
             if init_response.get('error'):
                 proc.kill()
                 return {'error': f'LSP init failed: {init_response["error"]}'}
@@ -778,52 +770,69 @@ class ToolRegistry:
     def _lsp_send(self, proc, method: str, params: Dict, request_id: int = 1):
         """Send an LSP request message."""
         message = {'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params}
-        content = json.dumps(message)
-        header = f'Content-Length: {len(content.encode("utf-8"))}\r\n\r\n'
-        proc.stdin.write(header + content)
-        proc.stdin.flush()
+        self._lsp_write(proc, message)
 
     def _lsp_send_notification(self, proc, method: str, params: Dict):
         """Send an LSP notification (no response expected)."""
         message = {'jsonrpc': '2.0', 'method': method, 'params': params}
-        content = json.dumps(message)
-        header = f'Content-Length: {len(content.encode("utf-8"))}\r\n\r\n'
-        proc.stdin.write(header + content)
+        self._lsp_write(proc, message)
+
+    @staticmethod
+    def _lsp_write(proc, message: Dict) -> None:
+        """Write one JSON-RPC message using the LSP framing (bytes)."""
+        payload = json.dumps(message).encode('utf-8')
+        header = f'Content-Length: {len(payload)}\r\n\r\n'.encode('ascii')
+        proc.stdin.write(header + payload)
         proc.stdin.flush()
 
-    def _lsp_receive(self, proc) -> Dict:
-        """Receive an LSP response message."""
-        # Read Content-Length header
-        header_line = proc.stdout.readline()
-        if not header_line:
-            return {'error': 'No response from LSP server'}
+    def _lsp_receive(self, proc, expected_id: int | None = None) -> Dict:
+        """Receive an LSP message, skipping notifications until ``expected_id``.
 
-        content_length = 0
-        while header_line.strip():
-            if header_line.lower().startswith('content-length:'):
-                content_length = int(header_line.split(':')[1].strip())
-            header_line = proc.stdout.readline()
+        The stream is binary so Content-Length (bytes) is honored even when
+        the JSON payload contains non-ASCII characters.
+        """
+        while True:
+            content_length = 0
+            while True:
+                header_line = proc.stdout.readline()
+                if not header_line:
+                    return {'error': 'No response from LSP server'}
+                if not header_line.strip():
+                    break
+                if header_line.lower().startswith(b'content-length:'):
+                    try:
+                        content_length = int(header_line.split(b':', 1)[1].strip())
+                    except ValueError:
+                        return {'error': 'Invalid LSP Content-Length header'}
 
-        # Skip empty line
-        proc.stdout.readline()
+            if content_length <= 0:
+                return {'error': 'Missing LSP Content-Length header'}
 
-        # Read content
-        content = proc.stdout.read(content_length).decode('utf-8')
-        return json.loads(content)
+            raw = proc.stdout.read(content_length)
+            if len(raw) < content_length:
+                return {'error': 'Incomplete LSP response'}
+            try:
+                message = json.loads(raw.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return {'error': f'Invalid LSP JSON: {exc}'}
+
+            # Ignore server notifications and unrelated responses.
+            if expected_id is not None and message.get('id') != expected_id:
+                continue
+            return message
 
     def _lsp_send_and_receive(self, proc, method: str, params: Dict, timeout: int = 30) -> Dict:
-        """Send a request and wait for response."""
+        """Send a request and wait for its response."""
         request_id = 2
         self._lsp_send(proc, method, params, request_id)
 
         # Wait for response with timeout
-        proc.stdout.flush()
         ready, _, _ = select.select([proc.stdout], [], [], timeout)
         if not ready:
             proc.kill()
             return {'error': 'LSP request timeout'}
 
-        return self._lsp_receive(proc)
+        return self._lsp_receive(proc, expected_id=request_id)
 
     def lsp_hover(self, path: str, line: int, column: int) -> str:
         """Get LSP hover info for a symbol at a position."""
@@ -837,6 +846,11 @@ class ToolRegistry:
         contents = result.get('result', {}).get('contents', {})
         if isinstance(contents, dict):
             return contents.get('value', str(contents))
+        if isinstance(contents, list):
+            return '\n'.join(
+                c.get('value', str(c)) if isinstance(c, dict) else str(c)
+                for c in contents
+            )
         return str(contents)
 
     def lsp_go_to_definition(self, path: str, line: int, column: int) -> str:

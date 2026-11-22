@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["lai"]
+py-modules = ["lai", "lai_tools", "lai_automode"]
 
 [project]
 name = "lai"
@@ -102,6 +102,8 @@ exclude = [
 
 [tool.ruff.lint.per-file-ignores]
 "lai.py" = ["B008", "C901", "T201", "ARG001", "ARG002", "PTH118", "PTH110", "PTH123", "PTH103", "PTH120", "PTH100", "PTH112", "PTH107", "PTH111", "PTH109", "PTH113", "PTH114", "PTH119", "PTH207", "PTH208", "PTH108", "SIM105", "SIM102", "SIM114", "PLW1510", "PLW2901", "PLW0603", "PLW0108", "W293", "W291", "PLR0915", "PLR0912", "PLR0913", "PLR0911", "PLR2004", "PLR5501", "PLC0415", "PLC0207", "W292", "UP006", "UP007", "UP012", "UP035", "UP045", "UP024", "UP015", "UP006", "B007", "TRY300", "W291"]
+"lai_tools.py" = ["B008", "C901", "T201", "ARG001", "ARG002", "PTH118", "PTH110", "PTH123", "PTH103", "PTH120", "PTH100", "PTH112", "PTH107", "PTH111", "PTH109", "PTH113", "PTH114", "PTH119", "PTH207", "PTH208", "PTH108", "PTH204", "SIM105", "SIM102", "SIM114", "PLW1510", "PLW2901", "PLW0603", "PLW0108", "W293", "W291", "PLR0915", "PLR0912", "PLR0913", "PLR0911", "PLR2004", "PLR5501", "PLC0415", "PLC0207", "W292", "UP006", "UP007", "UP012", "UP035", "UP045", "UP024", "UP015", "B007", "TRY300", "W291"]
+"lai_automode.py" = ["T201", "ARG001", "ARG002", "SIM105", "PLW1510", "PLW2901", "PLW0603", "W293", "W291", "PLR0915", "PLR0912", "PLR0913", "PLR0911", "PLR2004", "PLR5501", "PLC0415", "PLC0207", "W292", "UP006", "UP007", "UP012", "UP035", "UP045", "UP024", "UP015", "B007", "TRY300", "W291"]
 "tests/*" = ["S101", "S106", "S113", "T201", "ARG001", "PTH123", "PTH118", "PTH103", "PTH120", "PTH100", "PTH109", "PLC0415", "PLW1510", "W292", "I001", "F401", "PLR2004", "PLR0913"]
 "tests/**" = ["S101", "S106", "S113", "T201", "ARG001", "PTH123", "PTH118", "PTH103", "PTH120", "PTH100", "PTH109", "PLC0415", "PLW1510", "W292", "I001", "F401", "PLR2004", "PLR0913"]
 "fib.py" = ["PLR2004", "W292"]

@@ -25,13 +25,20 @@ from urllib.parse import urlparse
 
 import httpx
 
-from lai_automode import AutoMode
-from lai_tools import ToolRegistry
+# Make sibling modules importable no matter where the CLI is launched from.
+# Console-script installs run with sys.path[0] set to the bin directory, so
+# `lai` used to fail with ModuleNotFoundError outside the repo checkout.
+_THIS_DIR = Path(__file__).resolve().parent
+for _path in (_THIS_DIR, _THIS_DIR / 'scripts'):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
+from code_completion import get_completer  # noqa: E402, I001
 from lai_agents import get_orchestrator  # noqa: E402
+from lai_automode import AutoMode  # noqa: E402
+from lai_tools import ToolRegistry  # noqa: E402
 from rag_local import get_rag  # noqa: E402
-from code_completion import get_completer, CodeCompleter  # noqa: E402
+
 
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
 
@@ -2535,6 +2542,9 @@ Examples:
         """,
     )
 
+    parser.add_argument(
+        '--version', action='version', version=f'lai {get_version()}'
+    )
     parser.add_argument('-m', '--model', default='qwen3-8b', help='Model to use')
     parser.add_argument(
         '-u', '--base-url', default='http://localhost:8080/v1', help='Base URL for API'
@@ -2956,7 +2966,7 @@ Examples:
 
     args = parser.parse_args()
 
-    if not hasattr(args, 'func') or args.command is None:
+    if args.command is None:
         # No command provided: enter interactive chat mode by default
         interactive_args = argparse.Namespace(
             model=args.model,
@@ -3018,8 +3028,11 @@ Examples:
         complete_cmd(args)
         return
 
-    # Auto-start services (skip for mcp and system-one which don't need lai services)
-    if args.command not in ('mcp', 'system-one') and not args.quiet:
+    # Auto-start services (skip for commands that don't need llama.cpp/gateway)
+    offline_commands = {
+        'mcp', 'system-one', 'symbols', 'goto', 'repomap', 'complete', 'rag',
+    }
+    if args.command not in offline_commands and not args.quiet:
         print('Checking services...')
         check_services()
         for name, info in SERVICES.items():
@@ -3153,6 +3166,7 @@ def complete_cmd(args):
         cursor_line=args.line,
         cursor_column=args.column,
         max_results=args.top_k,
+        file_path=file_path,
     )
 
     if not completions:
@@ -3178,7 +3192,7 @@ def symbols_cmd(args):
         if not Path(file_path).exists():
             print(f'Error: archivo no encontrado: {file_path}', file=sys.stderr)
             return
-        symbols = completer._extract_symbols(Path(file_path))
+        symbols = completer.extract_symbols(file_path)
         rel = os.path.relpath(file_path, completer.project_root)
     else:
         stats = completer.index_project()
@@ -3205,37 +3219,58 @@ def symbols_cmd(args):
         if rel is None and s.file != current_file:
             current_file = s.file
             print(f'\n# {os.path.relpath(current_file, completer.project_root)}')
-        kind_prefix = {
-            'class': 'class ',
-            'function': 'def ',
-            'method': '    def ',
-            'import': '# import ',
-            'variable': '# var ',
-        }.get(s.kind, '')
-        sig = f' {s.signature}' if s.signature else ''
-        print(f'  {kind_prefix}{s.name}{sig}  # L{s.line}')
+        if s.kind == 'import':
+            rendered = f'  {s.signature or s.name}'
+        elif s.kind == 'class':
+            rendered = f'  class {s.name}{s.signature or ""}'
+        elif s.kind == 'function':
+            rendered = f'  def {s.name}{s.signature or ""}'
+        elif s.kind == 'method':
+            rendered = f'    def {s.name}{s.signature or ""}'
+        else:
+            rendered = f'  # var {s.name}'
+        print(f'{rendered}  # L{s.line}')
 
 
 def goto_cmd(args):
     """Ir a la definición de un símbolo."""
     completer = get_completer()
+    completer.index_project()
 
-    # Leer el archivo actual si se especifica, sino buscar en todo el proyecto
-    # Primero intentamos encontrar el símbolo en los símbolos indexados
-    stats = completer.index_project()
+    matches = [
+        s for s in completer._symbols
+        if s.name == args.symbol and s.kind != 'import'
+    ]
 
-    found = None
-    for s in completer._symbols:
-        if s.name == args.symbol:
-            found = s
-            break
-
-    if not found:
+    if not matches:
         print(f'Símbolo no encontrado: {args.symbol}')
+        suggestions = sorted({
+            s.name for s in completer._symbols
+            if args.symbol.lower() in s.name.lower()
+        })[:10]
+        if suggestions:
+            print(f'Sugerencias: {", ".join(suggestions)}')
         return
 
+    # Clases/funciones antes que métodos/variables; a igualdad, el archivo
+    # modificado más recientemente suele ser el que el usuario está editando.
+    kind_rank = {'class': 0, 'function': 0, 'method': 1, 'variable': 2}
+    matches.sort(key=lambda s: (
+        kind_rank.get(s.kind, 3),
+        -Path(s.file).stat().st_mtime if Path(s.file).exists() else 0,
+        s.file,
+        s.line,
+    ))
+    found = matches[0]
+
     rel = os.path.relpath(found.file, completer.project_root)
-    print(f'{args.symbol} definido en {rel}:{found.line}')
+    print(f'{args.symbol} definido en {rel}:{found.line} ({found.kind})')
+    if len(matches) > 1:
+        others = ', '.join(
+            f'{os.path.relpath(s.file, completer.project_root)}:{s.line}'
+            for s in matches[1:5]
+        )
+        print(f'Otras definiciones ({len(matches) - 1}): {others}')
     print('-' * 60)
 
     try:

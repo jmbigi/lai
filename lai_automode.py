@@ -14,7 +14,11 @@ Mejoras de arquitectura e inteligencia sobre la versión inline de lai.py:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
+
+if TYPE_CHECKING:
+    from lai import LAI
+    from lai_tools import ToolRegistry
 
 
 class AutoMode:
@@ -48,8 +52,8 @@ class AutoMode:
     def __init__(
         self,
         goal: str,
-        tools: 'ToolRegistry',
-        lai_instance: 'LAI',
+        tools: ToolRegistry,
+        lai_instance: LAI,
         max_iterations: int = 10,
         max_turns: int = 20,
         track_cost: bool = True,
