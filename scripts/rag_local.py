@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -376,6 +379,230 @@ class LocalRAG:
                         stats['added'] += 1
 
         return stats
+
+    # ------------------------------------------------------------------
+    # Chunking inteligente de código
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _chunk_code(
+        text: str,
+        max_chunk_size: int = 2000,
+        overlap: int = 200,
+    ) -> list[str]:
+        """Divide código en bloques semánticos (funciones, clases, bloques).
+
+        Intenta respetar límites de funciones y clases para no romper
+        el contexto. Si un bloque es muy grande, lo divide por líneas.
+        """
+        if not text.strip():
+            return []
+
+        lines = text.split("\n")
+        chunks: list[str] = []
+        current_chunk: list[str] = []
+        current_size = 0
+        brace_depth = 0
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            is_block_start = bool(
+                re.match(
+                    r"^(def |class |async def |func |fn |public |private |protected )",
+                    stripped,
+                )
+            ) or stripped.endswith("{")
+
+            brace_depth += line.count("{") - line.count("}")
+
+            if is_block_start and current_chunk and current_size > 0:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_size = 0
+
+            current_chunk.append(line)
+            current_size += len(line) + 1
+
+            if current_size >= max_chunk_size:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_size = 0
+
+            if brace_depth == 0 and current_chunk and stripped.endswith("}"):
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_size = 0
+
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+
+        if not chunks:
+            for i in range(0, len(lines), max_chunk_size // 80):
+                chunk_lines = lines[i : i + max_chunk_size // 80]
+                if chunk_lines:
+                    chunks.append("\n".join(chunk_lines))
+
+        return [c for c in chunks if c.strip()]
+
+    def add_file_chunked(
+        self,
+        collection: str,
+        file_path: str | Path,
+        max_chunk_size: int = 2000,
+    ) -> list[str] | None:
+        path = Path(file_path)
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if not text.strip():
+            return None
+
+        chunks = self._chunk_code(text, max_chunk_size=max_chunk_size)
+        if not chunks:
+            return None
+
+        doc_ids: list[str] = []
+        base_id = f"{collection}:{path}"
+        for i, chunk in enumerate(chunks):
+            doc_id = f"{base_id}#chunk{i}"
+            self.add_or_update_document(
+                collection,
+                chunk,
+                metadata={
+                    "file": str(path),
+                    "type": path.suffix,
+                    "chunk": i,
+                    "total_chunks": len(chunks),
+                },
+                doc_id=doc_id,
+            )
+            doc_ids.append(doc_id)
+
+        return doc_ids
+
+    def add_directory_chunked(
+        self,
+        collection: str,
+        directory: str | Path,
+        extensions: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".yaml", ".yml"),
+        max_chunk_size: int = 2000,
+    ) -> dict[str, int]:
+        dir_path = Path(directory)
+        stats = {"files": 0, "chunks_added": 0, "total_chunks": 0}
+
+        for ext in extensions:
+            for f in dir_path.rglob(f"*{ext}"):
+                result = self.add_file_chunked(collection, f, max_chunk_size=max_chunk_size)
+                if result:
+                    stats["files"] += 1
+                    stats["chunks_added"] += len(result)
+                    stats["total_chunks"] += len(result)
+
+        return stats
+
+    # ------------------------------------------------------------------
+    # Búsqueda híbrida: vector + keyword (TF-IDF simple)
+    # ------------------------------------------------------------------
+
+    def _tfidf_score(
+        self,
+        query_terms: list[str],
+        doc_text: str,
+    ) -> float:
+        if not query_terms or not doc_text:
+            return 0.0
+
+        doc_terms = doc_text.lower().split()
+        doc_len = len(doc_terms)
+        if doc_len == 0:
+            return 0.0
+
+        doc_counter = Counter(doc_terms)
+        total_docs = max(len(self._metadata), 1)
+
+        score = 0.0
+        for term in query_terms:
+            term = term.lower()
+            tf = doc_counter.get(term, 0) / doc_len
+            docs_with_term = sum(
+                1 for m in self._metadata if term in m.get("text", "").lower().split()
+            )
+            idf = math.log(total_docs / max(docs_with_term, 1)) + 1.0
+            score += tf * idf
+
+        return score
+
+    def search_hybrid(
+        self,
+        query: str,
+        collection: str | None = None,
+        top_k: int = 5,
+        threshold: float = 0.3,
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+    ) -> list[dict[str, Any]]:
+        if self._embeddings is None or len(self._metadata) == 0:
+            return []
+
+        vector_results = self.search(
+            query=query,
+            collection=collection,
+            top_k=top_k * 3,
+            threshold=0.1,
+        )
+
+        query_terms = [t for t in re.split(r"\s+", query.lower()) if t]
+
+        hybrid_scores: dict[str, dict[str, Any]] = {}
+        max_vector = max((r["score"] for r in vector_results), default=0.0) or 1.0
+
+        for r in vector_results:
+            doc_id = r["id"]
+            text = r.get("text", "")
+            keyword_score = self._tfidf_score(query_terms, text)
+
+            norm_vector = r["score"] / max_vector
+            combined = (vector_weight * norm_vector) + (keyword_weight * keyword_score)
+
+            hybrid_scores[doc_id] = {
+                "id": r["id"],
+                "collection": r["collection"],
+                "text": text,
+                "metadata": r.get("metadata", {}),
+                "vector_score": r["score"],
+                "keyword_score": keyword_score,
+                "score": combined,
+            }
+
+        if collection:
+            hybrid_scores = {
+                k: v for k, v in hybrid_scores.items() if v["collection"] == collection
+            }
+
+        sorted_results = sorted(
+            hybrid_scores.values(), key=lambda x: x["score"], reverse=True
+        )
+
+        final_results: list[dict[str, Any]] = []
+        for r in sorted_results:
+            if r["score"] < threshold:
+                continue
+            final_results.append(
+                {
+                    "id": r["id"],
+                    "collection": r["collection"],
+                    "text": r["text"],
+                    "metadata": r["metadata"],
+                    "score": r["score"],
+                    "vector_score": r["vector_score"],
+                    "keyword_score": r["keyword_score"],
+                }
+            )
+            if len(final_results) >= top_k:
+                break
+
+        return final_results
 
     def search(
         self,
