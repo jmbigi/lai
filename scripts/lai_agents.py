@@ -10,9 +10,8 @@ coordinar múltiples sub-agentes para resolver tareas complejas.
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import httpx
 
@@ -22,7 +21,7 @@ from lai_tools import ToolRegistry
 # System prompts especializados por dominio
 # ---------------------------------------------------------------------------
 
-SUBAGENT_PROMPTS: Dict[str, str] = {
+SUBAGENT_PROMPTS: dict[str, str] = {
     'code': """Eres un Agente Especialista en Generación de Código.
 Tu misión es escribir código limpio, funcional y bien documentado.
 Siempre incluye: type hints, docstrings (estilo Google), manejo de errores,
@@ -60,13 +59,13 @@ class SubAgentResult:
     output: str
     success: bool
     iterations: int = 0
-    tools_used: List[str] = field(default_factory=list)
+    tools_used: list[str] = field(default_factory=list)
 
 
 class SubAgent:
     """Sub-agente especializado en un dominio específico."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         name: str,
         system_prompt: str,
@@ -85,7 +84,7 @@ class SubAgent:
         self.api_key = api_key
         self.allow_remote = allow_remote
         self.max_iterations = max_iterations
-        self.results: List[SubAgentResult] = []
+        self.results: list[SubAgentResult] = []
 
     async def _chat(self, prompt: str, stream: bool = False) -> str:
         """Envía un mensaje al modelo local y devuelve la respuesta."""
@@ -154,7 +153,7 @@ class MultiAgentOrchestrator:
         self.base_url = base_url
         self.api_key = api_key
         self.allow_remote = allow_remote
-        self.agents: Dict[str, SubAgent] = {}
+        self.agents: dict[str, SubAgent] = {}
         self._initialize_agents()
 
     def _initialize_agents(self) -> None:
@@ -170,7 +169,7 @@ class MultiAgentOrchestrator:
                 allow_remote=self.allow_remote,
             )
 
-    def list_agents(self) -> List[str]:
+    def list_agents(self) -> list[str]:
         """Devuelve los nombres de los sub-agentes disponibles."""
         return list(self.agents.keys())
 
@@ -191,13 +190,13 @@ class MultiAgentOrchestrator:
             )
         return agent.run(task)
 
-    def run_pipeline(self, tasks: List[Dict[str, str]]) -> List[SubAgentResult]:
+    def run_pipeline(self, tasks: list[dict[str, str]]) -> list[SubAgentResult]:
         """Ejecuta una pipeline de tareas en diferentes sub-agentes.
 
         Cada tarea es un dict con claves: 'agent' (nombre del sub-agente)
         y 'task' (descripción de la tarea).
         """
-        results: List[SubAgentResult] = []
+        results: list[SubAgentResult] = []
         for task_def in tasks:
             agent_name = task_def.get('agent', 'code')
             task_desc = task_def.get('task', '')

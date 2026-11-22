@@ -29,8 +29,8 @@ from lai_automode import AutoMode
 from lai_tools import ToolRegistry
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
+from lai_agents import get_orchestrator  # noqa: E402
 from rag_local import get_rag  # noqa: E402
-from lai_agents import get_orchestrator, MultiAgentOrchestrator  # noqa: E402
 
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
 
