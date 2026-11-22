@@ -7,16 +7,14 @@ coordinar múltiples sub-agentes para resolver tareas complejas.
 100% local, sin cloud, sin API keys. Regla 0 de lai.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Optional
 
 import httpx
 
 from lai_tools import ToolRegistry
-
 from rag_local import get_rag
 
 # ---------------------------------------------------------------------------
@@ -50,6 +48,29 @@ y verifica que la corrección no introduce regresiones.""",
 Tu misión es diseñar estructuras de código modulares, escalables y
 mantenibles. Propón patrones de diseño, definiendo interfaces claras,
 separación de responsabilidades y bajo acoplamiento.""",
+    "critic": """Eres un Agente Crítico Especialista en Evaluación de Código.
+Tu misión es evaluar si un resultado cumple unos CRITERIOS DE ACEPTACIÓN
+concretos y devolver un veredicto estructurado.
+
+Para cada criterio, indica:
+- CUMPLE o NO CUMPLE
+- Evidencia concreta (línea, fragmento o comportamiento)
+- Si no cumple, qué exactamente falta o está mal y cómo corregirlo
+
+Responde SIEMPRE en este formato:
+
+VEREDICTO: APROBADO | RECHAZADO | PARCIAL
+PUNTUACION: 0-100
+CRITERIOS:
+- [ ] Criterio 1: CUMPLE/NO CUMPLE - evidencia
+- [ ] Criterio 2: CUMPLE/NO CUMPLE - evidencia
+
+FEEDBACK:
+- Lista de problemas concretos y accionables
+- Pasos específicos para corregir cada problema
+
+Si el veredicto no es APROBADO, no alegues éxito: describe con precisión
+qué debe cambiar para alcanzar APROBADO.""",
 }
 
 
@@ -75,7 +96,7 @@ class SubAgent:
         tools: ToolRegistry,
         model: str = "qwen3-8b",
         base_url: str = "http://localhost:8080/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         allow_remote: bool = False,
         max_iterations: int = 3,
     ):
@@ -125,15 +146,6 @@ class SubAgent:
         """
         try:
             response = asyncio.run(self._chat(task, context=context))
-            result = SubAgentResult(
-                agent_name=self.name,
-                task=task,
-                output=response,
-                success=True,
-                iterations=1,
-            )
-            self.results.append(result)
-            return result
         except Exception as e:
             result = SubAgentResult(
                 agent_name=self.name,
@@ -142,8 +154,16 @@ class SubAgent:
                 success=False,
                 iterations=0,
             )
-            self.results.append(result)
-            return result
+        else:
+            result = SubAgentResult(
+                agent_name=self.name,
+                task=task,
+                output=response,
+                success=True,
+                iterations=1,
+            )
+        self.results.append(result)
+        return result
 
 
 class SharedMemory:
@@ -197,7 +217,7 @@ class SharedMemory:
             return ""
         parts = ["Memoria compartida relevante:"]
         for r in results:
-            parts.append(f"- [{r['score']:.2f}] {r['text'][:300]}")
+            parts.append(f'- [{r["score"]:.2f}] {r["text"][:300]}')
         return "\n".join(parts)
 
 
@@ -209,7 +229,7 @@ class MultiAgentOrchestrator:
         tools: ToolRegistry,
         model: str = "qwen3-8b",
         base_url: str = "http://localhost:8080/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         allow_remote: bool = False,
     ):
         self.tools = tools
@@ -238,7 +258,7 @@ class MultiAgentOrchestrator:
         """Devuelve los nombres de los sub-agentes disponibles."""
         return list(self.agents.keys())
 
-    def get_agent(self, name: str) -> Optional[SubAgent]:
+    def get_agent(self, name: str) -> SubAgent | None:
         """Devuelve un sub-agente por nombre."""
         return self.agents.get(name)
 
@@ -285,7 +305,32 @@ class MultiAgentOrchestrator:
             results.append(result)
         return results
 
-    def run_collaborative(self, goal: str, max_iterations: int = 3) -> str:
+    def critique(
+        self,
+        output: str,
+        criteria: list[str],
+        context: str = "",
+    ) -> SubAgentResult:
+        """Evalúa una salida contra criterios de aceptación usando el agente crítico.
+
+        El crítico es un sub-agente independiente (no el mismo que generó
+        el código), lo que evita el sesgo de autoevaluación.
+
+        Devuelve un SubAgentResult cuyo output contiene el veredicto
+        estructurado (VEREDICTO, PUNTUACION, CRITERIOS, FEEDBACK).
+        """
+        criteria_text = "\n".join(f"- {c}" for c in criteria)
+        task = (
+            "EVALUA la siguiente salida contra estos CRITERIOS DE ACEPTACIÓN:\n\n"
+            f"{criteria_text}\n\n"
+            f"SALIDA A EVALUAR:\n---\n{output}\n---\n"
+        )
+        if context:
+            task = f"CONTEXTO: {context}\n\n{task}"
+
+        return self.run_agent("critic", task)
+
+    def run_collaborative(self, goal: str) -> str:
         """Ejecuta un flujo colaborativo entre sub-agentes para lograr una meta.
 
         Flujo: code → review → test → doc (opcional).
@@ -311,26 +356,27 @@ class MultiAgentOrchestrator:
 
 
 # Instancia singleton para uso desde CLI
-_orchestrator: Optional[MultiAgentOrchestrator] = None
 
 
 def get_orchestrator(
-    tools: Optional[ToolRegistry] = None,
+    tools: ToolRegistry | None = None,
     model: str = "qwen3-8b",
     base_url: str = "http://localhost:8080/v1",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     allow_remote: bool = False,
 ) -> MultiAgentOrchestrator:
     """Devuelve el orchestrator singleton."""
-    global _orchestrator
-    if _orchestrator is None:
+    if get_orchestrator._instance is None:
         if tools is None:
             tools = ToolRegistry()
-        _orchestrator = MultiAgentOrchestrator(
+        get_orchestrator._instance = MultiAgentOrchestrator(
             tools=tools,
             model=model,
             base_url=base_url,
             api_key=api_key,
             allow_remote=allow_remote,
         )
-    return _orchestrator
+    return get_orchestrator._instance  # type: ignore[return-value]
+
+
+get_orchestrator._instance = None
