@@ -1,17 +1,21 @@
 import sys
 import re
 
+
 class Chess:
     def __init__(self):
         self.board = [
-            ['♜','♞','♝','♛','♚','♝','♞','♜'],  # fila 0: negras (rank 8)
-            ['♟']*8,                              # fila 1: peones negros
-            [' ']*8, [' ']*8, [' ']*8, [' ']*8,  # filas 2-5 vacías
-            ['♙']*8,                              # fila 6: peones blancos
-            ['♖','♘','♗','♕','♔','♗','♘','♖']   # fila 7: blancas (rank 1)
+            ["♜", "♞", "♝", "♛", "♚", "♝", "♞", "♜"],  # fila 0: negras (rank 8)
+            ["♟"] * 8,  # fila 1: peones negros
+            [" "] * 8,
+            [" "] * 8,
+            [" "] * 8,
+            [" "] * 8,  # filas 2-5 vacías
+            ["♙"] * 8,  # fila 6: peones blancos
+            ["♖", "♘", "♗", "♕", "♔", "♗", "♘", "♖"],  # fila 7: blancas (rank 1)
         ]
-        self.turn = 'white'
-        self.castle_rights = {'white':{'k':True,'q':True}, 'black':{'k':True,'q':True}}
+        self.turn = "white"
+        self.castle_rights = {"white": {"k": True, "q": True}, "black": {"k": True, "q": True}}
         self.en_passant = None
         self.move_count = 0
 
@@ -30,25 +34,25 @@ class Chess:
         piece = self.board[start_row][start_col]
         color = self.turn
 
-        if piece == ' ':
+        if piece == " ":
             return False
 
         if piece.islower():
-            color = 'black'
+            color = "black"
 
-        if piece == '♟':
+        if piece == "♟":
             return self.is_valid_pawn_move(start, end, color)
-        elif piece == '♙':
+        elif piece == "♙":
             return self.is_valid_pawn_move(start, end, color)
-        elif piece == '♜' or piece == '♖':
+        elif piece == "♜" or piece == "♖":
             return self.is_valid_rook_move(start, end)
-        elif piece == '♞' or piece == '♘':
+        elif piece == "♞" or piece == "♘":
             return self.is_valid_knight_move(start, end)
-        elif piece == '♝' or piece == '♗':
+        elif piece == "♝" or piece == "♗":
             return self.is_valid_bishop_move(start, end)
-        elif piece == '♛' or piece == '♕':
+        elif piece == "♛" or piece == "♕":
             return self.is_valid_queen_move(start, end)
-        elif piece == '♚' or piece == '♔':
+        elif piece == "♚" or piece == "♔":
             return self.is_valid_king_move(start, end)
 
         return False
@@ -57,17 +61,21 @@ class Chess:
         start_row, start_col = start
         end_row, end_col = end
         piece = self.board[start_row][start_col]
-        direction = -1 if color == 'white' else 1
-        is_first_move = (start_row == 6 and color == 'white') or (start_row == 1 and color == 'black')
+        direction = -1 if color == "white" else 1
+        is_first_move = (start_row == 6 and color == "white") or (
+            start_row == 1 and color == "black"
+        )
 
         if end_col == start_col:
-            if (end_row == start_row + direction) or (is_first_move and end_row == start_row + 2 * direction):
-                if self.board[end_row][end_col] == ' ':
+            if (end_row == start_row + direction) or (
+                is_first_move and end_row == start_row + 2 * direction
+            ):
+                if self.board[end_row][end_col] == " ":
                     return True
                 return False
             return False
         elif abs(end_col - start_col) == 1 and end_row == start_row + direction:
-            if self.board[end_row][end_col] != ' ':
+            if self.board[end_row][end_col] != " ":
                 return True
             return False
         return False
@@ -77,12 +85,12 @@ class Chess:
         end_row, end_col = end
         if start_row == end_row:
             for col in range(min(start_col, end_col) + 1, max(start_col, end_col)):
-                if self.board[start_row][col] != ' ':
+                if self.board[start_row][col] != " ":
                     return False
             return True
         elif start_col == end_col:
             for row in range(min(start_row, end_row) + 1, max(start_row, end_row)):
-                if self.board[row][start_col] != ' ':
+                if self.board[row][start_col] != " ":
                     return False
             return True
         return False
@@ -104,7 +112,7 @@ class Chess:
         for i in range(1, abs(end_row - start_row)):
             r = start_row + i * step_row
             c = start_col + i * step_col
-            if self.board[r][c] != ' ':
+            if self.board[r][c] != " ":
                 return False
         return True
 
@@ -122,7 +130,7 @@ class Chess:
         king_pos = None
         for i in range(8):
             for j in range(8):
-                if self.board[i][j] == ('♔' if color == 'white' else '♚'):
+                if self.board[i][j] == ("♔" if color == "white" else "♚"):
                     king_pos = (i, j)
                     break
             if king_pos:
@@ -132,7 +140,7 @@ class Chess:
         for i in range(8):
             for j in range(8):
                 piece = self.board[i][j]
-                if (piece.islower() and color == 'white') or (piece.isupper() and color == 'black'):
+                if (piece.islower() and color == "white") or (piece.isupper() and color == "black"):
                     if self.is_attacking(i, j, king_pos):
                         return True
         return False
@@ -141,15 +149,15 @@ class Chess:
         dr = abs(row - king_pos[0])
         dc = abs(col - king_pos[1])
         piece = self.board[row][col]
-        if piece == '♜' or piece == '♖':
+        if piece == "♜" or piece == "♖":
             return dr == 0 or dc == 0
-        elif piece == '♞' or piece == '♘':
+        elif piece == "♞" or piece == "♘":
             return dr == 2 and dc == 1 or dr == 1 and dc == 2
-        elif piece == '♝' or piece == '♗':
+        elif piece == "♝" or piece == "♗":
             return dr == dc
-        elif piece == '♛' or piece == '♕':
+        elif piece == "♛" or piece == "♕":
             return dr == 0 or dc == 0 or dr == dc
-        elif piece == '♟' or piece == '♙':
+        elif piece == "♟" or piece == "♙":
             return (dr == 1 and dc == 1) or (dr == 1 and dc == 0)
         return False
 
@@ -158,7 +166,7 @@ class Chess:
             return False
         for i in range(8):
             for j in range(8):
-                if self.board[i][j] == ('♙' if color == 'white' else '♟'):
+                if self.board[i][j] == ("♙" if color == "white" else "♟"):
                     for di in [-1, 0, 1]:
                         for dj in [-1, 0, 1]:
                             if di == 0 and dj == 0:
@@ -174,7 +182,7 @@ class Chess:
             return False
         for i in range(8):
             for j in range(8):
-                if self.board[i][j] == ('♙' if self.turn == 'white' else '♟'):
+                if self.board[i][j] == ("♙" if self.turn == "white" else "♟"):
                     for di in [-1, 0, 1]:
                         for dj in [-1, 0, 1]:
                             if di == 0 and dj == 0:
@@ -191,26 +199,26 @@ class Chess:
         piece = self.board[start_row][start_col]
         color = self.turn
 
-        if piece == ' ':
+        if piece == " ":
             return False
 
         if piece.islower():
-            color = 'black'
+            color = "black"
 
         if not self.is_valid_move(start, end):
             return False
 
         self.board[end_row][end_col] = piece
-        self.board[start_row][start_col] = ' '
+        self.board[start_row][start_col] = " "
 
-        if piece == '♟' or piece == '♙':
+        if piece == "♟" or piece == "♙":
             if end_row == 0 or end_row == 7:
-                self.board[end_row][end_col] = '♕' if color == 'white' else '♛'
+                self.board[end_row][end_col] = "♕" if color == "white" else "♛"
 
-        if self.turn == 'white':
-            self.turn = 'black'
+        if self.turn == "white":
+            self.turn = "black"
         else:
-            self.turn = 'white'
+            self.turn = "white"
 
         self.move_count += 1
 

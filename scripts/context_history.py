@@ -15,33 +15,33 @@ from pathlib import Path
 from typing import Any
 
 
-STORAGE_DIR = Path(os.environ.get('LAI_STORAGE_DIR', Path.home() / '.local-ai'))
-SESSIONS_FILE = STORAGE_DIR / 'sessions.json'
-HISTORY_FILE = STORAGE_DIR / 'history.json'
-CORPUS_FILE = STORAGE_DIR / 'corpus.json'
+STORAGE_DIR = Path(os.environ.get("LAI_STORAGE_DIR", Path.home() / ".local-ai"))
+SESSIONS_FILE = STORAGE_DIR / "sessions.json"
+HISTORY_FILE = STORAGE_DIR / "history.json"
+CORPUS_FILE = STORAGE_DIR / "corpus.json"
 
 
 def _ensure_storage() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     if not SESSIONS_FILE.exists():
-        SESSIONS_FILE.write_text('[]', encoding='utf-8')
+        SESSIONS_FILE.write_text("[]", encoding="utf-8")
     if not HISTORY_FILE.exists():
-        HISTORY_FILE.write_text('[]', encoding='utf-8')
+        HISTORY_FILE.write_text("[]", encoding="utf-8")
     if not CORPUS_FILE.exists():
-        CORPUS_FILE.write_text('{}', encoding='utf-8')
+        CORPUS_FILE.write_text("{}", encoding="utf-8")
 
 
 def _load_json(path: Path) -> list[Any]:
     _ensure_storage()
     try:
-        return json.loads(path.read_text(encoding='utf-8'))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, FileNotFoundError):
         return []
 
 
 def _save_json(path: Path, data: list[Any] | dict[str, Any]) -> None:
     _ensure_storage()
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def start_session(
@@ -53,17 +53,17 @@ def start_session(
     """Inicia una nueva sesion y retorna su ID."""
     _ensure_storage()
     sessions = _load_json(SESSIONS_FILE)
-    session_id = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+    session_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     session: dict[str, Any] = {
-        'id': session_id,
-        'started_at': datetime.now(timezone.utc).isoformat(),
-        'model': model,
-        'base_url': base_url,
-        'action': action,
-        'rules': rules or [],
-        'files_processed': 0,
-        'total_issues': 0,
-        'completed': False,
+        "id": session_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "model": model,
+        "base_url": base_url,
+        "action": action,
+        "rules": rules or [],
+        "files_processed": 0,
+        "total_issues": 0,
+        "completed": False,
     }
     sessions.append(session)
     _save_json(SESSIONS_FILE, sessions)
@@ -74,9 +74,9 @@ def end_session(session_id: str) -> None:
     """Marca una sesion como completada."""
     sessions = _load_json(SESSIONS_FILE)
     for s in sessions:
-        if s['id'] == session_id:
-            s['completed'] = True
-            s['ended_at'] = datetime.now(timezone.utc).isoformat()
+        if s["id"] == session_id:
+            s["completed"] = True
+            s["ended_at"] = datetime.now(timezone.utc).isoformat()
             break
     _save_json(SESSIONS_FILE, sessions)
 
@@ -93,13 +93,13 @@ def record_entry(  # noqa: PLR0913
     _ensure_storage()
     history = _load_json(HISTORY_FILE)
     entry: dict[str, Any] = {
-        'session_id': session_id,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        'file_path': file_path,
-        'rule': rule,
-        'message': message,
-        'line': line,
-        'severity': severity,
+        "session_id": session_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "file_path": file_path,
+        "rule": rule,
+        "message": message,
+        "line": line,
+        "severity": severity,
     }
     history.append(entry)
     _save_json(HISTORY_FILE, history)
@@ -113,9 +113,9 @@ def update_session_stats(
     """Actualiza contadores de una sesion."""
     sessions = _load_json(SESSIONS_FILE)
     for s in sessions:
-        if s['id'] == session_id:
-            s['files_processed'] = files_processed
-            s['total_issues'] = total_issues
+        if s["id"] == session_id:
+            s["files_processed"] = files_processed
+            s["total_issues"] = total_issues
             break
     _save_json(SESSIONS_FILE, sessions)
 
@@ -126,7 +126,7 @@ def save_corpus(project_id: str, corpus: dict[str, Any]) -> None:
     corpora = _load_corpus_map()
     corpora[project_id] = {
         **corpus,
-        'updated_at': datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_json(CORPUS_FILE, corpora)
 
@@ -140,7 +140,7 @@ def load_corpus(project_id: str) -> dict[str, Any] | None:
 
 def _load_corpus_map() -> dict[str, Any]:
     try:
-        return json.loads(CORPUS_FILE.read_text(encoding='utf-8'))
+        return json.loads(CORPUS_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, FileNotFoundError):
         return {}
 
@@ -160,10 +160,10 @@ def get_sessions(limit: int = 20) -> list[Any]:
 def get_context_for_session(session_id: str) -> dict[str, Any]:
     """Retorna el contexto completo de una sesion para continuidad."""
     sessions = _load_json(SESSIONS_FILE)
-    session = next((s for s in sessions if s['id'] == session_id), None)
+    session = next((s for s in sessions if s["id"] == session_id), None)
     history = _load_json(HISTORY_FILE)
-    entries = [e for e in history if e['session_id'] == session_id]
+    entries = [e for e in history if e["session_id"] == session_id]
     return {
-        'session': session,
-        'entries': entries,
+        "session": session,
+        "entries": entries,
     }

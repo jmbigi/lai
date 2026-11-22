@@ -69,6 +69,7 @@ class Result:
 @dataclass
 class Trial:
     """Resultados de un solo trial de una celda."""
+
     name: str
     total: int = 0
     success: int = 0
@@ -149,6 +150,7 @@ class Trial:
 @dataclass
 class Cell:
     """Una celda de prueba con múltiples trials."""
+
     name: str
     trials: List[Trial] = field(default_factory=list)
 
@@ -248,7 +250,8 @@ class HttpClient:
                         last_status = resp.status_code
                         if resp.status_code >= 400:
                             return Result(
-                                success=False, latency_ms=(time.perf_counter() - start) * 1000,
+                                success=False,
+                                latency_ms=(time.perf_counter() - start) * 1000,
                                 error=f"HTTP {resp.status_code}",
                                 status_code=resp.status_code,
                             )
@@ -284,15 +287,13 @@ class HttpClient:
                     last_status = resp.status_code
                     if resp.status_code >= 400:
                         return Result(
-                            success=False, latency_ms=(time.perf_counter() - start) * 1000,
-                            error=f"HTTP {resp.status_code}", status_code=resp.status_code,
+                            success=False,
+                            latency_ms=(time.perf_counter() - start) * 1000,
+                            error=f"HTTP {resp.status_code}",
+                            status_code=resp.status_code,
                         )
                     data = resp.json()
-                    content = (
-                        (data.get("choices") or [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
                     reasoning = (
                         (data.get("choices") or [{}])[0]
                         .get("message", {})
@@ -304,8 +305,10 @@ class HttpClient:
                 # Validate content (accept content OR reasoning_content)
                 if not content or len(content.strip()) == 0:
                     return Result(
-                        success=False, latency_ms=(time.perf_counter() - start) * 1000,
-                        error="empty content", status_code=last_status,
+                        success=False,
+                        latency_ms=(time.perf_counter() - start) * 1000,
+                        error="empty content",
+                        status_code=last_status,
                     )
 
                 latency_ms = (time.perf_counter() - start) * 1000
@@ -315,8 +318,11 @@ class HttpClient:
                     ttft_ms = latency_ms
                 tokens = len(content) // 4
                 return Result(
-                    success=True, latency_ms=latency_ms, tokens=tokens,
-                    ttft_ms=ttft_ms, status_code=last_status,
+                    success=True,
+                    latency_ms=latency_ms,
+                    tokens=tokens,
+                    ttft_ms=ttft_ms,
+                    status_code=last_status,
                 )
             except httpx.HTTPStatusError as exc:
                 last_error = f"HTTP {exc.response.status_code}"
@@ -325,8 +331,10 @@ class HttpClient:
                     time.sleep(0.5 * (attempt + 1))
                     continue
                 return Result(
-                    success=False, latency_ms=(time.perf_counter() - start) * 1000,
-                    error=last_error, status_code=last_status,
+                    success=False,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    error=last_error,
+                    status_code=last_status,
                 )
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
                 last_error = str(exc)
@@ -334,18 +342,22 @@ class HttpClient:
                     time.sleep(0.5 * (attempt + 1))
                     continue
                 return Result(
-                    success=False, latency_ms=(time.perf_counter() - start) * 1000,
+                    success=False,
+                    latency_ms=(time.perf_counter() - start) * 1000,
                     error=last_error,
                 )
             except Exception as exc:
                 last_error = str(exc)
                 return Result(
-                    success=False, latency_ms=(time.perf_counter() - start) * 1000,
+                    success=False,
+                    latency_ms=(time.perf_counter() - start) * 1000,
                     error=last_error,
                 )
         return Result(
-            success=False, latency_ms=(time.perf_counter() - start) * 1000,
-            error=last_error or "unknown", status_code=last_status,
+            success=False,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error=last_error or "unknown",
+            status_code=last_status,
         )
 
 
@@ -425,14 +437,9 @@ def run_concurrency_sweep(
         cell = Cell(name=f"concurrency c={c} (stream={stream})")
         for tr in range(1, trials + 1):
             trial = Trial(name=f"concurrency c={c} (stream={stream})")
-            prompts = [
-                SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)]
-                for i in range(total_per_level)
-            ]
+            prompts = [SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total_per_level)]
             with concurrent.futures.ThreadPoolExecutor(max_workers=c) as ex:
-                futs = [
-                    ex.submit(http.post_chat, p, stream) for p in prompts
-                ]
+                futs = [ex.submit(http.post_chat, p, stream) for p in prompts]
                 for fut in concurrent.futures.as_completed(futs):
                     r = fut.result()
                     trial.add(r)
@@ -479,24 +486,22 @@ def run_stamina(
                 }
                 start = time.perf_counter()
                 try:
-                    resp = http.client.post(
-                        GATEWAY_URL, json=payload, headers=AUTH_HEADER
-                    )
+                    resp = http.client.post(GATEWAY_URL, json=payload, headers=AUTH_HEADER)
                     if resp.status_code >= 400:
-                        trial.add(Result(
-                            success=False, latency_ms=(time.perf_counter()-start)*1000,
-                            error=f"HTTP {resp.status_code}", turn=t,
-                            status_code=resp.status_code,
-                        ))
+                        trial.add(
+                            Result(
+                                success=False,
+                                latency_ms=(time.perf_counter() - start) * 1000,
+                                error=f"HTTP {resp.status_code}",
+                                turn=t,
+                                status_code=resp.status_code,
+                            )
+                        )
                         if breaker:
                             breaker.record(False)
                         break
                     data = resp.json()
-                    content = (
-                        (data.get("choices") or [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
                     reasoning = (
                         (data.get("choices") or [{}])[0]
                         .get("message", {})
@@ -505,32 +510,43 @@ def run_stamina(
                     if not content or len(content.strip()) == 0:
                         content = reasoning
                     if not content or len(content.strip()) == 0:
-                        trial.add(Result(
-                            success=False, latency_ms=(time.perf_counter()-start)*1000,
-                            error="empty content", turn=t,
-                            status_code=resp.status_code,
-                        ))
+                        trial.add(
+                            Result(
+                                success=False,
+                                latency_ms=(time.perf_counter() - start) * 1000,
+                                error="empty content",
+                                turn=t,
+                                status_code=resp.status_code,
+                            )
+                        )
                         if breaker:
                             breaker.record(False)
                         break
                     history.append({"role": "assistant", "content": content})
-                    trial.add(Result(
-                        success=True, latency_ms=(time.perf_counter()-start)*1000,
-                        tokens=len(content)//4, turn=t, status_code=resp.status_code,
-                    ))
+                    trial.add(
+                        Result(
+                            success=True,
+                            latency_ms=(time.perf_counter() - start) * 1000,
+                            tokens=len(content) // 4,
+                            turn=t,
+                            status_code=resp.status_code,
+                        )
+                    )
                     if breaker:
                         breaker.record(True)
                     if breaker and breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at stamina session {s} turn {t}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at stamina session {s} turn {t}")
                         cell.add_trial(trial)
                         return cell
                 except Exception as exc:
-                    trial.add(Result(
-                        success=False, latency_ms=(time.perf_counter()-start)*1000,
-                        error=str(exc), turn=t,
-                    ))
+                    trial.add(
+                        Result(
+                            success=False,
+                            latency_ms=(time.perf_counter() - start) * 1000,
+                            error=str(exc),
+                            turn=t,
+                        )
+                    )
                     if breaker:
                         breaker.record(False)
                     break
@@ -548,14 +564,13 @@ def run_faults(
     breaker: Optional[CircuitBreaker] = None,
 ) -> Cell:
     import random
+
     random.seed(42)
     cell = Cell(name=f"faults rate={fault_rate} concurrency={concurrency}")
     fault_types = ["bad_key", "rotating_key", "no_key"]
     for tr in range(1, trials + 1):
         trial = Trial(name=f"faults rate={fault_rate} concurrency={concurrency}")
-        prompts = [
-            SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)
-        ]
+        prompts = [SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             futs = []
             for i, p in enumerate(prompts):
@@ -569,9 +584,7 @@ def run_faults(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at faults trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at faults trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -602,9 +615,7 @@ def run_context(
                     if breaker:
                         breaker.record(r.success)
                         if breaker.should_trip():
-                            print(
-                                f"  [CIRCUIT BREAKER] trip at context {tag} trial {tr}"
-                            )
+                            print(f"  [CIRCUIT BREAKER] trip at context {tag} trial {tr}")
                             cell.add_trial(trial)
                             cells.append(cell)
                             return cells
@@ -624,9 +635,7 @@ def run_streaming(
     cell = Cell(name=f"streaming concurrency={concurrency} total={total}")
     for tr in range(1, trials + 1):
         trial = Trial(name=f"streaming concurrency={concurrency} total={total}")
-        prompts = [
-            SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)
-        ]
+        prompts = [SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             futs = [ex.submit(http.post_chat, p, True) for p in prompts]
             for fut in concurrent.futures.as_completed(futs):
@@ -635,9 +644,7 @@ def run_streaming(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at streaming trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at streaming trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -653,18 +660,15 @@ def run_security(
     breaker: Optional[CircuitBreaker] = None,
 ) -> Cell:
     import random
+
     random.seed(7)
     cell = Cell(name=f"security flood_rate={flood_rate}/s total={total}")
     for tr in range(1, trials + 1):
         trial = Trial(name=f"security flood_rate={flood_rate}/s total={total}")
-        prompts = [
-            SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)
-        ]
+        prompts = [SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)]
         interval = 1.0 / flood_rate if flood_rate > 0 else 0
         start_wall = time.perf_counter()
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(flood_rate, 50)
-        ) as ex:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(flood_rate, 50)) as ex:
             futs = []
             for i, p in enumerate(prompts):
                 if interval > 0:
@@ -680,9 +684,7 @@ def run_security(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at security trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at security trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -723,10 +725,7 @@ def run_workflow_perturb(
     }
     for tr in range(1, trials + 1):
         trial = Trial(name=f"workflow_perturb concurrency={concurrency} total={total}")
-        prompts = [
-            variants[list(variants.keys())[i % len(variants)]]
-            for i in range(total)
-        ]
+        prompts = [variants[list(variants.keys())[i % len(variants)]] for i in range(total)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             futs = [ex.submit(http.post_chat, p, False) for p in prompts]
             for fut in concurrent.futures.as_completed(futs):
@@ -735,9 +734,7 @@ def run_workflow_perturb(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at workflow_perturb trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at workflow_perturb trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -760,13 +757,12 @@ def run_reliability(
 ) -> Cell:
     """ReliabilityBench: confiabilidad bajo condiciones de estrés de producción (fallos de infraestructura)."""
     import random
+
     random.seed(123)
     cell = Cell(name=f"reliability failure_rate={failure_rate} concurrency={concurrency}")
     for tr in range(1, trials + 1):
         trial = Trial(name=f"reliability failure_rate={failure_rate} concurrency={concurrency}")
-        prompts = [
-            SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)
-        ]
+        prompts = [SHORT_PROMPTS_ES[i % len(SHORT_PROMPTS_ES)] for i in range(total)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             futs = []
             for i, p in enumerate(prompts):
@@ -780,9 +776,7 @@ def run_reliability(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at reliability trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at reliability trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -814,9 +808,7 @@ def run_xperf(
     ]
     for tr in range(1, trials + 1):
         trial = Trial(name=f"xperf concurrency={concurrency} total={total}")
-        prompts = [
-            complex_problems[i % len(complex_problems)] for i in range(total)
-        ]
+        prompts = [complex_problems[i % len(complex_problems)] for i in range(total)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
             futs = [ex.submit(http.post_chat, p, False) for p in prompts]
             for fut in concurrent.futures.as_completed(futs):
@@ -825,9 +817,7 @@ def run_xperf(
                 if breaker:
                     breaker.record(r.success)
                     if breaker.should_trip():
-                        print(
-                            f"  [CIRCUIT BREAKER] trip at xperf trial {tr}"
-                        )
+                        print(f"  [CIRCUIT BREAKER] trip at xperf trial {tr}")
                         cell.add_trial(trial)
                         return cell
         cell.add_trial(trial)
@@ -882,9 +872,9 @@ def global_report(cells: List[Cell]) -> dict:
         "total_failed": total_fail,
         "latency_avg_ms": statistics.mean(all_lat) if all_lat else None,
         "latency_p50_ms": statistics.median(all_lat) if all_lat else None,
-        "latency_p99_ms": sorted(all_lat)[int(len(all_lat)*0.99)] if all_lat else None,
+        "latency_p99_ms": sorted(all_lat)[int(len(all_lat) * 0.99)] if all_lat else None,
         "ttft_avg_ms": statistics.mean(all_ttft) if all_ttft else None,
-        "ttft_p99_ms": sorted(all_ttft)[int(len(all_ttft)*0.99)] if all_ttft else None,
+        "ttft_p99_ms": sorted(all_ttft)[int(len(all_ttft) * 0.99)] if all_ttft else None,
         "cells": [c.summary_dict() for c in cells],
     }
 
@@ -897,9 +887,20 @@ def global_report(cells: List[Cell]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stress test a prueba de balas para lai")
     parser.add_argument(
-        "--suite", default="concurrency",
-        choices=["concurrency", "stamina", "faults", "context", "streaming", "security",
-                 "workflow", "reliability", "xperf", "full"],
+        "--suite",
+        default="concurrency",
+        choices=[
+            "concurrency",
+            "stamina",
+            "faults",
+            "context",
+            "streaming",
+            "security",
+            "workflow",
+            "reliability",
+            "xperf",
+            "full",
+        ],
         help="Suite de pruebas a ejecutar",
     )
     parser.add_argument("--concurrency", type=int, default=10, help="Peticiones concurrentes")
@@ -909,21 +910,30 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=3, help="Número de trials por celda")
     parser.add_argument("--fault-rate", type=float, default=0.2, help="Tasa de fallos 0..1")
     parser.add_argument(
-        "--sizes", type=parse_sizes, default=["1k", "10k", "100k"],
+        "--sizes",
+        type=parse_sizes,
+        default=["1k", "10k", "100k"],
         help="Tamaños de contexto (coma-separados)",
     )
     parser.add_argument("--stream", action="store_true", help="Streaming en concurrency")
     parser.add_argument("--flood-rate", type=int, default=50, help="Req/s para security flood")
     parser.add_argument(
-        "--levels", type=parse_levels, default=[1, 4, 16, 64, 128, 256],
+        "--levels",
+        type=parse_levels,
+        default=[1, 4, 16, 64, 128, 256],
         help="Niveles de concurrencia (coma-separados)",
     )
     parser.add_argument(
-        "--failure-threshold", type=float, default=0.5,
+        "--failure-threshold",
+        type=float,
+        default=0.5,
         help="Umbral de error para circuit breaker (0..1)",
     )
     parser.add_argument(
-        "--timeout", type=float, default=120.0, help="Timeout HTTP en segundos",
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Timeout HTTP en segundos",
     )
     parser.add_argument("--json", type=str, default=None, help="Guardar reporte JSON en archivo")
     parser.add_argument("--no-warmup", action="store_true", help="Saltar warm-up")
@@ -933,9 +943,7 @@ def main() -> int:
         print("ERROR: gateway no responde en http://127.0.0.1:8081/health")
         return 1
 
-    breaker = CircuitBreaker(
-        failure_threshold=args.failure_threshold, min_calls=10
-    )
+    breaker = CircuitBreaker(failure_threshold=args.failure_threshold, min_calls=10)
     http = HttpClient(timeout_s=args.timeout)
 
     try:
@@ -952,8 +960,12 @@ def main() -> int:
         if args.suite in ("concurrency", "full"):
             all_cells.extend(
                 run_concurrency_sweep(
-                    http, args.levels, args.total, args.trials,
-                    stream=args.stream, breaker=breaker,
+                    http,
+                    args.levels,
+                    args.total,
+                    args.trials,
+                    stream=args.stream,
+                    breaker=breaker,
                 )
             )
 
@@ -964,7 +976,14 @@ def main() -> int:
 
         if args.suite in ("faults", "full"):
             all_cells.append(
-                run_faults(http, args.fault_rate, args.total, args.concurrency, args.trials, breaker=breaker)
+                run_faults(
+                    http,
+                    args.fault_rate,
+                    args.total,
+                    args.concurrency,
+                    args.trials,
+                    breaker=breaker,
+                )
             )
 
         if args.suite in ("context", "full"):
@@ -984,12 +1003,21 @@ def main() -> int:
 
         if args.suite in ("workflow", "full"):
             all_cells.append(
-                run_workflow_perturb(http, args.concurrency, args.total, args.trials, breaker=breaker)
+                run_workflow_perturb(
+                    http, args.concurrency, args.total, args.trials, breaker=breaker
+                )
             )
 
         if args.suite in ("reliability", "full"):
             all_cells.append(
-                run_reliability(http, args.fault_rate, args.total, args.concurrency, args.trials, breaker=breaker)
+                run_reliability(
+                    http,
+                    args.fault_rate,
+                    args.total,
+                    args.concurrency,
+                    args.trials,
+                    breaker=breaker,
+                )
             )
 
         if args.suite in ("xperf", "full"):

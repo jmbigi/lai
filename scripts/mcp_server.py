@@ -72,13 +72,16 @@ class McpServer:
     # ------------------------------------------------------------------
     def handle_initialize(self, params: Dict, id_: Any) -> Dict:
         self.initialized = True
-        return self._response(id_, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {
-                "tools": {"listChanged": False},
+        return self._response(
+            id_,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                },
+                "serverInfo": SERVER_INFO,
             },
-            "serverInfo": SERVER_INFO,
-        })
+        )
 
     def handle_tools_list(self, params: Dict, id_: Any) -> Dict:
         return self._response(id_, {"tools": self.tools_schema})
@@ -93,10 +96,13 @@ class McpServer:
         try:
             tool_fn = self.registry.tools[name]
             result = tool_fn(**arguments)
-            return self._response(id_, {
-                "content": [{"type": "text", "text": str(result)}],
-                "isError": False,
-            })
+            return self._response(
+                id_,
+                {
+                    "content": [{"type": "text", "text": str(result)}],
+                    "isError": False,
+                },
+            )
         except TypeError as exc:
             return self._error(id_, -32602, f"Invalid arguments: {str(exc)}")
         except Exception as exc:

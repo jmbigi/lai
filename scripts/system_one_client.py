@@ -41,7 +41,9 @@ import httpx
 class SystemOneClient:
     """Cliente para modelos de decisión System One."""
 
-    def __init__(self, endpoint: str = "http://localhost:11434/v1/systemone", model: str = "nimble") -> None:
+    def __init__(
+        self, endpoint: str = "http://localhost:11434/v1/systemone", model: str = "nimble"
+    ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.model = model
 
@@ -174,10 +176,20 @@ def _format_result(result: Dict[str, Any]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Cliente System One para modelos de decisión locales")
-    parser.add_argument("--endpoint", default="http://localhost:11434/v1/systemone", help="Endpoint del servidor System One")
-    parser.add_argument("--model", default="nimble", help="Nombre del modelo (nimble, jev, von, etc.)")
-    parser.add_argument("--type", required=True, choices=["choice", "noul", "score"], help="Tipo de decisión")
+    parser = argparse.ArgumentParser(
+        description="Cliente System One para modelos de decisión locales"
+    )
+    parser.add_argument(
+        "--endpoint",
+        default="http://localhost:11434/v1/systemone",
+        help="Endpoint del servidor System One",
+    )
+    parser.add_argument(
+        "--model", default="nimble", help="Nombre del modelo (nimble, jev, von, etc.)"
+    )
+    parser.add_argument(
+        "--type", required=True, choices=["choice", "noul", "score"], help="Tipo de decisión"
+    )
     parser.add_argument("--state", required=True, help="Estado/contexto para la decisión")
     parser.add_argument("--question", required=True, help="Pregunta a responder")
     parser.add_argument("--options", nargs="+", help="Opciones para type=choice")

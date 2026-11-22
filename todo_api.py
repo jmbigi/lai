@@ -18,6 +18,7 @@ import uvicorn
 @dataclass
 class TodoItem:
     """Data class representing a todo item."""
+
     id: int
     title: str
     completed: bool
@@ -25,18 +26,18 @@ class TodoItem:
 
 class TodoService:
     """Service class for managing todo items."""
-    
+
     def __init__(self):
         """Initialize the todo service."""
         self.todos: List[TodoItem] = []
         self.next_id: int = 1
-    
+
     def create_todo(self, title: str) -> TodoItem:
         """Create a new todo item.
-        
+
         Args:
             title: The title of the todo item.
-            
+
         Returns:
             The created todo item.
         """
@@ -44,31 +45,33 @@ class TodoService:
         self.todos.append(todo)
         self.next_id += 1
         return todo
-    
+
     def get_todos(self, completed: Optional[bool] = None) -> List[TodoItem]:
         """Get all todo items with optional filtering by completion status.
-        
+
         Args:
             completed: Filter todos by completion status.
-            
+
         Returns:
             List of todo items matching the filter.
         """
         if completed is None:
             return self.todos
         return [todo for todo in self.todos if todo.completed == completed]
-    
-    def update_todo(self, todo_id: int, title: Optional[str] = None, completed: Optional[bool] = None) -> TodoItem:
+
+    def update_todo(
+        self, todo_id: int, title: Optional[str] = None, completed: Optional[bool] = None
+    ) -> TodoItem:
         """Update a todo item.
-        
+
         Args:
             todo_id: The ID of the todo item to update.
             title: New title for the todo item.
             completed: New completion status for the todo item.
-            
+
         Returns:
             The updated todo item.
-            
+
         Raises:
             HTTPException: If the todo item is not found.
         """
@@ -80,13 +83,13 @@ class TodoService:
                     todo.completed = completed
                 return todo
         raise HTTPException(status_code=404, detail="Todo item not found")
-    
+
     def delete_todo(self, todo_id: int) -> None:
         """Delete a todo item.
-        
+
         Args:
             todo_id: The ID of the todo item to delete.
-            
+
         Raises:
             HTTPException: If the todo item is not found.
         """
@@ -111,18 +114,22 @@ todo_service = TodoService()
 
 class TodoCreateRequest(BaseModel):
     """Request model for creating a todo item."""
+
     title: str
 
 
 class TodoUpdateRequest(BaseModel):
     """Request model for updating a todo item."""
+
     title: Optional[str] = None
     completed: Optional[bool] = None
 
 
 @app.get("/todos", response_model=List[TodoItem])
 def get_todos(
-    completed: Annotated[Optional[bool], Query(description="Filter todos by completion status")] = None
+    completed: Annotated[
+        Optional[bool], Query(description="Filter todos by completion status")
+    ] = None,
 ) -> List[TodoItem]:
     """Get all todo items with optional filtering by completion status."""
     return todo_service.get_todos(completed)
@@ -145,10 +152,7 @@ def get_todo(todo_id: int) -> TodoItem:
 
 
 @app.put("/todos/{todo_id}", response_model=TodoItem)
-def update_todo(
-    todo_id: int,
-    todo: TodoUpdateRequest
-) -> TodoItem:
+def update_todo(todo_id: int, todo: TodoUpdateRequest) -> TodoItem:
     """Update a specific todo item by ID."""
     return todo_service.update_todo(todo_id, todo.title, todo.completed)
 

@@ -67,10 +67,14 @@ class SuiteReport:
         total = len(self.results)
         avg_score = statistics_mean([r.score for r in self.results]) if self.results else 0.0
         avg_latency = statistics_mean([r.latency_ms for r in self.results]) if self.results else 0.0
-        print(f"  Passed: {passed}/{total}  Avg score: {avg_score:.2f}  Avg latency: {avg_latency:.0f}ms")
+        print(
+            f"  Passed: {passed}/{total}  Avg score: {avg_score:.2f}  Avg latency: {avg_latency:.0f}ms"
+        )
         for r in self.results:
             status = "PASS" if r.passed else "FAIL"
-            print(f"  [{status}] {r.name} (score={r.score:.2f}, {r.latency_ms:.0f}ms): {r.details[:100]}")
+            print(
+                f"  [{status}] {r.name} (score={r.score:.2f}, {r.latency_ms:.0f}ms): {r.details[:100]}"
+            )
 
 
 def statistics_mean(values: List[float]) -> float:
@@ -106,9 +110,7 @@ def chat(
         payload["tool_choice"] = tool_choice
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(
-                GATEWAY_URL, json=payload, headers=AUTH_HEADER
-            )
+            resp = client.post(GATEWAY_URL, json=payload, headers=AUTH_HEADER)
             resp.raise_for_status()
             data = resp.json()
         latency_ms = (time.perf_counter() - start) * 1000
@@ -144,9 +146,33 @@ def score_code_correctness(response: str, expected_keywords: List[str]) -> tuple
 def score_spanish_adherence(response: str) -> tuple[float, str]:
     """Puntaje basado en indicadores de respuesta en español."""
     spanish_words = [
-        "el", "la", "los", "las", "de", "del", "que", "y", "a", "en", "un", "una",
-        "por", "para", "con", "se", "es", "está", "son", "qué", "cómo", "cuál",
-        "función", "código", "python", "ejemplo", "diferencia",
+        "el",
+        "la",
+        "los",
+        "las",
+        "de",
+        "del",
+        "que",
+        "y",
+        "a",
+        "en",
+        "un",
+        "una",
+        "por",
+        "para",
+        "con",
+        "se",
+        "es",
+        "está",
+        "son",
+        "qué",
+        "cómo",
+        "cuál",
+        "función",
+        "código",
+        "python",
+        "ejemplo",
+        "diferencia",
     ]
     resp_lower = response.lower()
     found = sum(1 for w in spanish_words if f" {w} " in f" {resp_lower} ")
@@ -193,9 +219,7 @@ def run_code_correctness(model: str) -> SuiteReport:
         },
         {
             "name": "asyncio_example",
-            "prompt": (
-                "Crea un ejemplo de uso de asyncio en Python con dos tareas concurrentes."
-            ),
+            "prompt": ("Crea un ejemplo de uso de asyncio en Python con dos tareas concurrentes."),
             "keywords": ["async", "await", "asyncio", "def", "gather", "task"],
         },
         {
@@ -211,11 +235,16 @@ def run_code_correctness(model: str) -> SuiteReport:
         content, latency, tokens = chat(case["prompt"], model=model, max_tokens=256, timeout=30.0)
         score, details = score_code_correctness(content, case["keywords"])
         passed = score >= 0.6
-        suite.add(QualityResult(
-            name=case["name"], passed=passed, score=score,
-            details=f"{details}. Respuesta: {content[:80]}...",
-            latency_ms=latency, tokens=tokens,
-        ))
+        suite.add(
+            QualityResult(
+                name=case["name"],
+                passed=passed,
+                score=score,
+                details=f"{details}. Respuesta: {content[:80]}...",
+                latency_ms=latency,
+                tokens=tokens,
+            )
+        )
     return suite
 
 
@@ -234,11 +263,16 @@ def run_spanish_adherence(model: str) -> SuiteReport:
         content, latency, tokens = chat(p, model=model, max_tokens=128, timeout=30.0)
         score, details = score_spanish_adherence(content)
         passed = score >= 0.5
-        suite.add(QualityResult(
-            name=f"spanish_q{i+1}", passed=passed, score=score,
-            details=f"{details}. Inicio: {content[:60]}...",
-            latency_ms=latency, tokens=tokens,
-        ))
+        suite.add(
+            QualityResult(
+                name=f"spanish_q{i+1}",
+                passed=passed,
+                score=score,
+                details=f"{details}. Inicio: {content[:60]}...",
+                latency_ms=latency,
+                tokens=tokens,
+            )
+        )
     return suite
 
 
@@ -279,18 +313,28 @@ def run_tool_calling(model: str) -> SuiteReport:
         if has_a3b:
             score += 0.3
         passed = score >= 0.5
-        suite.add(QualityResult(
-            name="add_tool_call_text", passed=passed, score=score,
-            details=f"Menciona 'add': {has_add}, JSON: {has_json}, params a=3/b=4: {has_a3b}. "
-                    f"Respuesta: {content[:80]}",
-            latency_ms=latency_ms, tokens=tokens,
-        ))
+        suite.add(
+            QualityResult(
+                name="add_tool_call_text",
+                passed=passed,
+                score=score,
+                details=f"Menciona 'add': {has_add}, JSON: {has_json}, params a=3/b=4: {has_a3b}. "
+                f"Respuesta: {content[:80]}",
+                latency_ms=latency_ms,
+                tokens=tokens,
+            )
+        )
     except Exception as exc:
         latency_ms = (time.perf_counter() - start) * 1000
-        suite.add(QualityResult(
-            name="add_tool_call_text", passed=False, score=0.0,
-            details=f"ERROR: {exc}", latency_ms=latency_ms,
-        ))
+        suite.add(
+            QualityResult(
+                name="add_tool_call_text",
+                passed=False,
+                score=0.0,
+                details=f"ERROR: {exc}",
+                latency_ms=latency_ms,
+            )
+        )
     return suite
 
 
@@ -343,12 +387,17 @@ def run_stamina(model: str, turns: int = 5) -> SuiteReport:
     avg_score = statistics_mean(scores)
     avg_latency = statistics_mean(latencies)
     passed = avg_score >= 0.8
-    suite.add(QualityResult(
-        name=f"stamina_{turns}turns", passed=passed, score=avg_score,
-        details=f"Turnos exitosos: {sum(1 for s in scores if s > 0)}/{turns}. "
-                f"Última respuesta: {content[:60]}...",
-        latency_ms=avg_latency, tokens=len(content) // 4 if content else 0,
-    ))
+    suite.add(
+        QualityResult(
+            name=f"stamina_{turns}turns",
+            passed=passed,
+            score=avg_score,
+            details=f"Turnos exitosos: {sum(1 for s in scores if s > 0)}/{turns}. "
+            f"Última respuesta: {content[:60]}...",
+            latency_ms=avg_latency,
+            tokens=len(content) // 4 if content else 0,
+        )
+    )
     return suite
 
 
@@ -386,14 +435,21 @@ def run_workflow_perturb(model: str) -> SuiteReport:
         },
     ]
     for variant in variants:
-        content, latency, tokens = chat(variant["prompt"], model=model, max_tokens=128, timeout=30.0)
+        content, latency, tokens = chat(
+            variant["prompt"], model=model, max_tokens=128, timeout=30.0
+        )
         score, details = score_code_correctness(content, variant["check_keywords"])
         passed = score >= 0.5
-        suite.add(QualityResult(
-            name=variant["name"], passed=passed, score=score,
-            details=f"{details}. Respuesta: {content[:80]}...",
-            latency_ms=latency, tokens=tokens,
-        ))
+        suite.add(
+            QualityResult(
+                name=variant["name"],
+                passed=passed,
+                score=score,
+                details=f"{details}. Respuesta: {content[:80]}...",
+                latency_ms=latency,
+                tokens=tokens,
+            )
+        )
     return suite
 
 
@@ -405,6 +461,7 @@ def run_workflow_perturb(model: str) -> SuiteReport:
 def run_reliability(model: str) -> SuiteReport:
     suite = SuiteReport("Reliability (infrastructure failure)")
     import random
+
     random.seed(99)
     # Simulate: some requests with bad keys, some with no key, some normal
     cases = [
@@ -435,38 +492,49 @@ def run_reliability(model: str) -> SuiteReport:
                 if expected_success:
                     resp.raise_for_status()
                     data = resp.json()
-                    content = (
-                        (data.get("choices") or [{}])[0]
-                        .get("message", {}).get("content", "") or ""
-                    )
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get(
+                        "content", ""
+                    ) or ""
                     score = 1.0 if content else 0.0
                 else:
                     # Expect failure (401)
                     score = 1.0 if resp.status_code >= 400 else 0.5
                     content = f"HTTP {resp.status_code} (expected failure)"
             passed = score >= 0.5
-            suite.add(QualityResult(
-                name=name, passed=passed, score=score,
-                details=content[:100],
-                latency_ms=(time.perf_counter() - start) * 1000,
-            ))
+            suite.add(
+                QualityResult(
+                    name=name,
+                    passed=passed,
+                    score=score,
+                    details=content[:100],
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+            )
         except httpx.HTTPStatusError as exc:
             # For normal case this is a failure; for fault cases it's expected
             passed = fault is not None
             score = 1.0 if passed else 0.0
-            suite.add(QualityResult(
-                name=name, passed=passed, score=score,
-                details=f"HTTP {exc.response.status_code}",
-                latency_ms=(time.perf_counter() - start) * 1000,
-            ))
+            suite.add(
+                QualityResult(
+                    name=name,
+                    passed=passed,
+                    score=score,
+                    details=f"HTTP {exc.response.status_code}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+            )
         except Exception as exc:
             passed = fault is not None
             score = 1.0 if passed else 0.0
-            suite.add(QualityResult(
-                name=name, passed=passed, score=score,
-                details=f"ERROR: {exc}",
-                latency_ms=(time.perf_counter() - start) * 1000,
-            ))
+            suite.add(
+                QualityResult(
+                    name=name,
+                    passed=passed,
+                    score=score,
+                    details=f"ERROR: {exc}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+            )
     return suite
 
 
@@ -478,32 +546,51 @@ def run_reliability(model: str) -> SuiteReport:
 def run_xperf(model: str) -> SuiteReport:
     suite = SuiteReport("XPerf (multi-problem reasoning)")
     problems = [
-        ("train_problem", (
-            "Resuelve paso a paso en español: Un tren sale de Madrid a las 8:00 a 80 km/h "
-            "y otro de Barcelona a las 9:00 a 100 km/h. Distancia 600 km. ¿Cuándo y dónde se cruzan?"
-        ), ["km", "hora", "cruzan", "Madrid", "Barcelona"]),
-        ("oo_example", (
-            "Explica la diferencia entre clase e instancia en POO con un ejemplo completo en Python."
-        ), ["clase", "instancia", "def", "class", "python"]),
-        ("fibonacci_complexity", (
-            "Escribe una función recursiva de Fibonacci y explica su complejidad temporal."
-        ), ["fibonacci", "recurs", "complejidad", "O("]),
-        ("rest_api_design", (
-            "Diseña una API REST para un sistema de inventario con endpoints y códigos HTTP."
-        ), ["api", "rest", "endpoint", "http", "inventario"]),
-        ("sql_vs_nosql", (
-            "Compara SQL vs NoSQL: cuándo usar cada uno con ejemplos concretos."
-        ), ["sql", "nosql", "cuándo", "ejemplo"]),
+        (
+            "train_problem",
+            (
+                "Resuelve paso a paso en español: Un tren sale de Madrid a las 8:00 a 80 km/h "
+                "y otro de Barcelona a las 9:00 a 100 km/h. Distancia 600 km. ¿Cuándo y dónde se cruzan?"
+            ),
+            ["km", "hora", "cruzan", "Madrid", "Barcelona"],
+        ),
+        (
+            "oo_example",
+            (
+                "Explica la diferencia entre clase e instancia en POO con un ejemplo completo en Python."
+            ),
+            ["clase", "instancia", "def", "class", "python"],
+        ),
+        (
+            "fibonacci_complexity",
+            ("Escribe una función recursiva de Fibonacci y explica su complejidad temporal."),
+            ["fibonacci", "recurs", "complejidad", "O("],
+        ),
+        (
+            "rest_api_design",
+            ("Diseña una API REST para un sistema de inventario con endpoints y códigos HTTP."),
+            ["api", "rest", "endpoint", "http", "inventario"],
+        ),
+        (
+            "sql_vs_nosql",
+            ("Compara SQL vs NoSQL: cuándo usar cada uno con ejemplos concretos."),
+            ["sql", "nosql", "cuándo", "ejemplo"],
+        ),
     ]
     for name, prompt, keywords in problems:
         content, latency, tokens = chat(prompt, model=model, max_tokens=128, timeout=30.0)
         score, details = score_code_correctness(content, keywords)
         passed = score >= 0.5
-        suite.add(QualityResult(
-            name=name, passed=passed, score=score,
-            details=f"{details}. Respuesta: {content[:80]}...",
-            latency_ms=latency, tokens=tokens,
-        ))
+        suite.add(
+            QualityResult(
+                name=name,
+                passed=passed,
+                score=score,
+                details=f"{details}. Respuesta: {content[:80]}...",
+                latency_ms=latency,
+                tokens=tokens,
+            )
+        )
     return suite
 
 
@@ -526,23 +613,39 @@ def run_sasst_bias(model: str) -> SuiteReport:
         results.append((name, content, latency, tokens))
     # Score: neutral framing should mention both pros and cons; positive/negative should be consistent
     neutral_content = results[2][1].lower()
-    has_pros = any(w in neutral_content for w in ["ventaja", "buen", "fácil", "sencillo", "popular"])
-    has_cons = any(w in neutral_content for w in ["desventaja", "mal", "difícil", "lento", "limitado"])
+    has_pros = any(
+        w in neutral_content for w in ["ventaja", "buen", "fácil", "sencillo", "popular"]
+    )
+    has_cons = any(
+        w in neutral_content for w in ["desventaja", "mal", "difícil", "lento", "limitado"]
+    )
     neutral_score = 0.5 if has_pros else 0.0
     neutral_score += 0.5 if has_cons else 0.0
-    suite.add(QualityResult(
-        name="neutral_balanced", passed=neutral_score >= 0.5, score=neutral_score,
-        details=f"Pros: {has_pros}, Contras: {has_cons}. Respuesta: {results[2][1][:80]}...",
-        latency_ms=results[2][2], tokens=results[2][3],
-    ))
+    suite.add(
+        QualityResult(
+            name="neutral_balanced",
+            passed=neutral_score >= 0.5,
+            score=neutral_score,
+            details=f"Pros: {has_pros}, Contras: {has_cons}. Respuesta: {results[2][1][:80]}...",
+            latency_ms=results[2][2],
+            tokens=results[2][3],
+        )
+    )
     # Positive should mention advantages
     pos_content = results[0][1].lower()
-    pos_score = 0.5 if any(w in pos_content for w in ["buen", "fácil", "ventaja", "popular"]) else 0.0
-    suite.add(QualityResult(
-        name="positive_framing", passed=pos_score >= 0.5, score=pos_score,
-        details=f"Menciona ventajas: {pos_score > 0}. Respuesta: {results[0][1][:80]}...",
-        latency_ms=results[0][2], tokens=results[0][3],
-    ))
+    pos_score = (
+        0.5 if any(w in pos_content for w in ["buen", "fácil", "ventaja", "popular"]) else 0.0
+    )
+    suite.add(
+        QualityResult(
+            name="positive_framing",
+            passed=pos_score >= 0.5,
+            score=pos_score,
+            details=f"Menciona ventajas: {pos_score > 0}. Respuesta: {results[0][1][:80]}...",
+            latency_ms=results[0][2],
+            tokens=results[0][3],
+        )
+    )
     return suite
 
 
@@ -558,9 +661,10 @@ def parse_suites(s: str) -> List[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pruebas de calidad de IA para lai")
     parser.add_argument(
-        "--suite", default="all",
+        "--suite",
+        default="all",
         help="Suite(s) de pruebas a ejecutar (coma-separadas o 'all'). "
-             "Opciones: code_correctness, spanish, tool_calling, stamina, workflow, reliability, xperf, sasst",
+        "Opciones: code_correctness, spanish, tool_calling, stamina, workflow, reliability, xperf, sasst",
     )
     parser.add_argument("--model", default="qwen3-8b", help="Modelo a probar")
     parser.add_argument("--turns", type=int, default=20, help="Turnos para stamina")
@@ -568,8 +672,14 @@ def main() -> int:
     args = parser.parse_args()
 
     valid_suites = {
-        "code_correctness", "spanish", "tool_calling", "stamina",
-        "workflow", "reliability", "xperf", "sasst",
+        "code_correctness",
+        "spanish",
+        "tool_calling",
+        "stamina",
+        "workflow",
+        "reliability",
+        "xperf",
+        "sasst",
     }
     if args.suite == "all":
         suites: List[str] = sorted(valid_suites)
@@ -635,7 +745,8 @@ def main() -> int:
                     "latency_ms": qr.latency_ms,
                     "tokens": qr.tokens,
                 }
-                for r in all_reports for qr in r.results
+                for r in all_reports
+                for qr in r.results
             ],
         }
         with open(args.report_json, "w", encoding="utf-8") as f:

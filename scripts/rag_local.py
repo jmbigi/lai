@@ -39,13 +39,13 @@ except ImportError:  # pragma: no cover
     _HAS_WATCHDOG = False
 
 
-STORAGE_DIR = Path(os.environ.get('LAI_STORAGE_DIR', Path.home() / '.local-ai'))
-COLLECTIONS_FILE = STORAGE_DIR / 'collections.json'
-EMBEDDINGS_FILE = STORAGE_DIR / 'embeddings.npy'
-METADATA_FILE = STORAGE_DIR / 'metadata.json'
+STORAGE_DIR = Path(os.environ.get("LAI_STORAGE_DIR", Path.home() / ".local-ai"))
+COLLECTIONS_FILE = STORAGE_DIR / "collections.json"
+EMBEDDINGS_FILE = STORAGE_DIR / "embeddings.npy"
+METADATA_FILE = STORAGE_DIR / "metadata.json"
 
-_DEFAULT_MODEL = 'all-MiniLM-L6-v2'
-_MSG_INSTALL_ST = 'install sentence-transformers'
+_DEFAULT_MODEL = "all-MiniLM-L6-v2"
+_MSG_INSTALL_ST = "install sentence-transformers"
 
 
 class LocalRAG:
@@ -80,39 +80,39 @@ class LocalRAG:
     def _load(self) -> None:
         try:
             self._collections = json.loads(
-                (self.storage_dir / 'collections.json').read_text(encoding='utf-8')
+                (self.storage_dir / "collections.json").read_text(encoding="utf-8")
             )
         except (FileNotFoundError, json.JSONDecodeError):
             self._collections = {}
 
         try:
-            self._embeddings = np.load(self.storage_dir / 'embeddings.npy')
+            self._embeddings = np.load(self.storage_dir / "embeddings.npy")
         except (FileNotFoundError, Exception):
             self._embeddings = None
 
         try:
             self._metadata = json.loads(
-                (self.storage_dir / 'metadata.json').read_text(encoding='utf-8')
+                (self.storage_dir / "metadata.json").read_text(encoding="utf-8")
             )
         except (FileNotFoundError, json.JSONDecodeError):
             self._metadata = []
 
     def _save(self) -> None:
-        (self.storage_dir / 'collections.json').write_text(
-            json.dumps(self._collections, ensure_ascii=False, indent=2), encoding='utf-8'
+        (self.storage_dir / "collections.json").write_text(
+            json.dumps(self._collections, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         if self._embeddings is not None:
-            np.save(self.storage_dir / 'embeddings.npy', self._embeddings)
-        (self.storage_dir / 'metadata.json').write_text(
-            json.dumps(self._metadata, ensure_ascii=False, indent=2), encoding='utf-8'
+            np.save(self.storage_dir / "embeddings.npy", self._embeddings)
+        (self.storage_dir / "metadata.json").write_text(
+            json.dumps(self._metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
     def create_collection(self, name: str) -> None:
         if name in self._collections:
             return
         self._collections[name] = {
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'document_count': 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "document_count": 0,
         }
         self._save()
 
@@ -123,7 +123,7 @@ class LocalRAG:
         if name not in self._collections:
             return False
         del self._collections[name]
-        keep_indices = [i for i, m in enumerate(self._metadata) if m.get('collection') != name]
+        keep_indices = [i for i, m in enumerate(self._metadata) if m.get("collection") != name]
         if keep_indices:
             self._embeddings = (
                 self._embeddings[keep_indices] if self._embeddings is not None else None
@@ -149,7 +149,7 @@ class LocalRAG:
             metadatas = [{} for _ in documents]
         if ids is None:
             ids = [
-                f'{collection}_{i}_{datetime.now(timezone.utc).timestamp()}'
+                f"{collection}_{i}_{datetime.now(timezone.utc).timestamp()}"
                 for i in range(len(documents))
             ]
 
@@ -165,17 +165,17 @@ class LocalRAG:
         for i, (doc_id, meta) in enumerate(zip(ids, metadatas, strict=True)):
             self._metadata.append(
                 {
-                    'id': doc_id,
-                    'collection': collection,
-                    'text': documents[i],
-                    'metadata': meta,
-                    'index': start_idx + i,
-                    'added_at': datetime.now(timezone.utc).isoformat(),
+                    "id": doc_id,
+                    "collection": collection,
+                    "text": documents[i],
+                    "metadata": meta,
+                    "index": start_idx + i,
+                    "added_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
 
-        self._collections[collection]['document_count'] = self._collections[collection].get(
-            'document_count', 0
+        self._collections[collection]["document_count"] = self._collections[collection].get(
+            "document_count", 0
         ) + len(documents)
         self._save()
         return ids
@@ -184,14 +184,14 @@ class LocalRAG:
         path = Path(file_path)
         if not path.exists():
             return None
-        text = path.read_text(encoding='utf-8', errors='ignore')
+        text = path.read_text(encoding="utf-8", errors="ignore")
         if not text.strip():
             return None
-        doc_id = f'{collection}:{path}'
+        doc_id = f"{collection}:{path}"
         self.add_documents(
             collection,
             [text],
-            metadatas=[{'file': str(path), 'type': path.suffix}],
+            metadatas=[{"file": str(path), "type": path.suffix}],
             ids=[doc_id],
         )
         return doc_id
@@ -200,12 +200,12 @@ class LocalRAG:
         self,
         collection: str,
         directory: str | Path,
-        extensions: tuple[str, ...] = ('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+        extensions: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".yaml", ".yml"),
     ) -> int:
         dir_path = Path(directory)
         count = 0
         for ext in extensions:
-            for f in dir_path.rglob(f'*{ext}'):
+            for f in dir_path.rglob(f"*{ext}"):
                 if self.add_file(collection, f):
                     count += 1
         return count
@@ -218,22 +218,22 @@ class LocalRAG:
         """Calcula SHA-256 del contenido de un archivo."""
         h = hashlib.sha256()
         try:
-            with open(path, 'rb') as f:
-                for chunk in iter(lambda: f.read(8192), b''):
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
                     h.update(chunk)
         except OSError:
-            return ''
+            return ""
         return h.hexdigest()
 
     def _doc_index_by_id(self, doc_id: str) -> int | None:
         for i, m in enumerate(self._metadata):
-            if m.get('id') == doc_id:
+            if m.get("id") == doc_id:
                 return i
         return None
 
     def _doc_index_by_file(self, file_path: str) -> int | None:
         for i, m in enumerate(self._metadata):
-            if m.get('metadata', {}).get('file') == file_path:
+            if m.get("metadata", {}).get("file") == file_path:
                 return i
         return None
 
@@ -255,7 +255,7 @@ class LocalRAG:
         if metadata is None:
             metadata = {}
         if doc_id is None:
-            doc_id = f'{collection}_{datetime.now(timezone.utc).timestamp()}'
+            doc_id = f"{collection}_{datetime.now(timezone.utc).timestamp()}"
 
         existing_idx = self._doc_index_by_id(doc_id)
 
@@ -264,20 +264,20 @@ class LocalRAG:
 
         now = datetime.now(timezone.utc).isoformat()
         meta_entry = {
-            'id': doc_id,
-            'collection': collection,
-            'text': document,
-            'metadata': metadata,
-            'updated_at': now,
+            "id": doc_id,
+            "collection": collection,
+            "text": document,
+            "metadata": metadata,
+            "updated_at": now,
         }
 
         if existing_idx is not None:
             # Reemplazar embedding en su lugar
-            old_index = self._metadata[existing_idx].get('index', existing_idx)
+            old_index = self._metadata[existing_idx].get("index", existing_idx)
             self._metadata[existing_idx] = meta_entry
-            self._metadata[existing_idx]['index'] = old_index
-            self._metadata[existing_idx]['added_at'] = self._metadata[existing_idx].get(
-                'added_at', now
+            self._metadata[existing_idx]["index"] = old_index
+            self._metadata[existing_idx]["added_at"] = self._metadata[existing_idx].get(
+                "added_at", now
             )
 
             if self._embeddings is not None:
@@ -292,12 +292,12 @@ class LocalRAG:
                 self._embeddings = np.vstack([self._embeddings, embedding])
                 new_index = len(self._metadata)
 
-            meta_entry['index'] = new_index
-            meta_entry['added_at'] = now
+            meta_entry["index"] = new_index
+            meta_entry["added_at"] = now
             self._metadata.append(meta_entry)
 
-        self._collections[collection]['document_count'] = len(
-            [m for m in self._metadata if m.get('collection') == collection]
+        self._collections[collection]["document_count"] = len(
+            [m for m in self._metadata if m.get("collection") == collection]
         )
         self._save()
         return doc_id
@@ -315,7 +315,7 @@ class LocalRAG:
         path = Path(file_path)
         if not path.exists():
             return None
-        text = path.read_text(encoding='utf-8', errors='ignore')
+        text = path.read_text(encoding="utf-8", errors="ignore")
         if not text.strip():
             return None
 
@@ -325,17 +325,17 @@ class LocalRAG:
 
         if existing_idx is not None:
             old_meta = self._metadata[existing_idx]
-            old_hash = old_meta.get('metadata', {}).get('hash', '')
+            old_hash = old_meta.get("metadata", {}).get("hash", "")
             if old_hash == file_hash:
                 return None  # Sin cambios
-            doc_id = old_meta['id']
+            doc_id = old_meta["id"]
         else:
-            doc_id = f'{collection}:{path}'
+            doc_id = f"{collection}:{path}"
 
         metadata = {
-            'file': file_str,
-            'type': path.suffix,
-            'hash': file_hash,
+            "file": file_str,
+            "type": path.suffix,
+            "hash": file_hash,
         }
         return self.add_or_update_document(
             collection,
@@ -348,35 +348,35 @@ class LocalRAG:
         self,
         collection: str,
         directory: str | Path,
-        extensions: tuple[str, ...] = ('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+        extensions: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".yaml", ".yml"),
     ) -> dict[str, int]:
         """Indexa solo archivos nuevos o modificados desde la última indexación.
 
         Devuelve un diccionario con contadores: added, updated, skipped, total.
         """
         dir_path = Path(directory)
-        stats = {'added': 0, 'updated': 0, 'skipped': 0, 'total': 0}
+        stats = {"added": 0, "updated": 0, "skipped": 0, "total": 0}
 
         for ext in extensions:
-            for f in dir_path.rglob(f'*{ext}'):
-                stats['total'] += 1
+            for f in dir_path.rglob(f"*{ext}"):
+                stats["total"] += 1
                 file_str = str(f)
                 existing_idx = self._doc_index_by_file(file_str)
 
                 if existing_idx is not None:
                     old_meta = self._metadata[existing_idx]
-                    old_hash = old_meta.get('metadata', {}).get('hash', '')
+                    old_hash = old_meta.get("metadata", {}).get("hash", "")
                     new_hash = self._file_hash(f)
                     if old_hash == new_hash:
-                        stats['skipped'] += 1
+                        stats["skipped"] += 1
                         continue
 
                 result = self.add_or_update_file(collection, f)
                 if result is not None:
                     if existing_idx is not None:
-                        stats['updated'] += 1
+                        stats["updated"] += 1
                     else:
-                        stats['added'] += 1
+                        stats["added"] += 1
 
         return stats
 
@@ -580,9 +580,7 @@ class LocalRAG:
                 k: v for k, v in hybrid_scores.items() if v["collection"] == collection
             }
 
-        sorted_results = sorted(
-            hybrid_scores.values(), key=lambda x: x["score"], reverse=True
-        )
+        sorted_results = sorted(hybrid_scores.values(), key=lambda x: x["score"], reverse=True)
 
         final_results: list[dict[str, Any]] = []
         for r in sorted_results:
@@ -620,7 +618,7 @@ class LocalRAG:
         emb = self._embeddings
         norms = np.linalg.norm(emb, axis=1, keepdims=True)
         qnorm = np.linalg.norm(query_emb, axis=1, keepdims=True)
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             sims = (emb @ query_emb.T).flatten() / (norms.flatten() * qnorm.flatten())
 
         results: list[dict[str, Any]] = []
@@ -628,15 +626,15 @@ class LocalRAG:
             if sims[idx] < threshold:
                 continue
             meta = self._metadata[int(idx)]
-            if collection and meta.get('collection') != collection:
+            if collection and meta.get("collection") != collection:
                 continue
             results.append(
                 {
-                    'id': meta['id'],
-                    'collection': meta['collection'],
-                    'text': meta['text'],
-                    'metadata': meta.get('metadata', {}),
-                    'score': float(sims[idx]),
+                    "id": meta["id"],
+                    "collection": meta["collection"],
+                    "text": meta["text"],
+                    "metadata": meta.get("metadata", {}),
+                    "score": float(sims[idx]),
                 }
             )
             if len(results) >= top_k:
@@ -648,16 +646,16 @@ class LocalRAG:
 
     def stats(self) -> dict[str, Any]:
         return {
-            'collections': len(self._collections),
-            'total_documents': len(self._metadata),
-            'embedding_dim': int(self._embeddings.shape[1]) if self._embeddings is not None else 0,
-            'model': self.model_name,
-            'storage_dir': str(self.storage_dir),
+            "collections": len(self._collections),
+            "total_documents": len(self._metadata),
+            "embedding_dim": int(self._embeddings.shape[1]) if self._embeddings is not None else 0,
+            "model": self.model_name,
+            "storage_dir": str(self.storage_dir),
         }
 
 
 def get_rag() -> LocalRAG:
-    if not hasattr(get_rag, '_instance'):
+    if not hasattr(get_rag, "_instance"):
         get_rag._instance = LocalRAG()  # type: ignore[attr-defined]
     return get_rag._instance  # type: ignore[return-value]
 
@@ -714,7 +712,7 @@ if _HAS_WATCHDOG:
                 return
             idx = self.rag._doc_index_by_file(str(path))
             if idx is not None:
-                doc_id = self.rag._metadata[idx].get('id')
+                doc_id = self.rag._metadata[idx].get("id")
                 if doc_id:
                     self.rag.delete_document(doc_id)
 
@@ -733,10 +731,10 @@ if _HAS_WATCHDOG:
             rag: LocalRAG,
             collection: str,
             directory: str | Path,
-            extensions: tuple[str, ...] = ('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+            extensions: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".yaml", ".yml"),
         ):
             if not _HAS_WATCHDOG:
-                raise ImportError('watchdog no instalado. Ejecuta: pip install watchdog')
+                raise ImportError("watchdog no instalado. Ejecuta: pip install watchdog")
             self.rag = rag
             self.collection = collection
             self.directory = Path(directory)
@@ -748,9 +746,7 @@ if _HAS_WATCHDOG:
             if self._observer is not None:
                 return
             # Indexación inicial incremental
-            self.rag.index_directory_incremental(
-                self.collection, self.directory, self.extensions
-            )
+            self.rag.index_directory_incremental(self.collection, self.directory, self.extensions)
             handler = _RAGEventHandler(self.rag, self.collection, self.extensions)
             self._observer = Observer()
             self._observer.schedule(handler, str(self.directory), recursive=True)
@@ -766,17 +762,16 @@ if _HAS_WATCHDOG:
         def is_running(self) -> bool:
             return self._observer is not None and self._observer.is_alive()
 
-
 else:
 
     class RAGWatcher:  # type: ignore[no-redef]
         """Stubs cuando watchdog no está instalado."""
 
         def __init__(self, *args, **kwargs):
-            raise ImportError('watchdog no instalado. Ejecuta: pip install watchdog')
+            raise ImportError("watchdog no instalado. Ejecuta: pip install watchdog")
 
         def start(self):
-            raise ImportError('watchdog no instalado. Ejecuta: pip install watchdog')
+            raise ImportError("watchdog no instalado. Ejecuta: pip install watchdog")
 
         def stop(self):
             pass
@@ -788,13 +783,13 @@ else:
 # Agregar método delete_document a LocalRAG (se usa por el watcher)
 def _patch_delete_document():
     """Añade delete_document a LocalRAG si no existe."""
-    if not hasattr(LocalRAG, 'delete_document'):
+    if not hasattr(LocalRAG, "delete_document"):
 
         def delete_document(self, doc_id: str) -> bool:
             idx = self._doc_index_by_id(doc_id)
             if idx is None:
                 return False
-            old_index = self._metadata[idx].get('index', idx)
+            old_index = self._metadata[idx].get("index", idx)
             del self._metadata[idx]
             if self._embeddings is not None:
                 keep = [i for i in range(len(self._embeddings)) if i != old_index]
@@ -803,18 +798,14 @@ def _patch_delete_document():
                     # Reindexar índices de metadata
                     index_map = {old: new for new, old in enumerate(keep)}
                     for m in self._metadata:
-                        old_idx = m.get('index')
+                        old_idx = m.get("index")
                         if old_idx is not None and old_idx in index_map:
-                            m['index'] = index_map[old_idx]
+                            m["index"] = index_map[old_idx]
                 else:
                     self._embeddings = None
             for coll in self._collections.values():
-                coll['document_count'] = len(
-                    [
-                        m
-                        for m in self._metadata
-                        if m.get('collection') == coll.get('name', '')
-                    ]
+                coll["document_count"] = len(
+                    [m for m in self._metadata if m.get("collection") == coll.get("name", "")]
                 )
             self._save()
             return True

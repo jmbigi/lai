@@ -18,7 +18,10 @@ CHECKS = {
     "context_16384": (r"16384", "old context window (should be 32768)"),
     "version": (r"v?0\.0\.[23]", "version"),
     "reasoning_format_none": (r"--reasoning-format\s+none", "reasoning-format none (deprecated)"),
-    "reasoning_format_deepseek": (r"--reasoning-format\s+deepseek", "reasoning-format deepseek (current)"),
+    "reasoning_format_deepseek": (
+        r"--reasoning-format\s+deepseek",
+        "reasoning-format deepseek (current)",
+    ),
 }
 
 DOC_FILES = [
@@ -36,6 +39,7 @@ DOC_FILES = [
     "MEJORAS_IMPLEMENTADAS.md",
 ]
 
+
 def scan_file(filepath):
     """Scan a file for patterns."""
     try:
@@ -47,9 +51,10 @@ def scan_file(filepath):
         matches = list(re.finditer(pattern, content, re.IGNORECASE))
         if matches:
             for m in matches[:3]:  # limit output
-                line_no = content[:m.start()].count('\n') + 1
+                line_no = content[: m.start()].count("\n") + 1
                 results.append((key, desc, line_no, m.group()[:60]))
     return results
+
 
 def main():
     all_issues = []
@@ -67,15 +72,16 @@ def main():
                 all_issues.append((fname, key, desc, line, match))
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SUMMARY")
-    print("="*60)
+    print("=" * 60)
     if not all_issues:
         print("All checks passed!")
         return 0
 
     # Count by type
     from collections import Counter
+
     cnt = Counter(key for _, key, _, _, _ in all_issues)
     for key, count in cnt.most_common():
         desc = CHECKS[key][1]

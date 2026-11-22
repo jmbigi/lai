@@ -24,29 +24,29 @@ from rag_local import get_rag
 # ---------------------------------------------------------------------------
 
 SUBAGENT_PROMPTS: dict[str, str] = {
-    'code': """Eres un Agente Especialista en Generación de Código.
+    "code": """Eres un Agente Especialista en Generación de Código.
 Tu misión es escribir código limpio, funcional y bien documentado.
 Siempre incluye: type hints, docstrings (estilo Google), manejo de errores,
 y bloques if __name__ == "__main__". No uses markdown, solo código Python puro.
 Prioriza la legibilidad y el cumplimiento de PEP 8.""",
-    'review': """Eres un Agente Especialista en Revisión de Código (Code Review).
+    "review": """Eres un Agente Especialista en Revisión de Código (Code Review).
 Tu misión es analizar código en busca de: bugs, vulnerabilidades de seguridad,
 problemas de rendimiento, violaciones de estilo y oportunidades de refactorización.
 Proporciona retroalimentación constructiva, específica y accionable.
 Clasifica hallazgos por severidad: crítico, alto, medio, bajo.""",
-    'test': """Eres un Agente Especialista en Generación de Pruebas.
+    "test": """Eres un Agente Especialista en Generación de Pruebas.
 Tu misión es escribir pruebas unitarias y de integración completas.
 Usa pytest, cubre casos edge, pruebas de error y pruebas felices.
 Incluye fixtures, mocks cuando sea necesario, y reportes de cobertura.""",
-    'doc': """Eres un Agente Especialista en Documentación Técnica.
+    "doc": """Eres un Agente Especialista en Documentación Técnica.
 Tu misión es escribir documentación clara, completa y bien estructurada.
 Incluye: docstrings, README, comentarios en el código, guías de usuario,
 y documentación de API. Usa Markdown y Google-style docstrings.""",
-    'fix': """Eres un Agente Especialista en Corrección de Errores (Debugging).
+    "fix": """Eres un Agente Especialista en Corrección de Errores (Debugging).
 Tu misión es identificar y corregir bugs en código existente.
 Analiza traces de error, reproduce el problema, propone una solución
 y verifica que la corrección no introduce regresiones.""",
-    'arch': """Eres un Agente Especialista en Arquitectura de Software.
+    "arch": """Eres un Agente Especialista en Arquitectura de Software.
 Tu misión es diseñar estructuras de código modulares, escalables y
 mantenibles. Propón patrones de diseño, definiendo interfaces claras,
 separación de responsabilidades y bajo acoplamiento.""",
@@ -56,6 +56,7 @@ separación de responsabilidades y bajo acoplamiento.""",
 @dataclass
 class SubAgentResult:
     """Resultado de la ejecución de un sub-agente."""
+
     agent_name: str
     task: str
     output: str
@@ -72,8 +73,8 @@ class SubAgent:
         name: str,
         system_prompt: str,
         tools: ToolRegistry,
-        model: str = 'qwen3-8b',
-        base_url: str = 'http://localhost:8080/v1',
+        model: str = "qwen3-8b",
+        base_url: str = "http://localhost:8080/v1",
         api_key: Optional[str] = None,
         allow_remote: bool = False,
         max_iterations: int = 3,
@@ -88,37 +89,35 @@ class SubAgent:
         self.max_iterations = max_iterations
         self.results: list[SubAgentResult] = []
 
-    async def _chat(self, prompt: str, stream: bool = False, context: str = '') -> str:
+    async def _chat(self, prompt: str, stream: bool = False, context: str = "") -> str:
         """Envía un mensaje al modelo local y devuelve la respuesta."""
         headers = {}
         if self.api_key:
-            headers['Authorization'] = f'Bearer {self.api_key}'
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         system_prompt = self.system_prompt
         if context:
-            system_prompt = f'{system_prompt}\n\n{context}'
+            system_prompt = f"{system_prompt}\n\n{context}"
 
-        full_prompt = f'{system_prompt}\n\nUsuario: {prompt}\n\nAsistente:'
+        full_prompt = f"{system_prompt}\n\nUsuario: {prompt}\n\nAsistente:"
 
         async with httpx.AsyncClient(timeout=120, headers=headers) as client:
             payload = {
-                'model': self.model,
-                'messages': [{'role': 'user', 'content': full_prompt}],
-                'max_tokens': 4096,
-                'temperature': 0.7,
-                'stream': stream,
+                "model": self.model,
+                "messages": [{"role": "user", "content": full_prompt}],
+                "max_tokens": 4096,
+                "temperature": 0.7,
+                "stream": stream,
             }
-            resp = await client.post(
-                f'{self.base_url}/chat/completions', json=payload, timeout=120
-            )
+            resp = await client.post(f"{self.base_url}/chat/completions", json=payload, timeout=120)
             data = resp.json()
-            message = data.get('choices', [{}])[0].get('message', {})
-            content = message.get('content', '') or ''
+            message = data.get("choices", [{}])[0].get("message", {})
+            content = message.get("content", "") or ""
             if not content:
-                content = message.get('reasoning_content', '') or ''
+                content = message.get("reasoning_content", "") or ""
             return content
 
-    def run(self, task: str, context: str = '') -> SubAgentResult:
+    def run(self, task: str, context: str = "") -> SubAgentResult:
         """Ejecuta una tarea usando el sub-agente.
 
         ``context`` se inyecta solo en esta ejecución (no muta el prompt
@@ -139,7 +138,7 @@ class SubAgent:
             result = SubAgentResult(
                 agent_name=self.name,
                 task=task,
-                output=f'Error: {e}',
+                output=f"Error: {e}",
                 success=False,
                 iterations=0,
             )
@@ -171,14 +170,14 @@ class SharedMemory:
     def store(self, text: str, metadata: dict | None = None) -> str:
         """Almacena un fragmento de conocimiento en la memoria compartida."""
         if self.rag is None:
-            return ''
+            return ""
         meta = metadata or {}
         ids = self.rag.add_documents(
             collection=self.collection,
             documents=[text],
             metadatas=[meta],
         )
-        return ids[0] if ids else ''
+        return ids[0] if ids else ""
 
     def search(self, query: str, top_k: int = 5) -> list[dict]:
         """Busca conocimiento relevante en la memoria compartida."""
@@ -208,8 +207,8 @@ class MultiAgentOrchestrator:
     def __init__(
         self,
         tools: ToolRegistry,
-        model: str = 'qwen3-8b',
-        base_url: str = 'http://localhost:8080/v1',
+        model: str = "qwen3-8b",
+        base_url: str = "http://localhost:8080/v1",
         api_key: Optional[str] = None,
         allow_remote: bool = False,
     ):
@@ -280,8 +279,8 @@ class MultiAgentOrchestrator:
         """
         results: list[SubAgentResult] = []
         for task_def in tasks:
-            agent_name = task_def.get('agent', 'code')
-            task_desc = task_def.get('task', '')
+            agent_name = task_def.get("agent", "code")
+            task_desc = task_def.get("task", "")
             result = self.run_agent(agent_name, task_desc)
             results.append(result)
         return results
@@ -294,21 +293,21 @@ class MultiAgentOrchestrator:
         la memoria vectorial compartida persiste entre iteraciones.
         """
         pipeline = [
-            {'agent': 'code', 'task': goal},
-            {'agent': 'review', 'task': f"Revisa el código generado para: {goal}"},
-            {'agent': 'test', 'task': f"Genera pruebas para el código de: {goal}"},
-            {'agent': 'doc', 'task': f"Documenta el código generado para: {goal}"},
+            {"agent": "code", "task": goal},
+            {"agent": "review", "task": f"Revisa el código generado para: {goal}"},
+            {"agent": "test", "task": f"Genera pruebas para el código de: {goal}"},
+            {"agent": "doc", "task": f"Documenta el código generado para: {goal}"},
         ]
 
         results = self.run_pipeline(pipeline)
 
         output_parts = []
         for result in results:
-            output_parts.append(f'\n═══ {result.agent_name.upper()} ═══')
+            output_parts.append(f"\n═══ {result.agent_name.upper()} ═══")
             output_parts.append(result.output)
-            output_parts.append('')
+            output_parts.append("")
 
-        return '\n'.join(output_parts)
+        return "\n".join(output_parts)
 
 
 # Instancia singleton para uso desde CLI
@@ -317,8 +316,8 @@ _orchestrator: Optional[MultiAgentOrchestrator] = None
 
 def get_orchestrator(
     tools: Optional[ToolRegistry] = None,
-    model: str = 'qwen3-8b',
-    base_url: str = 'http://localhost:8080/v1',
+    model: str = "qwen3-8b",
+    base_url: str = "http://localhost:8080/v1",
     api_key: Optional[str] = None,
     allow_remote: bool = False,
 ) -> MultiAgentOrchestrator:

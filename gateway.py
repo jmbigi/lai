@@ -42,19 +42,50 @@ MAX_CACHE_SIZE = 100
 # Palabras clave de ruido del sistema (Kimi, Crush, OpenCode, etc.)
 SYSTEM_FILTER_KEYWORDS = [
     # Kimi Code
-    "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor",
-    "auto permission mode", "Never Ask", "Plan mode",
-    "system reminder", "Kimi K3.1 Pro", "session_",
-    "Permission mode:", "Everything runs", "only plans in Plan mode",
-    "Switched to", "thinking on", "thinking off",
+    "TaskOutput",
+    "TaskStop",
+    "TodoList",
+    "UpdateGoal",
+    "WaitFor",
+    "auto permission mode",
+    "Never Ask",
+    "Plan mode",
+    "system reminder",
+    "Kimi K3.1 Pro",
+    "session_",
+    "Permission mode:",
+    "Everything runs",
+    "only plans in Plan mode",
+    "Switched to",
+    "thinking on",
+    "thinking off",
     # Crush
-    "crush", "Crush", "charm.land", "catwalk", "fang", "bubbletea",
-    "lipgloss", "glamour", "tone", "ultraviolet", "x/ansi",
+    "crush",
+    "Crush",
+    "charm.land",
+    "catwalk",
+    "fang",
+    "bubbletea",
+    "lipgloss",
+    "glamour",
+    "tone",
+    "ultraviolet",
+    "x/ansi",
     # OpenCode
-    "opencode", "OpenCode", "Nemotron", "nvidia",
+    "opencode",
+    "OpenCode",
+    "Nemotron",
+    "nvidia",
     # Genérico
-    "Use this tool", "function", "parameters", "description",
-    "system_prompt", "system_prompt:", "<|system|>", "<|user|>", "<|assistant|>",
+    "Use this tool",
+    "function",
+    "parameters",
+    "description",
+    "system_prompt",
+    "system_prompt:",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
 ]
 
 
@@ -71,25 +102,26 @@ def compress_content(text, preserve_code=True):
     """
     if not text:
         return text
-    
+
     if preserve_code:
         code_blocks = []
+
         def save_code(m):
             code_blocks.append(m.group(0))
             return f"__CODE_BLOCK_{len(code_blocks)-1}__"
-        
-        text = re.sub(r'```[\s\S]*?```', save_code, text)
-        text = re.sub(r'`[^`]+`', save_code, text)
-    
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = '\n'.join(line.strip() for line in text.split('\n'))
+
+        text = re.sub(r"```[\s\S]*?```", save_code, text)
+        text = re.sub(r"`[^`]+`", save_code, text)
+
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = "\n".join(line.strip() for line in text.split("\n"))
     text = text.strip()
-    
+
     if preserve_code and code_blocks:
         for i, block in enumerate(code_blocks):
             text = text.replace(f"__CODE_BLOCK_{i}__", block)
-    
+
     return text
 
 
@@ -109,15 +141,15 @@ def filter_system_messages(messages):
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content", "")
-        
+
         if role == "system":
             if len(content) < 500 and not is_system_noise(content):
                 filtered.append(msg)
             continue
-        
+
         if is_system_noise(content):
             continue
-            
+
         filtered.append(msg)
     return filtered
 
@@ -143,7 +175,7 @@ def compress_context(messages, max_tokens):
     result = []
     remaining = max_tokens
     last_user_idx = None
-    
+
     for i, msg in enumerate(reversed(filtered)):
         orig_idx = len(filtered) - 1 - i
         if msg.get("role") == "user" and last_user_idx is None:
@@ -151,25 +183,27 @@ def compress_context(messages, max_tokens):
 
     for msg in reversed(filtered):
         msg_tokens = estimate_tokens(msg.get("content", ""))
-        is_last_user = (msg.get("role") == "user" and 
-                       filtered.index(msg) == last_user_idx)
-        
+        is_last_user = msg.get("role") == "user" and filtered.index(msg) == last_user_idx
+
         if is_last_user or msg_tokens <= remaining:
             result.insert(0, msg)
             remaining -= msg_tokens
         else:
             break
-    
+
     return result
 
 
 def get_cache_key(body):
     """Genera clave de caché basada en messages + params."""
-    key_data = json.dumps({
-        "messages": body.get("messages", []),
-        "temperature": body.get("temperature", 0.7),
-        "max_tokens": body.get("max_tokens", 2048),
-    }, sort_keys=True)
+    key_data = json.dumps(
+        {
+            "messages": body.get("messages", []),
+            "temperature": body.get("temperature", 0.7),
+            "max_tokens": body.get("max_tokens", 2048),
+        },
+        sort_keys=True,
+    )
     return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
 
@@ -227,9 +261,7 @@ def transform_response(response_body):
         content = message.get("content", "")
 
         if reasoning and content:
-            message["content"] = (
-                f"<thinking>\n{reasoning}\n</thinking>\n\n{content}"
-            )
+            message["content"] = f"<thinking>\n{reasoning}\n</thinking>\n\n{content}"
             message.pop("reasoning_content", None)
         elif reasoning and not content:
             message["content"] = f"<thinking>\n{reasoning}\n</thinking>"
@@ -258,7 +290,10 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             try:
                 req_log = json.loads(body)
                 msg_count = len(req_log.get("messages", []))
-                print(f"[GATEWAY] POST {self.path} - {msg_count} msgs, {content_length} bytes", flush=True)
+                print(
+                    f"[GATEWAY] POST {self.path} - {msg_count} msgs, {content_length} bytes",
+                    flush=True,
+                )
             except:
                 print(f"[GATEWAY] POST {self.path} - {content_length} bytes", flush=True)
 
@@ -322,12 +357,16 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "version": "2.0",
-                "upstream": "llama.cpp-fp8",
-                "max_context": MAX_CONTEXT_TOKENS,
-            }).encode())
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "version": "2.0",
+                        "upstream": "llama.cpp-fp8",
+                        "max_context": MAX_CONTEXT_TOKENS,
+                    }
+                ).encode()
+            )
         elif self.path == "/v1/models":
             try:
                 req = urllib.request.Request(UPSTREAM_LLAMACPP + "/v1/models")
@@ -345,10 +384,14 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({
-                "cache_entries": cache_size,
-                "cache_max": MAX_CACHE_SIZE,
-            }).encode())
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "cache_entries": cache_size,
+                        "cache_max": MAX_CACHE_SIZE,
+                    }
+                ).encode()
+            )
         elif self.path == "/cache/clear":
             with CACHE_LOCK:
                 RESPONSE_CACHE.clear()

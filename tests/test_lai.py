@@ -27,29 +27,29 @@ class TestIsLocalUrl:
     """Tests for is_local_url function."""
 
     def test_localhost(self):
-        assert lai.is_local_url('http://localhost:8080') is True
-        assert lai.is_local_url('http://127.0.0.1:8080') is True
-        assert lai.is_local_url('http://[::1]:8080') is True
+        assert lai.is_local_url("http://localhost:8080") is True
+        assert lai.is_local_url("http://127.0.0.1:8080") is True
+        assert lai.is_local_url("http://[::1]:8080") is True
 
     def test_private_ips(self):
-        assert lai.is_local_url('http://192.168.1.100:8080') is True
-        assert lai.is_local_url('http://10.0.0.1:8080') is True
-        assert lai.is_local_url('http://172.16.0.1:8080') is True
+        assert lai.is_local_url("http://192.168.1.100:8080") is True
+        assert lai.is_local_url("http://10.0.0.1:8080") is True
+        assert lai.is_local_url("http://172.16.0.1:8080") is True
 
     def test_public_ips(self):
-        assert lai.is_local_url('http://8.8.8.8:8080') is False
-        assert lai.is_local_url('http://api.openai.com') is False
-        assert lai.is_local_url('https://example.com') is False
+        assert lai.is_local_url("http://8.8.8.8:8080") is False
+        assert lai.is_local_url("http://api.openai.com") is False
+        assert lai.is_local_url("https://example.com") is False
 
     def test_invalid(self):
-        assert lai.is_local_url('not-a-url') is False
-        assert lai.is_local_url('') is False
+        assert lai.is_local_url("not-a-url") is False
+        assert lai.is_local_url("") is False
 
     def test_ipv6_and_ports(self):
-        assert lai.is_local_url('http://[::1]:8080') is True
-        assert lai.is_local_url('http://[::1]') is True
-        assert lai.is_local_url('http://localhost:8080/v1/chat/completions') is True
-        assert lai.is_local_url('http://127.0.0.1:8080/') is True
+        assert lai.is_local_url("http://[::1]:8080") is True
+        assert lai.is_local_url("http://[::1]") is True
+        assert lai.is_local_url("http://localhost:8080/v1/chat/completions") is True
+        assert lai.is_local_url("http://127.0.0.1:8080/") is True
 
 
 class TestToolRegistry:
@@ -62,10 +62,10 @@ class TestToolRegistry:
     def test_write_file_rejects_invalid_python(self):
         """write_file should reject syntactically invalid Python."""
         result = self.registry.write_file(
-            'bad.py',
-            'def foo(:\n    pass\n',  # SyntaxError: invalid syntax
+            "bad.py",
+            "def foo(:\n    pass\n",  # SyntaxError: invalid syntax
         )
-        assert 'SyntaxError' in result or 'syntax' in result.lower()
+        assert "SyntaxError" in result or "syntax" in result.lower()
 
     def test_write_file_accepts_valid_python(self):
         """write_file should accept valid Python."""
@@ -75,8 +75,8 @@ class TestToolRegistry:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                result = reg.write_file('good.py', 'def foo():\n    return 42\n')
-                assert 'written' in result.lower() or 'ok' in result.lower()
+                result = reg.write_file("good.py", "def foo():\n    return 42\n")
+                assert "written" in result.lower() or "ok" in result.lower()
             finally:
                 os.chdir(old_cwd)
 
@@ -87,12 +87,12 @@ class TestToolRegistry:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.txt', 'w') as f:
-                    f.write('Hello World\nhello world\nHELLO WORLD\n')
-                result = reg.grep('hello', tmpdir, ignore_case=True)
+                with open("test.txt", "w") as f:
+                    f.write("Hello World\nhello world\nHELLO WORLD\n")
+                result = reg.grep("hello", tmpdir, ignore_case=True)
                 # grep returns list of "filepath:lineno: content" strings
                 assert len(result) == 3
-                assert all('hello' in r.lower() for r in result)
+                assert all("hello" in r.lower() for r in result)
             finally:
                 os.chdir(old_cwd)
 
@@ -103,14 +103,14 @@ class TestToolRegistry:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('import os\n')
-                with open('test.txt', 'w') as f:
-                    f.write('import os\n')
-                result = reg.grep('import', tmpdir, file_type='py')
+                with open("test.py", "w") as f:
+                    f.write("import os\n")
+                with open("test.txt", "w") as f:
+                    f.write("import os\n")
+                result = reg.grep("import", tmpdir, file_type="py")
                 # Should only match test.py
                 assert len(result) == 1
-                assert 'test.py' in result[0]
+                assert "test.py" in result[0]
             finally:
                 os.chdir(old_cwd)
 
@@ -121,18 +121,18 @@ class TestToolRegistry:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                os.makedirs('sub')
-                with open('a.py', 'w') as f:
-                    f.write('pass\n')
-                with open('sub/b.py', 'w') as f:
-                    f.write('pass\n')
-                with open('c.txt', 'w') as f:
-                    f.write('text\n')
-                result = reg.find_files('*.py', tmpdir)
+                os.makedirs("sub")
+                with open("a.py", "w") as f:
+                    f.write("pass\n")
+                with open("sub/b.py", "w") as f:
+                    f.write("pass\n")
+                with open("c.txt", "w") as f:
+                    f.write("text\n")
+                result = reg.find_files("*.py", tmpdir)
                 # find_files returns absolute paths
-                assert any(r.endswith('a.py') for r in result)
-                assert any(r.endswith('sub/b.py') for r in result)
-                assert not any(r.endswith('c.txt') for r in result)
+                assert any(r.endswith("a.py") for r in result)
+                assert any(r.endswith("sub/b.py") for r in result)
+                assert not any(r.endswith("c.txt") for r in result)
             finally:
                 os.chdir(old_cwd)
 
@@ -143,7 +143,7 @@ class TestToolRegistry:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('mod.py', 'w') as f:
+                with open("mod.py", "w") as f:
                     f.write(
                         """
 class MyClass:
@@ -155,9 +155,9 @@ def my_function():
 """
                     )
                 result = reg.repo_map()
-                assert 'MyClass' in result
-                assert 'method' in result
-                assert 'my_function' in result
+                assert "MyClass" in result
+                assert "method" in result
+                assert "my_function" in result
             finally:
                 os.chdir(old_cwd)
 
@@ -171,26 +171,26 @@ class TestGetToolsSchema:
         # Returns a list of tool definitions
         assert isinstance(tools, list)
         assert len(tools) >= 16
-        tool_names = [t['function']['name'] for t in tools]
-        assert 'read_file' in tool_names
-        assert 'write_file' in tool_names
-        assert 'run_command' in tool_names
-        assert 'grep' in tool_names
-        assert 'find_files' in tool_names
-        assert 'repo_map' in tool_names
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "read_file" in tool_names
+        assert "write_file" in tool_names
+        assert "run_command" in tool_names
+        assert "grep" in tool_names
+        assert "find_files" in tool_names
+        assert "repo_map" in tool_names
 
 
 class TestGetLAIInstance:
     """Tests for get_lai_instance singleton."""
 
     def test_singleton_same_args(self):
-        lai1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080')
-        lai2 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080')
+        lai1 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080")
+        lai2 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080")
         assert lai1 is lai2
 
     def test_different_args_creates_new(self):
-        lai1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080')
-        lai2 = lai.get_lai_instance(model='other', base_url='http://localhost:8080')
+        lai1 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080")
+        lai2 = lai.get_lai_instance(model="other", base_url="http://localhost:8080")
         assert lai1 is not lai2
 
 
@@ -201,64 +201,64 @@ class TestCLI:
         import subprocess
 
         result = subprocess.run(
-            [sys.executable, 'lai.py', 'version'],
+            [sys.executable, "lai.py", "version"],
             capture_output=True,
             text=True,
             cwd=os.path.dirname(os.path.dirname(__file__)),
         )
         assert result.returncode == 0
-        assert '0.0.2' in result.stdout
+        assert "0.0.2" in result.stdout
 
     def test_help(self):
         import subprocess
 
         result = subprocess.run(
-            [sys.executable, 'lai.py', '--help'],
+            [sys.executable, "lai.py", "--help"],
             capture_output=True,
             text=True,
             cwd=os.path.dirname(os.path.dirname(__file__)),
         )
         assert result.returncode == 0
-        assert 'Local AI CLI Tool' in result.stdout
+        assert "Local AI CLI Tool" in result.stdout
 
     def test_status(self):
         import subprocess
 
         result = subprocess.run(
-            [sys.executable, 'lai.py', 'status'],
+            [sys.executable, "lai.py", "status"],
             capture_output=True,
             text=True,
             cwd=os.path.dirname(os.path.dirname(__file__)),
         )
         assert result.returncode == 0
-        assert 'llama.cpp' in result.stdout
-        assert 'gateway' in result.stdout
+        assert "llama.cpp" in result.stdout
+        assert "gateway" in result.stdout
 
     def test_tools(self):
         import subprocess
 
         result = subprocess.run(
-            [sys.executable, 'lai.py', 'tools'],
+            [sys.executable, "lai.py", "tools"],
             capture_output=True,
             text=True,
             cwd=os.path.dirname(os.path.dirname(__file__)),
         )
         assert result.returncode == 0
-        assert 'read_file' in result.stdout
-        assert 'write_file' in result.stdout
+        assert "read_file" in result.stdout
+        assert "write_file" in result.stdout
 
 
 class TestIntegration:
     """Integration tests requiring live services (llama.cpp, gateway)."""
 
-    @pytest.fixture(scope='class')
+    @pytest.fixture(scope="class")
     def lai_instance(self):
         """Create LAI instance connected to local services."""
-        return lai.LAI(model='qwen3-8b', base_url='http://localhost:8080/v1')
+        return lai.LAI(model="qwen3-8b", base_url="http://localhost:8080/v1")
 
-    @pytest.fixture(scope='class')
+    @pytest.fixture(scope="class")
     def gateway_url(self):
-        return 'http://localhost:8081/v1'
+        return "http://localhost:8081/v1"
 
     @staticmethod
     def _check_service_static(url: str) -> bool:
@@ -278,228 +278,228 @@ class TestIntegration:
     def test_llama_health(self):
         import urllib.request
 
-        with urllib.request.urlopen('http://localhost:8080/health', timeout=5) as resp:
+        with urllib.request.urlopen("http://localhost:8080/health", timeout=5) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            assert data.get('status') == 'ok'
+            assert data.get("status") == "ok"
 
     def test_gateway_health(self):
         import urllib.request
 
-        with urllib.request.urlopen('http://localhost:8081/health', timeout=5) as resp:
+        with urllib.request.urlopen("http://localhost:8081/health", timeout=5) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            assert data.get('status') == 'ok'
+            assert data.get("status") == "ok"
 
     def test_gateway_models(self):
         import urllib.request
 
         with urllib.request.urlopen(
             urllib.request.Request(
-                'http://localhost:8081/v1/models', headers={'Authorization': 'Bearer open'}
+                "http://localhost:8081/v1/models", headers={"Authorization": "Bearer open"}
             ),
             timeout=5,
         ) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            assert 'data' in data
-            assert len(data['data']) > 0
+            assert "data" in data
+            assert len(data["data"]) > 0
 
     def test_gateway_tool_calling_non_stream(self):
         """Test tool calling through gateway (non-streaming)."""
         import urllib.request
 
         payload = {
-            'model': 'qwen3-8b',
-            'messages': [{'role': 'user', 'content': 'Call add function with a=3,b=4'}],
-            'max_tokens': 256,
-            'temperature': 0.2,
-            'stream': False,
-            'tools': [
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": False,
+            "tools": [
                 {
-                    'type': 'function',
-                    'function': {
-                        'name': 'add',
-                        'description': 'Add two numbers',
-                        'parameters': {
-                            'type': 'object',
-                            'properties': {'a': {'type': 'number'}, 'b': {'type': 'number'}},
-                            'required': ['a', 'b'],
+                    "type": "function",
+                    "function": {
+                        "name": "add",
+                        "description": "Add two numbers",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+                            "required": ["a", "b"],
                         },
                     },
                 }
             ],
-            'tool_choice': 'auto',
+            "tool_choice": "auto",
         }
         req = urllib.request.Request(
-            'http://localhost:8081/v1/chat/completions',
+            "http://localhost:8081/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer open'},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            message = data['choices'][0]['message']
-            assert message.get('tool_calls') is not None
-            assert len(message['tool_calls']) > 0
-            assert message['tool_calls'][0]['function']['name'] == 'add'
+            message = data["choices"][0]["message"]
+            assert message.get("tool_calls") is not None
+            assert len(message["tool_calls"]) > 0
+            assert message["tool_calls"][0]["function"]["name"] == "add"
 
     def test_gateway_tool_calling_stream(self):
         """Test tool calling through gateway (streaming)."""
         import urllib.request
 
         payload = {
-            'model': 'qwen3-8b',
-            'messages': [{'role': 'user', 'content': 'Call add function with a=3,b=4'}],
-            'max_tokens': 256,
-            'temperature': 0.2,
-            'stream': True,
-            'tools': [
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": True,
+            "tools": [
                 {
-                    'type': 'function',
-                    'function': {
-                        'name': 'add',
-                        'description': 'Add two numbers',
-                        'parameters': {
-                            'type': 'object',
-                            'properties': {'a': {'type': 'number'}, 'b': {'type': 'number'}},
-                            'required': ['a', 'b'],
+                    "type": "function",
+                    "function": {
+                        "name": "add",
+                        "description": "Add two numbers",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+                            "required": ["a", "b"],
                         },
                     },
                 }
             ],
-            'tool_choice': 'auto',
+            "tool_choice": "auto",
         }
         req = urllib.request.Request(
-            'http://localhost:8081/v1/chat/completions',
+            "http://localhost:8081/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer open'},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             saw_tool_call = False
             for raw_line in resp:
                 decoded = raw_line.decode().strip()
-                if decoded.startswith('data: ') and decoded != 'data: [DONE]':
+                if decoded.startswith("data: ") and decoded != "data: [DONE]":
                     chunk = json.loads(decoded[6:])
-                    delta = chunk['choices'][0].get('delta', {})
-                    if delta.get('tool_calls'):
+                    delta = chunk["choices"][0].get("delta", {})
+                    if delta.get("tool_calls"):
                         saw_tool_call = True
                         break
-        assert saw_tool_call, 'Expected tool_calls in streaming response'
+        assert saw_tool_call, "Expected tool_calls in streaming response"
 
     @pytest.mark.skipif(
-        not _check_service_url('http://localhost:8082/health'),
-        reason='lai serve not running on port 8082',
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082",
     )
     def test_serve_health(self):
         import urllib.request
 
-        with urllib.request.urlopen('http://localhost:8082/health', timeout=5) as resp:
+        with urllib.request.urlopen("http://localhost:8082/health", timeout=5) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            assert data.get('status') == 'ok'
+            assert data.get("status") == "ok"
 
     @pytest.mark.skipif(
-        not _check_service_url('http://localhost:8082/health'),
-        reason='lai serve not running on port 8082',
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082",
     )
     def test_serve_tool_calling_non_stream(self):
         """Test tool calling through lai serve (non-streaming)."""
         import urllib.request
 
         payload = {
-            'model': 'qwen3-8b',
-            'messages': [{'role': 'user', 'content': 'Call add function with a=3,b=4'}],
-            'max_tokens': 256,
-            'temperature': 0.2,
-            'stream': False,
-            'tools': [
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": False,
+            "tools": [
                 {
-                    'type': 'function',
-                    'function': {
-                        'name': 'add',
-                        'description': 'Add two numbers',
-                        'parameters': {
-                            'type': 'object',
-                            'properties': {'a': {'type': 'number'}, 'b': {'type': 'number'}},
-                            'required': ['a', 'b'],
+                    "type": "function",
+                    "function": {
+                        "name": "add",
+                        "description": "Add two numbers",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+                            "required": ["a", "b"],
                         },
                     },
                 }
             ],
-            'tool_choice': 'auto',
+            "tool_choice": "auto",
         }
         req = urllib.request.Request(
-            'http://localhost:8082/v1/chat/completions',
+            "http://localhost:8082/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer open'},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
-            message = data['choices'][0]['message']
-            assert message.get('tool_calls') is not None
-            assert len(message['tool_calls']) > 0
-            assert message['tool_calls'][0]['function']['name'] == 'add'
+            message = data["choices"][0]["message"]
+            assert message.get("tool_calls") is not None
+            assert len(message["tool_calls"]) > 0
+            assert message["tool_calls"][0]["function"]["name"] == "add"
 
     @pytest.mark.skipif(
-        not _check_service_url('http://localhost:8082/health'),
-        reason='lai serve not running on port 8082',
+        not _check_service_url("http://localhost:8082/health"),
+        reason="lai serve not running on port 8082",
     )
     def test_serve_tool_calling_stream(self):
         """Test tool calling through lai serve (streaming)."""
         import urllib.request
 
         payload = {
-            'model': 'qwen3-8b',
-            'messages': [{'role': 'user', 'content': 'Call add function with a=3,b=4'}],
-            'max_tokens': 256,
-            'temperature': 0.2,
-            'stream': True,
-            'tools': [
+            "model": "qwen3-8b",
+            "messages": [{"role": "user", "content": "Call add function with a=3,b=4"}],
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "stream": True,
+            "tools": [
                 {
-                    'type': 'function',
-                    'function': {
-                        'name': 'add',
-                        'description': 'Add two numbers',
-                        'parameters': {
-                            'type': 'object',
-                            'properties': {'a': {'type': 'number'}, 'b': {'type': 'number'}},
-                            'required': ['a', 'b'],
+                    "type": "function",
+                    "function": {
+                        "name": "add",
+                        "description": "Add two numbers",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+                            "required": ["a", "b"],
                         },
                     },
                 }
             ],
-            'tool_choice': 'auto',
+            "tool_choice": "auto",
         }
         req = urllib.request.Request(
-            'http://localhost:8082/v1/chat/completions',
+            "http://localhost:8082/v1/chat/completions",
             data=json.dumps(payload).encode(),
-            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer open'},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             for raw_line in resp:
                 decoded = raw_line.decode().strip()
-                if decoded.startswith('data: ') and decoded != 'data: [DONE]':
+                if decoded.startswith("data: ") and decoded != "data: [DONE]":
                     chunk = json.loads(decoded[6:])
-                    delta = chunk['choices'][0].get('delta', {})
-                    if delta.get('tool_calls'):
+                    delta = chunk["choices"][0].get("delta", {})
+                    if delta.get("tool_calls"):
                         return  # Found tool_calls in stream
-        pytest.fail('Expected tool_calls in streaming response from serve')
+        pytest.fail("Expected tool_calls in streaming response from serve")
 
     def test_automode_multi_tool(self, lai_instance):
         """Test AutoMode with multiple tool calls."""
         result = lai_instance.auto_mode_run(
-            'List Python files in current directory and show first 5 lines of fib.py',
+            "List Python files in current directory and show first 5 lines of fib.py",
             max_iterations=3,
             max_turns=10,
         )
-        assert 'fib.py' in result or 'Python' in result
+        assert "fib.py" in result or "Python" in result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import pytest
 
-    pytest.main([__file__, '-v'])
+    pytest.main([__file__, "-v"])

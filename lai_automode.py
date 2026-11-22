@@ -32,21 +32,21 @@ class AutoMode:
     """
 
     SYSTEM_PROMPT = (
-        '/no_think\n'
-        'Eres un agente de programación autónomo que trabaja en el proyecto del usuario.\n'
-        'OBJETIVO: Cumplir la tarea asignada usando las herramientas disponibles.\n'
-        '\n'
-        'REGLAS DE ORO:\n'
-        '1. Inspecciona los archivos antes de editarlos (usa read_file, grep, list_dir).\n'
-        '2. Usa write_file con el CONTENIDO COMPLETO del archivo, nunca fragmentos.\n'
-        '3. Los archivos Python se verifican sintácticamente automáticamente.\n'
-        '4. Si una herramienta falla, analiza el error y reintenta con corrección.\n'
-        '5. Cuando la tarea esté completa, responde SIN llamar a ninguna herramienta.\n'
-        '6. Todo el código debe generarse usando modelos locales (Regla 4).\n'
-        '\n'
-        'FLUJO DE TRABAJO:\n'
-        '- Inspecciona -> Planifica -> Ejecuta -> Verifica -> Finaliza.\n'
-        '- No marques la tarea como completa hasta haber verificado el resultado.\n'
+        "/no_think\n"
+        "Eres un agente de programación autónomo que trabaja en el proyecto del usuario.\n"
+        "OBJETIVO: Cumplir la tarea asignada usando las herramientas disponibles.\n"
+        "\n"
+        "REGLAS DE ORO:\n"
+        "1. Inspecciona los archivos antes de editarlos (usa read_file, grep, list_dir).\n"
+        "2. Usa write_file con el CONTENIDO COMPLETO del archivo, nunca fragmentos.\n"
+        "3. Los archivos Python se verifican sintácticamente automáticamente.\n"
+        "4. Si una herramienta falla, analiza el error y reintenta con corrección.\n"
+        "5. Cuando la tarea esté completa, responde SIN llamar a ninguna herramienta.\n"
+        "6. Todo el código debe generarse usando modelos locales (Regla 4).\n"
+        "\n"
+        "FLUJO DE TRABAJO:\n"
+        "- Inspecciona -> Planifica -> Ejecuta -> Verifica -> Finaliza.\n"
+        "- No marques la tarea como completa hasta haber verificado el resultado.\n"
     )
 
     def __init__(
@@ -71,15 +71,15 @@ class AutoMode:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.messages: List[Dict] = [
-            {'role': 'system', 'content': self.SYSTEM_PROMPT},
-            {'role': 'user', 'content': goal},
+            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "user", "content": goal},
         ]
         self.completed = False
         self.error_history: List[str] = []
 
     def run(self) -> str:
         if not self._is_local_endpoint():
-            return 'Error: AutoMode requiere un endpoint de modelo local (Regla 4).'
+            return "Error: AutoMode requiere un endpoint de modelo local (Regla 4)."
 
         schema = self.tools.get_tools_schema()
         transcript: List[str] = []
@@ -87,55 +87,57 @@ class AutoMode:
         for iteration in range(1, self.max_iterations + 1):
             self.iteration = iteration
             response = self._chat_with_tools(schema)
-            if response.get('error'):
+            if response.get("error"):
                 transcript.append(f'Iteración {iteration}: error: {response["error"]}')
                 break
 
             self._track_usage(response)
 
-            content = response.get('content') or ''
-            tool_calls = response.get('tool_calls') or []
-            assistant: Dict[str, Any] = {'role': 'assistant', 'content': content}
+            content = response.get("content") or ""
+            tool_calls = response.get("tool_calls") or []
+            assistant: Dict[str, Any] = {"role": "assistant", "content": content}
             if tool_calls:
-                assistant['tool_calls'] = tool_calls
+                assistant["tool_calls"] = tool_calls
             self.messages.append(assistant)
 
             if content:
-                transcript.append(f'\n--- Iteración {iteration} ---\n{content}')
+                transcript.append(f"\n--- Iteración {iteration} ---\n{content}")
 
             # Auto-evaluación: si hay contenido y no hay tool calls, verificar completitud
             if not tool_calls:
                 if self.reflective and content:
                     eval_result = self._evaluate_completion(content)
-                    if not eval_result.get('complete', False):
+                    if not eval_result.get("complete", False):
                         # El agente cree que no terminó; continuar con una nueva instrucción
                         self.messages.append(
                             {
-                                'role': 'user',
-                                'content': (
+                                "role": "user",
+                                "content": (
                                     f'La tarea aún no está completa. Motivo: {eval_result.get("reason", "")}\n'
-                                    f'Continuar trabajando para cumplir el objetivo: {self.goal}'
+                                    f"Continuar trabajando para cumplir el objetivo: {self.goal}"
                                 ),
                             }
                         )
-                        transcript.append(f'[Auto-evaluación] Continuando: {eval_result.get("reason", "")}')
+                        transcript.append(
+                            f'[Auto-evaluación] Continuando: {eval_result.get("reason", "")}'
+                        )
                         continue
                 self.completed = True
                 break
 
             if self.turns_used >= self.max_turns:
-                transcript.append(f'Máximo de turnos ({self.max_turns}) alcanzado. Deteniendo.')
-                return '\n'.join(transcript)
+                transcript.append(f"Máximo de turnos ({self.max_turns}) alcanzado. Deteniendo.")
+                return "\n".join(transcript)
 
             for call in tool_calls:
                 self.turns_used += 1
                 if self.turns_used >= self.max_turns:
-                    transcript.append(f'Máximo de turnos ({self.max_turns}) alcanzado. Deteniendo.')
-                    return '\n'.join(transcript)
+                    transcript.append(f"Máximo de turnos ({self.max_turns}) alcanzado. Deteniendo.")
+                    return "\n".join(transcript)
 
-                function = call.get('function') or {}
-                name = function.get('name', '')
-                raw_args = function.get('arguments', '{}')
+                function = call.get("function") or {}
+                name = function.get("name", "")
+                raw_args = function.get("arguments", "{}")
                 try:
                     arguments = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                 except json.JSONDecodeError:
@@ -145,46 +147,46 @@ class AutoMode:
 
                 func = self.tools.tools.get(name)
                 if func is None:
-                    result = f'Herramienta desconocida: {name}'
+                    result = f"Herramienta desconocida: {name}"
                 else:
                     try:
                         result = func(**arguments)
                     except TypeError as exc:
-                        result = f'Argumentos inválidos para {name}: {exc}'
+                        result = f"Argumentos inválidos para {name}: {exc}"
                     except Exception as exc:
-                        result = f'Tool {name} falló: {exc}'
-                        self.error_history.append(f'{name}: {exc}')
+                        result = f"Tool {name} falló: {exc}"
+                        self.error_history.append(f"{name}: {exc}")
 
                 if not isinstance(result, str):
                     result = json.dumps(result, ensure_ascii=False)
                 result = result[:6000]
                 self.messages.append(
                     {
-                        'role': 'tool',
-                        'tool_call_id': call.get('id') or f'call_{iteration}',
-                        'name': name,
-                        'content': result,
+                        "role": "tool",
+                        "tool_call_id": call.get("id") or f"call_{iteration}",
+                        "name": name,
+                        "content": result,
                     }
                 )
-                transcript.append(f'[{name}] {result[:1200]}')
+                transcript.append(f"[{name}] {result[:1200]}")
         else:
-            transcript.append('Máximo de iteraciones alcanzado sin respuesta final.')
+            transcript.append("Máximo de iteraciones alcanzado sin respuesta final.")
 
         if self.track_cost and (self.total_prompt_tokens or self.total_completion_tokens):
-            transcript.append('\n--- Resumen de Coste ---')
-            transcript.append(f'Prompt tokens: {self.total_prompt_tokens}')
-            transcript.append(f'Completion tokens: {self.total_completion_tokens}')
-            transcript.append(f'Turnos usados: {self.turns_used}/{self.max_turns}')
-            transcript.append(f'Iteraciones: {self.iteration}/{self.max_iterations}')
-            transcript.append(f'Completada: {self.completed}')
+            transcript.append("\n--- Resumen de Coste ---")
+            transcript.append(f"Prompt tokens: {self.total_prompt_tokens}")
+            transcript.append(f"Completion tokens: {self.total_completion_tokens}")
+            transcript.append(f"Turnos usados: {self.turns_used}/{self.max_turns}")
+            transcript.append(f"Iteraciones: {self.iteration}/{self.max_iterations}")
+            transcript.append(f"Completada: {self.completed}")
 
-        return '\n'.join(transcript)
+        return "\n".join(transcript)
 
     def _chat_with_tools(self, schema: List[Dict]) -> Dict[str, Any]:
         return self.lai.chat_messages(
             self.messages,
             tools=schema,
-            tool_choice='auto',
+            tool_choice="auto",
             stream=False,
             thinking=False,
             temp=0.1,
@@ -192,10 +194,10 @@ class AutoMode:
         )
 
     def _track_usage(self, response: Dict[str, Any]) -> None:
-        usage = response.get('usage')
+        usage = response.get("usage")
         if self.track_cost and usage:
-            self.total_prompt_tokens += usage.get('prompt_tokens', 0)
-            self.total_completion_tokens += usage.get('completion_tokens', 0)
+            self.total_prompt_tokens += usage.get("prompt_tokens", 0)
+            self.total_completion_tokens += usage.get("completion_tokens", 0)
 
     def _is_local_endpoint(self) -> bool:
         from lai import is_local_url
@@ -205,19 +207,19 @@ class AutoMode:
     def _evaluate_completion(self, content: str) -> Dict[str, Any]:
         """Evalúa si el contenido indica que la tarea está completa."""
         completion_indicators = [
-            'completado',
-            'completada',
-            'finalizado',
-            'finalizada',
-            'hecho',
-            'listo',
-            'terminado',
-            'task complete',
-            'done',
-            'finished',
+            "completado",
+            "completada",
+            "finalizado",
+            "finalizada",
+            "hecho",
+            "listo",
+            "terminado",
+            "task complete",
+            "done",
+            "finished",
         ]
         content_lower = content.lower()
         for indicator in completion_indicators:
             if indicator in content_lower:
-                return {'complete': True, 'reason': f'Indicador de completitud: {indicator}'}
-        return {'complete': False, 'reason': 'No se detectó indicador de completitud'}
+                return {"complete": True, "reason": f"Indicador de completitud: {indicator}"}
+        return {"complete": False, "reason": "No se detectó indicador de completitud"}

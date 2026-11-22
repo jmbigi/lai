@@ -29,7 +29,7 @@ import httpx
 # Console-script installs run with sys.path[0] set to the bin directory, so
 # `lai` used to fail with ModuleNotFoundError outside the repo checkout.
 _THIS_DIR = Path(__file__).resolve().parent
-for _path in (_THIS_DIR, _THIS_DIR / 'scripts'):
+for _path in (_THIS_DIR, _THIS_DIR / "scripts"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
@@ -40,7 +40,7 @@ from lai_tools import ToolRegistry  # noqa: E402
 from rag_local import get_rag  # noqa: E402
 
 
-LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
 def get_version() -> str:
@@ -49,12 +49,12 @@ def get_version() -> str:
         import tomllib
     except ImportError:
         import tomli as tomllib
-    pyproject = Path(__file__).parent / 'pyproject.toml'
+    pyproject = Path(__file__).parent / "pyproject.toml"
     if pyproject.exists():
-        with open(pyproject, 'rb') as f:
+        with open(pyproject, "rb") as f:
             data = tomllib.load(f)
-            return data.get('project', {}).get('version', '0.0.0')
-    return '0.0.0'
+            return data.get("project", {}).get("version", "0.0.0")
+    return "0.0.0"
 
 
 def is_local_url(base_url: str) -> bool:
@@ -66,12 +66,12 @@ def is_local_url(base_url: str) -> bool:
     if not isinstance(base_url, str) or not base_url:
         return False
     try:
-        host = (urlparse(base_url).hostname or '').strip().lower()
+        host = (urlparse(base_url).hostname or "").strip().lower()
     except ValueError:
         return False
     if not host:
         return False
-    if host in LOCAL_HOSTS or host.endswith('.local'):
+    if host in LOCAL_HOSTS or host.endswith(".local"):
         return True
     try:
         ip = ipaddress.ip_address(host)
@@ -85,34 +85,34 @@ def is_local_url(base_url: str) -> bool:
 # ============================================================================
 
 SERVICES = {
-    'llama.cpp': {
-        'port': 8080,
-        'health_path': '/health',
-        'script': '/home/kubuntu/llama.cpp-bin/llama-b12567/llama-server',
-        'args': None,
-        'cwd': None,
-        'running': False,
+    "llama.cpp": {
+        "port": 8080,
+        "health_path": "/health",
+        "script": "/home/kubuntu/llama.cpp-bin/llama-b12567/llama-server",
+        "args": None,
+        "cwd": None,
+        "running": False,
     },
-    'gateway': {
-        'port': 8081,
-        'health_path': '/health',
-        'script': '/home/kubuntu/curso-ia/modelo-local/gateway-go/gateway',
-        'args': [],
-        'cwd': '/home/kubuntu/curso-ia/modelo-local/gateway-go',
-        'running': False,
+    "gateway": {
+        "port": 8081,
+        "health_path": "/health",
+        "script": "/home/kubuntu/curso-ia/modelo-local/gateway-go/gateway",
+        "args": [],
+        "cwd": "/home/kubuntu/curso-ia/modelo-local/gateway-go",
+        "running": False,
     },
-    'ollama': {
-        'port': 11434,
-        'health_path': '/api/tags',
-        'script': '/usr/bin/ollama',
-        'args': ['serve'],
-        'cwd': None,
-        'running': False,
+    "ollama": {
+        "port": 11434,
+        "health_path": "/api/tags",
+        "script": "/usr/bin/ollama",
+        "args": ["serve"],
+        "cwd": None,
+        "running": False,
     },
 }
 
-MODEL = 'qwen3-8b'
-BASE_URL = 'http://localhost:8080/v1'
+MODEL = "qwen3-8b"
+BASE_URL = "http://localhost:8080/v1"
 TEMP = 0.7
 MAX_TOKENS = 4096
 STREAM = True
@@ -128,14 +128,14 @@ QUIET = False
 # ============================================================================
 
 
-def check_service(port: int, health_path: str = '/health') -> bool:
+def check_service(port: int, health_path: str = "/health") -> bool:
     """Check a local service using its real health endpoint.
 
     Ollama exposes /api/tags, not /health. A TCP fallback keeps `lai status`
     useful for other local servers that do not implement a health route.
     """
     try:
-        response = httpx.get(f'http://127.0.0.1:{port}{health_path}', timeout=1)
+        response = httpx.get(f"http://127.0.0.1:{port}{health_path}", timeout=1)
         if response.status_code == 200:
             return True
     except Exception:
@@ -143,7 +143,7 @@ def check_service(port: int, health_path: str = '/health') -> bool:
     try:
         import socket
 
-        with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
             return True
     except OSError:
         return False
@@ -155,75 +155,75 @@ def start_service(name: str):
         return False
 
     service = SERVICES[name]
-    port = service['port']
-    health_path = service.get('health_path', '/health')
-    if service.get('running') or check_service(port, health_path):
-        service['running'] = True
+    port = service["port"]
+    health_path = service.get("health_path", "/health")
+    if service.get("running") or check_service(port, health_path):
+        service["running"] = True
         return True
 
-    script = service.get('script')
+    script = service.get("script")
     if not script or not os.path.exists(script):
-        print(f'No executable found for {name}: {script}')
+        print(f"No executable found for {name}: {script}")
         return False
 
-    if name == 'llama.cpp':
-        model = os.environ.get('LAI_LLAMA_MODEL', '').strip()
+    if name == "llama.cpp":
+        model = os.environ.get("LAI_LLAMA_MODEL", "").strip()
         if not model or not os.path.isfile(model):
-            print('llama.cpp is not running.')
-            print('Set LAI_LLAMA_MODEL=/path/to/model.gguf to allow `lai start` to launch it.')
+            print("llama.cpp is not running.")
+            print("Set LAI_LLAMA_MODEL=/path/to/model.gguf to allow `lai start` to launch it.")
             return False
         args = [
-            '--host',
-            '127.0.0.1',
-            '--port',
+            "--host",
+            "127.0.0.1",
+            "--port",
             str(port),
-            '-m',
+            "-m",
             model,
-            '-c',
-            os.environ.get('LAI_CONTEXT', '32768'),
-            '-ngl',
-            os.environ.get('LAI_NGL', '99'),
-            '--reasoning-format',
-            'none',
+            "-c",
+            os.environ.get("LAI_CONTEXT", "32768"),
+            "-ngl",
+            os.environ.get("LAI_NGL", "99"),
+            "--reasoning-format",
+            "none",
         ]
     else:
-        args = list(service.get('args') or [])
+        args = list(service.get("args") or [])
 
-    print(f'Starting {name} on port {port}...')
+    print(f"Starting {name} on port {port}...")
     try:
         subprocess.Popen(
             [script] + args,
-            cwd=service.get('cwd'),
+            cwd=service.get("cwd"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         for _ in range(20):
             time.sleep(0.5)
             if check_service(port, health_path):
-                service['running'] = True
-                print(f'{name} started successfully on port {port}')
+                service["running"] = True
+                print(f"{name} started successfully on port {port}")
                 return True
-        print(f'Failed to start {name} (port {port}). Check its logs.')
+        print(f"Failed to start {name} (port {port}). Check its logs.")
         return False
     except Exception as e:
-        print(f'Error starting {name}: {e}')
+        print(f"Error starting {name}: {e}")
         return False
 
 
 def check_services():
     """Check all services status."""
     for name, service in SERVICES.items():
-        service['running'] = check_service(service['port'], service.get('health_path', '/health'))
+        service["running"] = check_service(service["port"], service.get("health_path", "/health"))
     return SERVICES
 
 
 def auto_start_services():
     """Auto-start all configured services if not running."""
-    print('Checking and starting local services...')
+    print("Checking and starting local services...")
     for name, service in SERVICES.items():
-        health_path = service.get('health_path', '/health')
-        if check_service(service['port'], health_path):
-            service['running'] = True
+        health_path = service.get("health_path", "/health")
+        if check_service(service["port"], health_path):
+            service["running"] = True
             print(f'{name} already running on port {service["port"]}')
         else:
             start_service(name)
@@ -253,22 +253,22 @@ class Session:
 class SessionManager:
     def __init__(self, history_dir: str = None):
         if history_dir is None:
-            history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sessions')
+            history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
         self.history_dir = history_dir
         os.makedirs(history_dir, exist_ok=True)
 
     def create_session(self, session_id: Optional[str] = None) -> str:
         if session_id is None:
             session_id = str(uuid.uuid4())
-        session_path = os.path.join(self.history_dir, f'{session_id}.json')
+        session_path = os.path.join(self.history_dir, f"{session_id}.json")
         if not os.path.exists(session_path):
             self._save_session(session_id, [])
         return session_id
 
     def get_session(self, session_id: str) -> List[Dict]:
-        session_path = os.path.join(self.history_dir, f'{session_id}.json')
+        session_path = os.path.join(self.history_dir, f"{session_id}.json")
         if os.path.exists(session_path):
-            with open(session_path, 'r', encoding='utf-8') as f:
+            with open(session_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         return []
 
@@ -276,17 +276,17 @@ class SessionManager:
         self._save_session(session_id, messages)
 
     def _save_session(self, session_id: str, messages: List[Dict]):
-        session_path = os.path.join(self.history_dir, f'{session_id}.json')
-        with open(session_path, 'w', encoding='utf-8') as f:
+        session_path = os.path.join(self.history_dir, f"{session_id}.json")
+        with open(session_path, "w", encoding="utf-8") as f:
             json.dump(messages, f, indent=2, ensure_ascii=False)
 
     def list_sessions(self) -> List[str]:
         if not os.path.exists(self.history_dir):
             return []
-        return [f.replace('.json', '') for f in os.listdir(self.history_dir) if f.endswith('.json')]
+        return [f.replace(".json", "") for f in os.listdir(self.history_dir) if f.endswith(".json")]
 
     def delete_session(self, session_id: str):
-        session_path = os.path.join(self.history_dir, f'{session_id}.json')
+        session_path = os.path.join(self.history_dir, f"{session_id}.json")
         if os.path.exists(session_path):
             os.remove(session_path)
 
@@ -312,14 +312,14 @@ class ThinkingManager:
     def extract_reasoning(self, content: str) -> tuple[str, str]:
         """Extract reasoning content from model response."""
         if not self.enabled:
-            return '', content
+            return "", content
 
         patterns = [
-            r'<thinking>\s*(.*?)\s*</thinking>',  # Qwen3 standard
-            r'questions\s*(.*?)\s*回答',  # DeepSeek style (questions...回答)
-            r'questions\s*(.*?)\s*</thinking>',  # questions... with </thinking>
-            r'think\s*(.*?)\s*</thinking>',  # think... with </thinking>
-            r'\|begin_thinking\|(.*?)\|end_thinking\|',  # Some models
+            r"<thinking>\s*(.*?)\s*</thinking>",  # Qwen3 standard
+            r"questions\s*(.*?)\s*回答",  # DeepSeek style (questions...回答)
+            r"questions\s*(.*?)\s*</thinking>",  # questions... with </thinking>
+            r"think\s*(.*?)\s*</thinking>",  # think... with </thinking>
+            r"\|begin_thinking\|(.*?)\|end_thinking\|",  # Some models
         ]
 
         for pattern in patterns:
@@ -327,7 +327,7 @@ class ThinkingManager:
             if matches:
                 match = matches[-1]
                 thinking = match.group(1).strip()
-                clean_content = re.sub(pattern, '', content, flags=re.DOTALL).strip()
+                clean_content = re.sub(pattern, "", content, flags=re.DOTALL).strip()
 
                 block = ThinkingBlock(
                     content=thinking,
@@ -338,20 +338,20 @@ class ThinkingManager:
                 self.thinking_blocks.append(block)
                 return thinking, clean_content
 
-        return '', content
+        return "", content
 
     def format_thinking_for_display(self, thinking: str, content: str) -> str:
         if self.enabled and thinking:
-            return f'\033[93m<thinking>\n{thinking}\n</thinking>\033[0m\n\n{content}'
+            return f"\033[93m<thinking>\n{thinking}\n</thinking>\033[0m\n\n{content}"
         return content
 
     def get_thinking_summary(self) -> Dict[str, Any]:
         total_tokens = sum(b.tokens for b in self.thinking_blocks)
         return {
-            'blocks': len(self.thinking_blocks),
-            'total_tokens': total_tokens,
-            'blocks_detail': [
-                {'tokens': b.tokens, 'preview': b.content[:100]} for b in self.thinking_blocks
+            "blocks": len(self.thinking_blocks),
+            "total_tokens": total_tokens,
+            "blocks_detail": [
+                {"tokens": b.tokens, "preview": b.content[:100]} for b in self.thinking_blocks
             ],
         }
 
@@ -372,8 +372,8 @@ class ThinkingManager:
 class LAI:
     def __init__(
         self,
-        model: str = 'qwen3-8b',
-        base_url: str = 'http://localhost:8080/v1',
+        model: str = "qwen3-8b",
+        base_url: str = "http://localhost:8080/v1",
         api_key: Optional[str] = None,
         allow_remote: bool = False,
     ):
@@ -395,7 +395,7 @@ class LAI:
         self.temp: float = 0.7
         self.max_tokens: int = 4096
         self.history_max_tokens: int = 12000  # ~48000 chars / 4
-        self.lang: str = 'es'
+        self.lang: str = "es"
         # --- Ahorro: costo estimado, token budget y fallback ---
         self.token_budget: int = 50000  # tokens máximos por sesión
         self.total_prompt_tokens: int = 0
@@ -403,7 +403,7 @@ class LAI:
         self.estimated_cost_usd: float = 0.0
         self.request_count: int = 0
         self.rate_limit_per_min: int = 60
-        self.fallback_url: Optional[str] = 'http://localhost:11434/v1'
+        self.fallback_url: Optional[str] = "http://localhost:11434/v1"
         self._request_timestamps: List[float] = []
 
     def _trim_history(self) -> None:
@@ -417,7 +417,7 @@ class LAI:
 
         total_tokens = 0
         for msg in self.conversation_history:
-            content = msg.get('content', '')
+            content = msg.get("content", "")
             total_tokens += len(content) // 4
 
         if total_tokens <= self.history_max_tokens:
@@ -426,7 +426,7 @@ class LAI:
         # Remove oldest messages (but keep system messages if possible)
         while total_tokens > self.history_max_tokens and len(self.conversation_history) > 1:
             removed = self.conversation_history.pop(0)
-            content = removed.get('content', '')
+            content = removed.get("content", "")
             total_tokens -= len(content) // 4
 
     # --- Ahorro: token budget, costo estimado, rate limiting, fallback ---
@@ -466,18 +466,18 @@ class LAI:
         """Retorna un resumen de ahorro y costo estimado de la sesión."""
         total_tokens = self.total_prompt_tokens + self.total_completion_tokens
         return {
-            'requests': self.request_count,
-            'prompt_tokens': self.total_prompt_tokens,
-            'completion_tokens': self.total_completion_tokens,
-            'total_tokens': total_tokens,
-            'token_budget': self.token_budget,
-            'budget_used_pct': (
+            "requests": self.request_count,
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "total_tokens": total_tokens,
+            "token_budget": self.token_budget,
+            "budget_used_pct": (
                 round((total_tokens / self.token_budget) * 100, 1) if self.token_budget else 0.0
             ),
-            'estimated_cost_usd': round(self.estimated_cost_usd, 4),
-            'estimated_cost_saved_usd': round(self.estimated_cost_usd, 4),
-            'rate_limit_per_min': self.rate_limit_per_min,
-            'lang': self.lang,
+            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
+            "estimated_cost_saved_usd": round(self.estimated_cost_usd, 4),
+            "rate_limit_per_min": self.rate_limit_per_min,
+            "lang": self.lang,
         }
 
     async def _chat(
@@ -491,57 +491,57 @@ class LAI:
         """Chat with the model with proper streaming support."""
         try:
             if thinking:
-                prompt = f'<thinking>\n{prompt}\n</thinking>\n\nProvide the solution.'
+                prompt = f"<thinking>\n{prompt}\n</thinking>\n\nProvide the solution."
 
             headers = {}
             if self.api_key:
-                headers['Authorization'] = f'Bearer {self.api_key}'
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             async with httpx.AsyncClient(timeout=120, headers=headers) as client:
                 payload = {
-                    'model': self.model,
-                    'messages': [{'role': 'user', 'content': prompt}],
-                    'max_tokens': max_tokens,
-                    'temperature': temp,
-                    'stream': stream,
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": temp,
+                    "stream": stream,
                 }
 
                 if stream:
                     content_buffer = []
                     async with client.stream(
-                        'POST', f'{self.base_url}/chat/completions', json=payload
+                        "POST", f"{self.base_url}/chat/completions", json=payload
                     ) as resp:
                         async for line in resp.aiter_lines():
-                            if line.startswith('data: '):
+                            if line.startswith("data: "):
                                 data = line[6:]
-                                if data.strip() == '[DONE]':
+                                if data.strip() == "[DONE]":
                                     break
                                 try:
                                     data = json.loads(data)
                                     content = (
-                                        data.get('choices', [{}])[0]
-                                        .get('delta', {})
-                                        .get('content', '')
+                                        data.get("choices", [{}])[0]
+                                        .get("delta", {})
+                                        .get("content", "")
                                     )
                                     if content:
-                                        print(content, end='', flush=True)
+                                        print(content, end="", flush=True)
                                         content_buffer.append(content)
                                 except Exception:
                                     pass
                         print()
-                        return ''.join(content_buffer)
+                        return "".join(content_buffer)
                 else:
                     resp = await client.post(
-                        f'{self.base_url}/chat/completions', json=payload, timeout=120
+                        f"{self.base_url}/chat/completions", json=payload, timeout=120
                     )
                     data = resp.json()
-                    message = data.get('choices', [{}])[0].get('message', {})
-                    content = message.get('content', '') or ''
+                    message = data.get("choices", [{}])[0].get("message", {})
+                    content = message.get("content", "") or ""
                     if not content:
-                        content = message.get('reasoning_content', '') or ''
+                        content = message.get("reasoning_content", "") or ""
                     return content
         except Exception as e:
-            return f'Error: {e}'
+            return f"Error: {e}"
 
     def chat(
         self,
@@ -560,30 +560,30 @@ class LAI:
         # Allow remote endpoints only if --allow-remote is set.
         if not is_local_url(self.base_url) and not self.allow_remote:
             message = (
-                'Error: LAI requires a local model endpoint (Rule 4). '
-                f'Refusing non-local base_url: {self.base_url}. '
-                'Use --allow-remote to bypass (not recommended for production).'
+                "Error: LAI requires a local model endpoint (Rule 4). "
+                f"Refusing non-local base_url: {self.base_url}. "
+                "Use --allow-remote to bypass (not recommended for production)."
             )
             print(message, file=sys.stderr)
             return message
 
         # Ahorro: rate limiting local
         if not self._check_rate_limit():
-            return f'Error: Rate limit excedido (máx. {self.rate_limit_per_min} req/min). Espera e intenta de nuevo.'
+            return f"Error: Rate limit excedido (máx. {self.rate_limit_per_min} req/min). Espera e intenta de nuevo."
 
         # Ahorro: token budget enforcement
         estimated_prompt_tokens = len(prompt) // 4
         if not self._enforce_token_budget(estimated_prompt_tokens):
             return (
-                f'Error: Token budget excedido ({self.total_prompt_tokens}/'
-                f'{self.token_budget} tokens). Limpia el historial o reduce el contexto.'
+                f"Error: Token budget excedido ({self.total_prompt_tokens}/"
+                f"{self.token_budget} tokens). Limpia el historial o reduce el contexto."
             )
 
         # Trim history before adding new message
         self._trim_history()
 
         # Add user message to history
-        self.conversation_history.append({'role': 'user', 'content': prompt})
+        self.conversation_history.append({"role": "user", "content": prompt})
 
         try:
             # Prepare messages with history
@@ -597,56 +597,56 @@ class LAI:
                 for chunk in self.chat_messages(
                     messages=messages,
                     tools=None,
-                    tool_choice='auto',
+                    tool_choice="auto",
                     stream=True,
                     thinking=thinking,
                     temp=temp,
                     max_tokens=max_tokens,
                 ):
-                    if isinstance(chunk, dict) and chunk.get('error'):
+                    if isinstance(chunk, dict) and chunk.get("error"):
                         return f'Error: {chunk["error"]}'
 
-                    content = chunk.get('content', '')
-                    thinking_content = chunk.get('reasoning_content', '')
-                    finish_reason = chunk.get('finish_reason')
+                    content = chunk.get("content", "")
+                    thinking_content = chunk.get("reasoning_content", "")
+                    finish_reason = chunk.get("finish_reason")
 
                     if content:
-                        print(content, end='', flush=True)
+                        print(content, end="", flush=True)
                         content_buffer.append(content)
                     if thinking_content:
-                        print(thinking_content, end='', flush=True)
+                        print(thinking_content, end="", flush=True)
                         thinking_buffer.append(thinking_content)
 
                     if finish_reason:
                         print()
                         break
 
-                response = ''.join(content_buffer)
-                thinking_full = ''.join(thinking_buffer)
+                response = "".join(content_buffer)
+                thinking_full = "".join(thinking_buffer)
             else:
                 # Non-streaming
                 result = self.chat_messages(
                     messages=messages,
                     tools=None,
-                    tool_choice='auto',
+                    tool_choice="auto",
                     stream=False,
                     thinking=thinking,
                     temp=temp,
                     max_tokens=max_tokens,
                 )
 
-                if isinstance(result, dict) and result.get('error'):
+                if isinstance(result, dict) and result.get("error"):
                     return f'Error: {result["error"]}'
 
-                response = result.get('content', '')
-                thinking_full = result.get('reasoning_content', '')
+                response = result.get("content", "")
+                thinking_full = result.get("reasoning_content", "")
 
             # Add assistant response to history
-            self.conversation_history.append({'role': 'assistant', 'content': response})
+            self.conversation_history.append({"role": "assistant", "content": response})
             self._trim_history()
 
             # Ahorro: trackear costo estimado y tokens
-            prompt_chars = sum(len(m.get('content', '')) for m in self.conversation_history)
+            prompt_chars = sum(len(m.get("content", "")) for m in self.conversation_history)
             self._estimate_and_track_cost(prompt_chars // 4, len(response) // 4)
             self.request_count += 1
 
@@ -667,63 +667,63 @@ class LAI:
             return response
 
         except Exception as e:
-            return f'Error: {e}'
+            return f"Error: {e}"
 
     def _strip_thinking_artifacts(self, text: str) -> str:
         """Remove thinking artifacts from model response when thinking is disabled."""
         import re
 
         # Remove <thinking>...</thinking> tags
-        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
         # Remove 思考...回答 patterns
-        text = re.sub(r'思考.*?回答', '', text, flags=re.DOTALL)
+        text = re.sub(r"思考.*?回答", "", text, flags=re.DOTALL)
         # Remove thinking...回答 patterns
-        text = re.sub(r'thinking.*?回答', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"thinking.*?回答", "", text, flags=re.DOTALL | re.IGNORECASE)
         # Remove question...回答 patterns
-        text = re.sub(r'question.*?回答', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"question.*?回答", "", text, flags=re.DOTALL | re.IGNORECASE)
         # Remove 回答 prefix
-        if '回答' in text:
-            parts = text.split('回答')
+        if "回答" in text:
+            parts = text.split("回答")
             if len(parts) > 1:
                 text = parts[-1].strip()
         # Remove markdown code fences if present
         text = text.strip()
-        if '```python' in text:
-            match = re.search(r'```python\n(.*?)\n```', text, re.DOTALL)
+        if "```python" in text:
+            match = re.search(r"```python\n(.*?)\n```", text, re.DOTALL)
             if match:
                 return match.group(1).strip()
-        elif '```' in text:
-            match = re.search(r'```\n(.*?)\n```', text, re.DOTALL)
+        elif "```" in text:
+            match = re.search(r"```\n(.*?)\n```", text, re.DOTALL)
             if match:
                 return match.group(1).strip()
         return text.strip()
 
     def _system_prompt(self) -> Dict[str, str]:
         """Return the system prompt for the configured language (default: Spanish)."""
-        if self.lang == 'es':
+        if self.lang == "es":
             return {
-                'role': 'system',
-                'content': (
-                    'Eres Lai, un asistente de código local que usa modelos de IA abiertos ejecutados localmente. '
-                    'Responde SIEMPRE en español. Eres experto en programación, revisión de código, depuración y '
-                    'arquitectura de software. Sé conciso, práctico y directo. Cuando el usuario te pida escribir o '
-                    'modificar código, proporciona bloques de código completos y funcionales. Usa las herramientas '
-                    'disponibles cuando sea necesario para leer, escribir o analizar archivos del proyecto.'
+                "role": "system",
+                "content": (
+                    "Eres Lai, un asistente de código local que usa modelos de IA abiertos ejecutados localmente. "
+                    "Responde SIEMPRE en español. Eres experto en programación, revisión de código, depuración y "
+                    "arquitectura de software. Sé conciso, práctico y directo. Cuando el usuario te pida escribir o "
+                    "modificar código, proporciona bloques de código completos y funcionales. Usa las herramientas "
+                    "disponibles cuando sea necesario para leer, escribir o analizar archivos del proyecto."
                 ),
             }
         return {
-            'role': 'system',
-            'content': (
-                'You are Lai, a local code assistant using open local AI models. '
-                'Always reply in English. You are an expert in programming, code review, debugging, and software '
-                'architecture. Be concise, practical, and direct. When asked to write or modify code, provide '
-                'complete, working code blocks. Use available tools when needed to read, write, or analyze project files.'
+            "role": "system",
+            "content": (
+                "You are Lai, a local code assistant using open local AI models. "
+                "Always reply in English. You are an expert in programming, code review, debugging, and software "
+                "architecture. Be concise, practical, and direct. When asked to write or modify code, provide "
+                "complete, working code blocks. Use available tools when needed to read, write, or analyze project files."
             ),
         }
 
     def _ensure_system_prompt(self, messages: List[Dict]) -> List[Dict]:
         """Ensure the messages list starts with a system prompt in the configured language."""
-        if messages and messages[0].get('role') == 'system':
+        if messages and messages[0].get("role") == "system":
             return messages
         return [self._system_prompt()] + messages
 
@@ -731,7 +731,7 @@ class LAI:
         self,
         messages: List[Dict],
         tools: Optional[List[Dict]] = None,
-        tool_choice: str = 'auto',
+        tool_choice: str = "auto",
         stream: bool = False,
         thinking: bool = False,
         temp: float = 0.1,
@@ -744,48 +744,48 @@ class LAI:
         """
         if not is_local_url(self.base_url):
             return {
-                'content': '',
-                'tool_calls': [],
-                'error': f'Rule 4: local endpoint required, got {self.base_url}',
+                "content": "",
+                "tool_calls": [],
+                "error": f"Rule 4: local endpoint required, got {self.base_url}",
             }
 
         payload = {
-            'model': self.model,
-            'messages': messages,
-            'max_tokens': max_tokens,
-            'temperature': temp,
-            'stream': stream,
-            'top_p': 0.95 if thinking else 0.8,
-            'top_k': 20,
-            'min_p': 0.0,
-            'chat_template_kwargs': {'enable_thinking': bool(thinking)},
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temp,
+            "stream": stream,
+            "top_p": 0.95 if thinking else 0.8,
+            "top_k": 20,
+            "min_p": 0.0,
+            "chat_template_kwargs": {"enable_thinking": bool(thinking)},
         }
         if tools:
-            payload['tools'] = tools
-            payload['tool_choice'] = tool_choice
-            payload['parallel_tool_calls'] = False
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+            payload["parallel_tool_calls"] = False
 
         if stream:
             return self._chat_messages_stream(payload)
 
         try:
             with httpx.Client(timeout=300) as client:
-                response = client.post(f'{self.base_url}/chat/completions', json=payload)
+                response = client.post(f"{self.base_url}/chat/completions", json=payload)
                 response.raise_for_status()
                 data = response.json()
-            message = (data.get('choices') or [{}])[0].get('message') or {}
-            content = message.get('content') or ''
+            message = (data.get("choices") or [{}])[0].get("message") or {}
+            content = message.get("content") or ""
             content = re.sub(
-                r'<think(?:ing)?>.*?</think(?:ing)>', '', content, flags=re.DOTALL
+                r"<think(?:ing)?>.*?</think(?:ing)>", "", content, flags=re.DOTALL
             ).strip()
             return {
-                'content': content,
-                'tool_calls': message.get('tool_calls') or [],
-                'finish_reason': (data.get('choices') or [{}])[0].get('finish_reason'),
-                'usage': data.get('usage', {}),
+                "content": content,
+                "tool_calls": message.get("tool_calls") or [],
+                "finish_reason": (data.get("choices") or [{}])[0].get("finish_reason"),
+                "usage": data.get("usage", {}),
             }
         except Exception as exc:
-            return {'content': '', 'tool_calls': [], 'error': str(exc)}
+            return {"content": "", "tool_calls": [], "error": str(exc)}
 
     def _chat_messages_stream(self, payload: Dict) -> Generator[Dict, None, None]:
         """Stream chat messages with native tool calls support.
@@ -796,36 +796,36 @@ class LAI:
             with (
                 httpx.Client(timeout=300) as client,
                 client.stream(
-                    'POST', f'{self.base_url}/chat/completions', json=payload
+                    "POST", f"{self.base_url}/chat/completions", json=payload
                 ) as response,
             ):
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line:
                         continue
-                    if line.startswith('data: '):
+                    if line.startswith("data: "):
                         data_str = line[6:]
-                        if data_str == '[DONE]':
-                            yield {'finish_reason': 'stop', 'content': '', 'tool_calls': []}
+                        if data_str == "[DONE]":
+                            yield {"finish_reason": "stop", "content": "", "tool_calls": []}
                             break
                         try:
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
-                        choices = chunk.get('choices') or []
+                        choices = chunk.get("choices") or []
                         if not choices:
                             continue
-                        delta = choices[0].get('delta', {})
-                        content = delta.get('content')
-                        tool_calls = delta.get('tool_calls')
-                        finish_reason = choices[0].get('finish_reason')
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+                        tool_calls = delta.get("tool_calls")
+                        finish_reason = choices[0].get("finish_reason")
                         yield {
-                            'content': content or '',
-                            'tool_calls': tool_calls or [],
-                            'finish_reason': finish_reason,
+                            "content": content or "",
+                            "tool_calls": tool_calls or [],
+                            "finish_reason": finish_reason,
                         }
         except Exception as exc:
-            yield {'content': '', 'tool_calls': [], 'error': str(exc)}
+            yield {"content": "", "tool_calls": [], "error": str(exc)}
 
     def think(self, problem: str) -> str:
         return self.chat(problem, thinking=True)
@@ -946,7 +946,7 @@ if __name__ == "__main__":
     main()
 ```"""
 
-        corpus_section = ''
+        corpus_section = ""
         if corpus:
             corpus_section = f"""
 
@@ -977,7 +977,7 @@ IMPORTANT: Use straight quotes (') or ("), NO curly quotes. Use pure ASCII. NO m
 
                 # Validate syntax
                 try:
-                    compile(code, filename, 'exec')
+                    compile(code, filename, "exec")
                 except SyntaxError as e:
                     if iteration < max_iterations - 1:
                         # Retry with error feedback
@@ -993,7 +993,7 @@ Fix the syntax error and generate ONLY the corrected Python code for: {descripti
 Output ONLY the corrected complete Python code for file: {filename}"""
                         continue
                     else:
-                        print(f'Warning: Generated code has syntax error: {e}')
+                        print(f"Warning: Generated code has syntax error: {e}")
                         code = f"# Generated: {description}\nprint('Error: Could not generate valid code')"
 
                 # Additional validation: check for undefined names
@@ -1020,7 +1020,7 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                             defined_names.add(node.name)
                         elif isinstance(node, ast.Import):
                             for alias in node.names:
-                                imported_names.add(alias.asname or alias.name.split('.')[0])
+                                imported_names.add(alias.asname or alias.name.split(".")[0])
                         elif isinstance(node, ast.ImportFrom):
                             for alias in node.names:
                                 imported_names.add(alias.asname or alias.name)
@@ -1059,108 +1059,108 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                             # Skip builtins and common names
                             if name not in defined_names and name not in imported_names:
                                 if name not in (
-                                    '__name__',
-                                    '__main__',
-                                    'self',
-                                    'cls',
-                                    'True',
-                                    'False',
-                                    'None',
-                                    'Exception',
-                                    'ValueError',
-                                    'TypeError',
-                                    'ZeroDivisionError',
-                                    'FileNotFoundError',
-                                    'PermissionError',
-                                    'eval',
-                                    'input',
-                                    'print',
-                                    'len',
-                                    'str',
-                                    'int',
-                                    'float',
-                                    'bool',
-                                    'list',
-                                    'dict',
-                                    'set',
-                                    'tuple',
-                                    'open',
-                                    'range',
-                                    'enumerate',
-                                    'zip',
-                                    'map',
-                                    'filter',
-                                    'sum',
-                                    'max',
-                                    'min',
-                                    'abs',
-                                    'round',
-                                    'isinstance',
-                                    'issubclass',
-                                    'hasattr',
-                                    'getattr',
-                                    'setattr',
-                                    'delattr',
-                                    'super',
-                                    'property',
-                                    'staticmethod',
-                                    'classmethod',
-                                    'object',
-                                    'type',
-                                    'BaseException',
-                                    'KeyboardInterrupt',
-                                    'SystemExit',
-                                    'GeneratorExit',
-                                    'StopIteration',
-                                    'StopAsyncIteration',
-                                    'ArithmeticError',
-                                    'OverflowError',
-                                    'FloatingPointError',
-                                    'ZeroDivisionError',
-                                    'AssertionError',
-                                    'AttributeError',
-                                    'BufferError',
-                                    'EOFError',
-                                    'ImportError',
-                                    'ModuleNotFoundError',
-                                    'LookupError',
-                                    'IndexError',
-                                    'KeyError',
-                                    'MemoryError',
-                                    'NameError',
-                                    'OSError',
-                                    'RecursionError',
-                                    'ReferenceError',
-                                    'RuntimeError',
-                                    'SyntaxError',
-                                    'IndentationError',
-                                    'TabError',
-                                    'SystemError',
-                                    'TypeError',
-                                    'UnboundLocalError',
-                                    'UnicodeError',
-                                    'UnicodeEncodeError',
-                                    'UnicodeDecodeError',
-                                    'UnicodeTranslateError',
-                                    'ValueError',
-                                    'Warning',
-                                    'DeprecationWarning',
-                                    'PendingDeprecationWarning',
-                                    'RuntimeWarning',
-                                    'SyntaxWarning',
-                                    'UserWarning',
-                                    'FutureWarning',
-                                    'ImportWarning',
-                                    'UnicodeWarning',
-                                    'BytesWarning',
-                                    'ResourceWarning',
+                                    "__name__",
+                                    "__main__",
+                                    "self",
+                                    "cls",
+                                    "True",
+                                    "False",
+                                    "None",
+                                    "Exception",
+                                    "ValueError",
+                                    "TypeError",
+                                    "ZeroDivisionError",
+                                    "FileNotFoundError",
+                                    "PermissionError",
+                                    "eval",
+                                    "input",
+                                    "print",
+                                    "len",
+                                    "str",
+                                    "int",
+                                    "float",
+                                    "bool",
+                                    "list",
+                                    "dict",
+                                    "set",
+                                    "tuple",
+                                    "open",
+                                    "range",
+                                    "enumerate",
+                                    "zip",
+                                    "map",
+                                    "filter",
+                                    "sum",
+                                    "max",
+                                    "min",
+                                    "abs",
+                                    "round",
+                                    "isinstance",
+                                    "issubclass",
+                                    "hasattr",
+                                    "getattr",
+                                    "setattr",
+                                    "delattr",
+                                    "super",
+                                    "property",
+                                    "staticmethod",
+                                    "classmethod",
+                                    "object",
+                                    "type",
+                                    "BaseException",
+                                    "KeyboardInterrupt",
+                                    "SystemExit",
+                                    "GeneratorExit",
+                                    "StopIteration",
+                                    "StopAsyncIteration",
+                                    "ArithmeticError",
+                                    "OverflowError",
+                                    "FloatingPointError",
+                                    "ZeroDivisionError",
+                                    "AssertionError",
+                                    "AttributeError",
+                                    "BufferError",
+                                    "EOFError",
+                                    "ImportError",
+                                    "ModuleNotFoundError",
+                                    "LookupError",
+                                    "IndexError",
+                                    "KeyError",
+                                    "MemoryError",
+                                    "NameError",
+                                    "OSError",
+                                    "RecursionError",
+                                    "ReferenceError",
+                                    "RuntimeError",
+                                    "SyntaxError",
+                                    "IndentationError",
+                                    "TabError",
+                                    "SystemError",
+                                    "TypeError",
+                                    "UnboundLocalError",
+                                    "UnicodeError",
+                                    "UnicodeEncodeError",
+                                    "UnicodeDecodeError",
+                                    "UnicodeTranslateError",
+                                    "ValueError",
+                                    "Warning",
+                                    "DeprecationWarning",
+                                    "PendingDeprecationWarning",
+                                    "RuntimeWarning",
+                                    "SyntaxWarning",
+                                    "UserWarning",
+                                    "FutureWarning",
+                                    "ImportWarning",
+                                    "UnicodeWarning",
+                                    "BytesWarning",
+                                    "ResourceWarning",
                                 ):
                                     # Check if it's likely a module attribute (e.g., sys.exit)
                                     undefined_names.append(name)
 
                     if undefined_names:
                         # Filter to only show likely real issues
-                        likely_issues = [n for n in undefined_names if not n.startswith('_')]
+                        likely_issues = [n for n in undefined_names if not n.startswith("_")]
                         if likely_issues:
                             unique_issues = list(set(likely_issues))
                             print(f'Warning: Potential undefined names: {", ".join(unique_issues)}')
@@ -1183,15 +1183,15 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                                 )
 
                 except Exception as e:
-                    print(f'Warning: Could not validate undefined names: {e}')
+                    print(f"Warning: Could not validate undefined names: {e}")
 
                 # Check for f-string issues (double braces)
-                if '{{' in code and '}}' in code:
-                    print('Warning: Detected double braces in f-strings, fixing...')
-                    code = code.replace('{{', '{').replace('}}', '}')
+                if "{{" in code and "}}" in code:
+                    print("Warning: Detected double braces in f-strings, fixing...")
+                    code = code.replace("{{", "{").replace("}}", "}")
                     # Re-validate syntax after fix
                     try:
-                        compile(code, filename, 'exec')
+                        compile(code, filename, "exec")
                     except SyntaxError as e:
                         if iteration < max_iterations - 1:
                             prompt = f"""Previous attempt had syntax error after f-string fix: {e}
@@ -1207,30 +1207,30 @@ Output ONLY the corrected complete Python code for file: {filename}"""
                             continue
 
                 if not yolo and iteration == max_iterations - 1:
-                    print(f'Generated code for: {description}')
-                    print('-' * 40)
-                    print(code[:500] + ('...' if len(code) > 500 else ''))
-                    print('-' * 40)
-                    confirm = input('Save to file? (y/n): ')
-                    if confirm.lower() != 'y':
-                        print('Cancelled.')
+                    print(f"Generated code for: {description}")
+                    print("-" * 40)
+                    print(code[:500] + ("..." if len(code) > 500 else ""))
+                    print("-" * 40)
+                    confirm = input("Save to file? (y/n): ")
+                    if confirm.lower() != "y":
+                        print("Cancelled.")
                         return False
 
                 os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
 
-                with open(filename, 'w', encoding='utf-8') as f:
+                with open(filename, "w", encoding="utf-8") as f:
                     f.write(code)
-                print(f'Code saved to {filename}')
+                print(f"Code saved to {filename}")
                 return True
 
             except Exception as e:
-                print(f'Error generating code: {e}')
+                print(f"Error generating code: {e}")
                 if iteration == max_iterations - 1:
                     fallback_code = f"# Generated: {description}\nprint('Error generating code')"
                     os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
-                    with open(filename, 'w') as f:
+                    with open(filename, "w") as f:
                         f.write(fallback_code)
-                    print(f'Fallback code saved to {filename}')
+                    print(f"Fallback code saved to {filename}")
                 return False
 
         return False
@@ -1240,28 +1240,28 @@ Output ONLY the corrected complete Python code for file: {filename}"""
         code = response.strip()
 
         # Handle markdown code fences
-        if '```python' in code:
-            match = re.search(r'```python\n(.*?)\n```', code, re.DOTALL)
+        if "```python" in code:
+            match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
             if match:
                 code = match.group(1).strip()
-        elif '```' in code:
+        elif "```" in code:
             # Generic code fence
-            match = re.search(r'```\n(.*?)\n```', code, re.DOTALL)
+            match = re.search(r"```\n(.*?)\n```", code, re.DOTALL)
             if match:
                 code = match.group(1).strip()
 
         # Remove any remaining markdown fences
         code = code.strip()
-        if code.startswith('```python'):
+        if code.startswith("```python"):
             code = code[9:]
-        elif code.startswith('```'):
+        elif code.startswith("```"):
             code = code[3:]
-        if code.endswith('```'):
+        if code.endswith("```"):
             code = code[:-3]
         code = code.strip()
 
         # Remove common model artifacts
-        if code.startswith('# Generated:'):
+        if code.startswith("# Generated:"):
             pass  # Keep header
 
         return code
@@ -1286,11 +1286,11 @@ Output ONLY the complete Python code for file: {filename}"""
 
     def run_script(self, script: str):
         if not os.path.exists(script):
-            return f'Script not found: {script}'
-        result = subprocess.run(['python3', script], capture_output=True, text=True, timeout=60)
+            return f"Script not found: {script}"
+        result = subprocess.run(["python3", script], capture_output=True, text=True, timeout=60)
         return result.stdout
 
-    def serve(self, host: str = '127.0.0.1', port: int = 8082):
+    def serve(self, host: str = "127.0.0.1", port: int = 8082):
         """Minimal OpenAI-compatible API for the local model.
 
         Endpoints: /health, /v1/models, /v1/chat/completions.
@@ -1303,71 +1303,71 @@ Output ONLY the complete Python code for file: {filename}"""
                 return
 
             def _json(self, status: int, payload: Dict):
-                body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
-                self.send_header('Content-Type', 'application/json; charset=utf-8')
-                self.send_header('Content-Length', str(len(body)))
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
 
             def do_GET(self):
-                if self.path in ('/health', '/v1/health'):
-                    self._json(200, {'status': 'ok', 'model': lai.model})
-                elif self.path == '/v1/models':
+                if self.path in ("/health", "/v1/health"):
+                    self._json(200, {"status": "ok", "model": lai.model})
+                elif self.path == "/v1/models":
                     self._json(
                         200,
                         {
-                            'object': 'list',
-                            'data': [
+                            "object": "list",
+                            "data": [
                                 {
-                                    'id': lai.model,
-                                    'object': 'model',
-                                    'owned_by': 'local',
+                                    "id": lai.model,
+                                    "object": "model",
+                                    "owned_by": "local",
                                 }
                             ],
                         },
                     )
                 else:
-                    self._json(404, {'error': 'not found'})
+                    self._json(404, {"error": "not found"})
 
             def do_POST(self):
-                if self.path != '/v1/chat/completions':
-                    self._json(404, {'error': 'not found'})
+                if self.path != "/v1/chat/completions":
+                    self._json(404, {"error": "not found"})
                     return
                 try:
-                    length = int(self.headers.get('Content-Length', '0'))
+                    length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
                     length = 0
                 if length <= 0 or length > 2_000_000:
-                    self._json(413, {'error': 'invalid or oversized request body'})
+                    self._json(413, {"error": "invalid or oversized request body"})
                     return
                 try:
                     body = json.loads(self.rfile.read(length))
                 except (json.JSONDecodeError, UnicodeDecodeError):
-                    self._json(400, {'error': 'invalid JSON'})
+                    self._json(400, {"error": "invalid JSON"})
                     return
 
-                messages = body.get('messages') or []
+                messages = body.get("messages") or []
                 if not isinstance(messages, list) or not messages:
-                    self._json(400, {'error': 'messages is required'})
+                    self._json(400, {"error": "messages is required"})
                     return
 
-                tools = body.get('tools')
-                tool_choice = body.get('tool_choice', 'auto')
-                stream = body.get('stream', False)
-                temperature = float(body.get('temperature', 0.7))
-                max_tokens = int(body.get('max_tokens', 2048))
-                model = body.get('model', lai.model)
+                tools = body.get("tools")
+                tool_choice = body.get("tool_choice", "auto")
+                stream = body.get("stream", False)
+                temperature = float(body.get("temperature", 0.7))
+                max_tokens = int(body.get("max_tokens", 2048))
+                model = body.get("model", lai.model)
 
-                completion_id = f'chatcmpl-{uuid.uuid4().hex}'
+                completion_id = f"chatcmpl-{uuid.uuid4().hex}"
                 created = int(time.time())
 
                 if stream:
                     # Streaming response with tool calls support
                     self.send_response(200)
-                    self.send_header('Content-Type', 'text/event-stream')
-                    self.send_header('Cache-Control', 'no-cache')
-                    self.send_header('Connection', 'keep-alive')
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
                     self.end_headers()
 
                     try:
@@ -1380,70 +1380,70 @@ Output ONLY the complete Python code for file: {filename}"""
                             temp=temperature,
                             max_tokens=max_tokens,
                         ):
-                            if isinstance(chunk_data, dict) and chunk_data.get('error'):
+                            if isinstance(chunk_data, dict) and chunk_data.get("error"):
                                 error_chunk = {
-                                    'id': completion_id,
-                                    'object': 'chat.completion.chunk',
-                                    'created': created,
-                                    'model': model,
-                                    'choices': [
+                                    "id": completion_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": model,
+                                    "choices": [
                                         {
-                                            'index': 0,
-                                            'delta': {},
-                                            'finish_reason': 'error',
+                                            "index": 0,
+                                            "delta": {},
+                                            "finish_reason": "error",
                                         }
                                     ],
                                 }
                                 self.wfile.write(
-                                    f'data: {json.dumps(error_chunk)}\n\n'.encode('utf-8')
+                                    f"data: {json.dumps(error_chunk)}\n\n".encode("utf-8")
                                 )
                                 break
 
-                            content = chunk_data.get('content', '')
-                            tool_calls = chunk_data.get('tool_calls', [])
-                            finish_reason = chunk_data.get('finish_reason')
+                            content = chunk_data.get("content", "")
+                            tool_calls = chunk_data.get("tool_calls", [])
+                            finish_reason = chunk_data.get("finish_reason")
 
                             delta = {}
                             if content:
-                                delta['content'] = content
+                                delta["content"] = content
                             if tool_calls:
-                                delta['tool_calls'] = tool_calls
+                                delta["tool_calls"] = tool_calls
 
                             chunk = {
-                                'id': completion_id,
-                                'object': 'chat.completion.chunk',
-                                'created': created,
-                                'model': model,
-                                'choices': [
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": model,
+                                "choices": [
                                     {
-                                        'index': 0,
-                                        'delta': delta,
-                                        'finish_reason': finish_reason,
+                                        "index": 0,
+                                        "delta": delta,
+                                        "finish_reason": finish_reason,
                                     }
                                 ],
                             }
-                            self.wfile.write(f'data: {json.dumps(chunk)}\n\n'.encode('utf-8'))
+                            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
                             self.wfile.flush()
 
                             if finish_reason:
                                 break
                     except Exception:
                         error_chunk = {
-                            'id': completion_id,
-                            'object': 'chat.completion.chunk',
-                            'created': created,
-                            'model': model,
-                            'choices': [
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model,
+                            "choices": [
                                 {
-                                    'index': 0,
-                                    'delta': {},
-                                    'finish_reason': 'error',
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "error",
                                 }
                             ],
                         }
-                        self.wfile.write(f'data: {json.dumps(error_chunk)}\n\n'.encode('utf-8'))
+                        self.wfile.write(f"data: {json.dumps(error_chunk)}\n\n".encode("utf-8"))
                     finally:
-                        self.wfile.write(b'data: [DONE]\n\n')
+                        self.wfile.write(b"data: [DONE]\n\n")
                     return
 
                 # Non-streaming response with tool calls support
@@ -1458,65 +1458,65 @@ Output ONLY the complete Python code for file: {filename}"""
                         max_tokens=max_tokens,
                     )
                 except Exception as exc:
-                    self._json(502, {'error': str(exc)})
+                    self._json(502, {"error": str(exc)})
                     return
 
-                if isinstance(result, dict) and result.get('error'):
-                    self._json(502, {'error': result['error']})
+                if isinstance(result, dict) and result.get("error"):
+                    self._json(502, {"error": result["error"]})
                     return
 
-                content = result.get('content', '')
-                tool_calls = result.get('tool_calls', [])
-                finish_reason = result.get('finish_reason', 'stop')
-                usage = result.get('usage', {})
+                content = result.get("content", "")
+                tool_calls = result.get("tool_calls", [])
+                finish_reason = result.get("finish_reason", "stop")
+                usage = result.get("usage", {})
 
-                message = {'role': 'assistant', 'content': content}
+                message = {"role": "assistant", "content": content}
                 if tool_calls:
-                    message['tool_calls'] = tool_calls
+                    message["tool_calls"] = tool_calls
 
                 self._json(
                     200,
                     {
-                        'id': completion_id,
-                        'object': 'chat.completion',
-                        'created': created,
-                        'model': model,
-                        'choices': [
+                        "id": completion_id,
+                        "object": "chat.completion",
+                        "created": created,
+                        "model": model,
+                        "choices": [
                             {
-                                'index': 0,
-                                'message': message,
-                                'finish_reason': finish_reason,
+                                "index": 0,
+                                "message": message,
+                                "finish_reason": finish_reason,
                             }
                         ],
-                        'usage': usage
+                        "usage": usage
                         or {
-                            'prompt_tokens': 0,
-                            'completion_tokens': 0,
-                            'total_tokens': 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
                         },
                     },
                 )
 
         server = http.server.ThreadingHTTPServer((host, port), Handler)
-        print(f'LAI API listening on http://{host}:{port}')
-        print('Endpoints: /health, /v1/models, /v1/chat/completions')
+        print(f"LAI API listening on http://{host}:{port}")
+        print("Endpoints: /health, /v1/models, /v1/chat/completions")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
-            print('\nStopping server.')
+            print("\nStopping server.")
         finally:
             server.server_close()
 
     def status(self):
         check_services()
-        print('Services status:')
+        print("Services status:")
         for name, info in SERVICES.items():
-            status = 'Running' if info['running'] else 'Stopped'
+            status = "Running" if info["running"] else "Stopped"
             print(f'  {name}: {status} (Port {info["port"]})')
 
         # Ahorro: resumen de costo y tokens
         cost = self.get_cost_summary()
-        print('\nAhorro / Costo estimado:')
+        print("\nAhorro / Costo estimado:")
         print(f'  Requests: {cost["requests"]}')
         print(
             f'  Tokens: {cost["total_tokens"]} (prompt={cost["prompt_tokens"]}, completion={cost["completion_tokens"]})'
@@ -1529,14 +1529,14 @@ Output ONLY the complete Python code for file: {filename}"""
         print(f'  Idioma: {cost["lang"]}')
 
     def models(self):
-        print('Available models:')
-        print('  qwen3-8b (local)')
-        print('  qwen3:8b (ollama)')
+        print("Available models:")
+        print("  qwen3-8b (local)")
+        print("  qwen3:8b (ollama)")
 
     def tools_list(self):
-        print('Available tools:')
+        print("Available tools:")
         for name, func in ToolRegistry().tools.items():
-            print(f'  {name}: {func.__doc__}')
+            print(f"  {name}: {func.__doc__}")
 
 
 # ============================================================================
@@ -1548,9 +1548,9 @@ _lai_instance: Optional[LAI] = None
 
 
 def get_lai_instance(
-    model: str = 'qwen3-8b',
-    base_url: str = 'http://localhost:8080/v1',
-    lang: str = 'es',
+    model: str = "qwen3-8b",
+    base_url: str = "http://localhost:8080/v1",
+    lang: str = "es",
     api_key: Optional[str] = None,
     allow_remote: bool = False,
 ) -> LAI:
@@ -1577,7 +1577,7 @@ def get_lai_instance(
 
 def chat_cmd(args):
     lai = get_lai_instance(
-        model=args.model, base_url=args.base_url, lang=getattr(args, 'lang', 'es')
+        model=args.model, base_url=args.base_url, lang=getattr(args, "lang", "es")
     )
     stream = args.stream if args.stream else (not args.no_stream)
     thinking = args.thinking if args.thinking else (not args.no_thinking)
@@ -1589,12 +1589,12 @@ def chat_cmd(args):
         print("Type 'clear' to clear conversation history")
         while True:
             try:
-                prompt = input('You: ')
-                if prompt.lower() in ('exit', 'quit'):
+                prompt = input("You: ")
+                if prompt.lower() in ("exit", "quit"):
                     break
-                if prompt.lower() == 'clear':
+                if prompt.lower() == "clear":
                     lai.conversation_history.clear()
-                    print('Conversation history cleared.')
+                    print("Conversation history cleared.")
                     continue
                 response = lai.chat(
                     prompt, stream=stream, thinking=thinking, temp=temp, max_tokens=max_tokens
@@ -1604,9 +1604,9 @@ def chat_cmd(args):
                 print()
                 break
     else:
-        prompt = ' '.join(args.prompt) if args.prompt else ''
+        prompt = " ".join(args.prompt) if args.prompt else ""
         if not prompt:
-            print('Error: No prompt provided')
+            print("Error: No prompt provided")
             return
         response = lai.chat(
             prompt, stream=stream, thinking=thinking, temp=temp, max_tokens=max_tokens
@@ -1615,13 +1615,13 @@ def chat_cmd(args):
 
 
 def generate_cmd(args):
-    prompt = ' '.join(args.prompt) if args.prompt else ''
+    prompt = " ".join(args.prompt) if args.prompt else ""
     if not prompt:
-        print('Error: No prompt provided')
+        print("Error: No prompt provided")
         return
     lai = get_lai_instance(model=args.model, base_url=args.base_url)
     response = lai.chat(
-        f'Generate: {prompt}',
+        f"Generate: {prompt}",
         stream=args.stream,
         thinking=args.thinking,
         temp=args.temp or 0.7,
@@ -1633,28 +1633,28 @@ def generate_cmd(args):
 def code_cmd(lai: LAI, args):
     rag = get_rag()
     try:
-        rag.add_directory('codegen', os.path.dirname(args.filename) or '.', extensions=('.py',))
+        rag.add_directory("codegen", os.path.dirname(args.filename) or ".", extensions=(".py",))
     except Exception:
         pass
-    ctx = rag.search(args.description, collection='codegen', top_k=5)
-    corpus = '\n'.join([f'[REF {i}] {r["text"][:300]}' for i, r in enumerate(ctx)])
+    ctx = rag.search(args.description, collection="codegen", top_k=5)
+    corpus = "\n".join([f'[REF {i}] {r["text"][:300]}' for i, r in enumerate(ctx)])
     lai.code(
         args.description,
         args.filename,
         auto=args.auto,
         yolo=args.yolo,
-        max_iterations=getattr(args, 'max_iterations', 3),
+        max_iterations=getattr(args, "max_iterations", 3),
         corpus=corpus if corpus else None,
     )
 
 
 def auto_cmd(lai: LAI, args):
-    print(f'Auto mode: {args.goal}')
+    print(f"Auto mode: {args.goal}")
     result = lai.auto_mode_run(
         args.goal,
         max_iterations=args.max_iterations,
-        max_turns=getattr(args, 'max_turns', 20),
-        track_cost=not getattr(args, 'no_cost', False),
+        max_turns=getattr(args, "max_turns", 20),
+        track_cost=not getattr(args, "no_cost", False),
     )
     print(result)
 
@@ -1668,7 +1668,7 @@ def think_cmd(lai: LAI, args):
 
 
 def search_cmd(lai: LAI, args):
-    file_type = f'.{args.type}' if args.type and not args.type.startswith('.') else args.type
+    file_type = f".{args.type}" if args.type and not args.type.startswith(".") else args.type
     results = lai.tools.grep(
         args.pattern,
         args.path,
@@ -1676,7 +1676,7 @@ def search_cmd(lai: LAI, args):
         file_type=file_type,
     )
     if not results:
-        print('No matches found.')
+        print("No matches found.")
         return
     for result in results:
         print(result)
@@ -1693,31 +1693,31 @@ def find_cmd(lai: LAI, args):
             if not fnmatch.fnmatch(name, args.pattern):
                 continue
             full = os.path.join(root, name)
-            if args.type == 'f' and not os.path.isfile(full):
+            if args.type == "f" and not os.path.isfile(full):
                 continue
-            if args.type == 'd' and not os.path.isdir(full):
+            if args.type == "d" and not os.path.isdir(full):
                 continue
-            if args.type == 'l' and not os.path.islink(full):
+            if args.type == "l" and not os.path.islink(full):
                 continue
             print(full)
             found += 1
     if not found:
-        print(f'No files matching {args.pattern}')
+        print(f"No files matching {args.pattern}")
 
 
 def fix_cmd(lai: LAI, args):
-    print(f'Fixing: {args.path}')
-    if args.type in ('lint', 'all'):
-        print('Running linter...')
+    print(f"Fixing: {args.path}")
+    if args.type in ("lint", "all"):
+        print("Running linter...")
         print(lai.tools.lint_file(args.path, fix=args.auto))
-    if args.type in ('format', 'all'):
-        print('Formatting code...')
+    if args.type in ("format", "all"):
+        print("Formatting code...")
         print(lai.tools.format_code(args.path))
-    if args.type in ('imports', 'all'):
-        print('Organizing imports...')
+    if args.type in ("imports", "all"):
+        print("Organizing imports...")
         print(lai.tools.find_unused_imports(args.path))
-    if args.type in ('types', 'all'):
-        print('Checking types...')
+    if args.type in ("types", "all"):
+        print("Checking types...")
         print(lai.tools.check_types(args.path))
 
 
@@ -1731,54 +1731,54 @@ def review_cmd(lai: LAI, args):
         target = args.path
         if os.path.isdir(target):
             rag.add_directory(
-                'review', target, extensions=('.py', '.js', '.ts', '.go', '.rs', '.md')
+                "review", target, extensions=(".py", ".js", ".ts", ".go", ".rs", ".md")
             )
         elif os.path.isfile(target):
-            rag.add_file('review', target)
+            rag.add_file("review", target)
     except Exception:
         pass
     path = args.path
     if not os.path.exists(path):
-        print(f'Error: path not found: {path}')
+        print(f"Error: path not found: {path}")
         return
 
     if os.path.isfile(path):
         files = [path]
     else:
         files = []
-        skip = {'__pycache__', 'node_modules', '.git', 'venv', 'env', '.venv', '.ruff_cache'}
+        skip = {"__pycache__", "node_modules", ".git", "venv", "env", ".venv", ".ruff_cache"}
         for root, dirs, names in os.walk(path):
-            dirs[:] = [d for d in dirs if d not in skip and not d.startswith('.')]
+            dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
             for name in names:
                 if name.endswith(
                     (
-                        '.py',
-                        '.js',
-                        '.ts',
-                        '.go',
-                        '.rs',
-                        '.sh',
-                        '.md',
-                        '.yaml',
-                        '.yml',
-                        '.json',
-                        '.toml',
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".go",
+                        ".rs",
+                        ".sh",
+                        ".md",
+                        ".yaml",
+                        ".yml",
+                        ".json",
+                        ".toml",
                     )
                 ):
                     files.append(os.path.join(root, name))
 
     if not files:
-        print('No reviewable files found.')
+        print("No reviewable files found.")
         return
 
-    print(f'Reviewing {len(files)} file(s), focus: {args.focus}')
+    print(f"Reviewing {len(files)} file(s), focus: {args.focus}")
     all_results = []
     for filepath in files:
         try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as handle:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as handle:
                 lines = handle.read().splitlines()
         except OSError as exc:
-            print(f'Skipping {filepath}: {exc}')
+            print(f"Skipping {filepath}: {exc}")
             continue
         if not lines:
             continue
@@ -1787,7 +1787,7 @@ def review_cmd(lai: LAI, args):
         file_findings = []
         for start in range(0, len(lines), chunk_size):
             chunk = lines[start : start + chunk_size]
-            numbered = '\n'.join(f'{start + i + 1:4d}: {line}' for i, line in enumerate(chunk))
+            numbered = "\n".join(f"{start + i + 1:4d}: {line}" for i, line in enumerate(chunk))
             prompt = f"""You are a senior code reviewer.
 File: {filepath}
 Focus: {args.focus}
@@ -1803,58 +1803,56 @@ Code:
 {numbered}
 """
             result = lai.chat(prompt, stream=False, thinking=False, temp=0.1, max_tokens=1200)
-            if result and not result.startswith('Error:'):
+            if result and not result.startswith("Error:"):
                 file_findings.append(result.strip())
 
         if file_findings:
-            all_results.append({'file': filepath, 'findings': file_findings})
+            all_results.append({"file": filepath, "findings": file_findings})
 
-    if args.format == 'json':
+    if args.format == "json":
         print(json.dumps(all_results, indent=2, ensure_ascii=False))
         return
 
-    if args.format == 'sarif':
+    if args.format == "sarif":
         sarif = {
-            'version': '2.1.0',
-            '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
-            'runs': [
+            "version": "2.1.0",
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "runs": [
                 {
-                    'tool': {
-                        'driver': {
-                            'name': 'lai-review',
-                            'version': get_version(),
-                            'informationUri': 'https://github.com/kubuntu/lai',
-                            'rules': [],
+                    "tool": {
+                        "driver": {
+                            "name": "lai-review",
+                            "version": get_version(),
+                            "informationUri": "https://github.com/kubuntu/lai",
+                            "rules": [],
                         }
                     },
-                    'results': [],
+                    "results": [],
                 }
             ],
         }
         rule_id = 0
         for entry in all_results:
-            for finding_text in entry['findings']:
+            for finding_text in entry["findings"]:
                 # Parse findings for SARIF (simplified)
-                lines = finding_text.strip().split('\n')
+                lines = finding_text.strip().split("\n")
                 for line in lines:
-                    if 'P0' in line or 'P1' in line or 'P2' in line:
+                    if "P0" in line or "P1" in line or "P2" in line:
                         rule_id += 1
-                        sarif['runs'][0]['results'].append(
+                        sarif["runs"][0]["results"].append(
                             {
-                                'ruleId': f'LAI-{rule_id:04d}',
-                                'level': (
-                                    'error'
-                                    if 'P0' in line
-                                    else 'warning'
-                                    if 'P1' in line
-                                    else 'note'
+                                "ruleId": f"LAI-{rule_id:04d}",
+                                "level": (
+                                    "error"
+                                    if "P0" in line
+                                    else "warning" if "P1" in line else "note"
                                 ),
-                                'message': {'text': line.strip()},
-                                'locations': [
+                                "message": {"text": line.strip()},
+                                "locations": [
                                     {
-                                        'physicalLocation': {
-                                            'artifactLocation': {'uri': entry['file']},
-                                            'region': {'startLine': 1},
+                                        "physicalLocation": {
+                                            "artifactLocation": {"uri": entry["file"]},
+                                            "region": {"startLine": 1},
                                         }
                                     }
                                 ],
@@ -1865,11 +1863,11 @@ Code:
 
     for entry in all_results:
         print(f'\n=== {entry["file"]} ===')
-        for finding in entry['findings']:
+        for finding in entry["findings"]:
             print(finding)
 
     if not all_results:
-        print('No issues found.')
+        print("No issues found.")
 
 
 def diff_cmd(lai: LAI, args):
@@ -1892,53 +1890,53 @@ def test_cmd(lai: LAI, args):
 
     pytest_args = [args.path]
     if args.pattern:
-        if any(ch in args.pattern for ch in '*?['):
-            matches = glob.glob(os.path.join(args.path, '**', args.pattern), recursive=True)
+        if any(ch in args.pattern for ch in "*?["):
+            matches = glob.glob(os.path.join(args.path, "**", args.pattern), recursive=True)
             pytest_args = matches or [args.path]
         else:
-            pytest_args += ['-k', args.pattern]
-    pytest_args.append('-v' if args.verbose else '-q')
+            pytest_args += ["-k", args.pattern]
+    pytest_args.append("-v" if args.verbose else "-q")
     if args.coverage:
-        pytest_args += ['--cov=.', '--cov-report=term-missing']
+        pytest_args += ["--cov=.", "--cov-report=term-missing"]
     sys.exit(pytest.main(pytest_args))
 
 
 def init_cmd(lai: LAI, args):
     project_types = {
-        'python': ['main.py', 'requirements.txt', 'README.md'],
-        'fastapi': ['main.py', 'requirements.txt', 'README.md', 'Dockerfile'],
-        'flask': ['app.py', 'requirements.txt', 'README.md'],
-        'django': ['manage.py', 'settings.py', 'requirements.txt'],
-        'react': ['package.json', 'src/App.jsx', 'public/index.html'],
-        'vue': ['package.json', 'src/App.vue', 'index.html'],
-        'svelte': ['package.json', 'src/App.svelte', 'index.html'],
-        'cli': ['main.py', 'cli.py', 'requirements.txt'],
-        'lib': ['src/__init__.py', 'pyproject.toml', 'README.md'],
+        "python": ["main.py", "requirements.txt", "README.md"],
+        "fastapi": ["main.py", "requirements.txt", "README.md", "Dockerfile"],
+        "flask": ["app.py", "requirements.txt", "README.md"],
+        "django": ["manage.py", "settings.py", "requirements.txt"],
+        "react": ["package.json", "src/App.jsx", "public/index.html"],
+        "vue": ["package.json", "src/App.vue", "index.html"],
+        "svelte": ["package.json", "src/App.svelte", "index.html"],
+        "cli": ["main.py", "cli.py", "requirements.txt"],
+        "lib": ["src/__init__.py", "pyproject.toml", "README.md"],
     }
-    files = project_types.get(args.type, ['main.py', 'README.md'])
+    files = project_types.get(args.type, ["main.py", "README.md"])
     os.makedirs(args.path, exist_ok=True)
     for f in files:
         path = os.path.join(args.path, f)
         if not os.path.exists(path):
-            with open(path, 'w') as f:
-                f.write(f'# {args.name or args.type}\n')
+            with open(path, "w") as f:
+                f.write(f"# {args.name or args.type}\n")
     if args.git:
-        subprocess.run(['git', 'init'], cwd=args.path)
-    print(f'Initialized {args.type} project: {args.name} at {args.path}')
+        subprocess.run(["git", "init"], cwd=args.path)
+    print(f"Initialized {args.type} project: {args.name} at {args.path}")
 
 
 def project_cmd(lai: LAI, args):
     """Generate a complete project from a natural language description."""
-    description = ' '.join(args.description) if args.description else ''
+    description = " ".join(args.description) if args.description else ""
     if not description:
-        print('Error: No project description provided')
+        print("Error: No project description provided")
         return
 
-    path = args.path or '.'
+    path = args.path or "."
     os.makedirs(path, exist_ok=True)
 
-    print('🎯 Analyzing project description...')
-    print(f'📁 Target path: {os.path.abspath(path)}')
+    print("🎯 Analyzing project description...")
+    print(f"📁 Target path: {os.path.abspath(path)}")
 
     # Step 1: Analyze the description and create a project plan
     plan_prompt = f"""Analyze this project description and create a detailed project plan.
@@ -1968,16 +1966,16 @@ Output ONLY a JSON object with this structure:
 
 The plan should be appropriate for the described project. Include all necessary files for a production-ready project."""
 
-    print('🤖 Generating project plan...')
+    print("🤖 Generating project plan...")
     plan_response = lai.chat(plan_prompt, stream=False, thinking=False, temp=0.1, max_tokens=2048)
 
     # Extract JSON from response
     import re
 
-    json_match = re.search(r'\{.*\}', plan_response, re.DOTALL)
+    json_match = re.search(r"\{.*\}", plan_response, re.DOTALL)
     if not json_match:
-        print('❌ Failed to generate project plan')
-        print(f'Raw response: {plan_response[:500]}')
+        print("❌ Failed to generate project plan")
+        print(f"Raw response: {plan_response[:500]}")
         return
 
     try:
@@ -1985,8 +1983,8 @@ The plan should be appropriate for the described project. Include all necessary 
 
         plan = json.loads(json_match.group(0))
     except json.JSONDecodeError as e:
-        print(f'❌ Failed to parse project plan: {e}')
-        print(f'Raw: {plan_response[:500]}')
+        print(f"❌ Failed to parse project plan: {e}")
+        print(f"Raw: {plan_response[:500]}")
         return
 
     print(
@@ -1996,13 +1994,13 @@ The plan should be appropriate for the described project. Include all necessary 
     print(f'📄 Files to generate: {len(plan.get("files", []))}')
 
     if not args.yes and not args.yolo:
-        confirm = input('\nProceed with generation? (y/n): ')
-        if confirm.lower() != 'y':
-            print('Cancelled.')
+        confirm = input("\nProceed with generation? (y/n): ")
+        if confirm.lower() != "y":
+            print("Cancelled.")
             return
 
     # Step 2: Generate each file
-    print('\n🔨 Generating project files...')
+    print("\n🔨 Generating project files...")
 
     # Clear conversation history for clean generation
     lai.conversation_history.clear()
@@ -2010,18 +2008,18 @@ The plan should be appropriate for the described project. Include all necessary 
     success_count = 0
     failed_count = 0
 
-    for i, file_info in enumerate(plan.get('files', []), 1):
-        file_path = file_info.get('path', '')
-        purpose = file_info.get('purpose', '')
+    for i, file_info in enumerate(plan.get("files", []), 1):
+        file_path = file_info.get("path", "")
+        purpose = file_info.get("purpose", "")
 
         if not file_path:
             continue
 
         print(f'\n[{i}/{len(plan.get("files", []))}] Generating {file_path}...')
-        print(f'   Purpose: {purpose}')
+        print(f"   Purpose: {purpose}")
 
-        is_python = file_path.endswith('.py')
-        language = 'Python' if is_python else 'the exact file format'
+        is_python = file_path.endswith(".py")
+        language = "Python" if is_python else "the exact file format"
         file_prompt = f"""Generate ONLY the complete content for {file_path}.
 
 Purpose: {purpose}
@@ -2048,121 +2046,121 @@ Requirements:
                 file_prompt, stream=False, thinking=False, temp=0.0, max_tokens=4096
             )
             generated_code = generated_code.strip()
-            if generated_code.startswith('```'):
+            if generated_code.startswith("```"):
                 lines = generated_code.splitlines()
-                if lines and lines[0].startswith('```'):
+                if lines and lines[0].startswith("```"):
                     lines = lines[1:]
-                if lines and lines[-1].strip() == '```':
+                if lines and lines[-1].strip() == "```":
                     lines = lines[:-1]
-                generated_code = '\n'.join(lines).strip()
+                generated_code = "\n".join(lines).strip()
 
             if is_python:
                 try:
-                    compile(generated_code, file_path, 'exec')
+                    compile(generated_code, file_path, "exec")
                 except SyntaxError as exc:
-                    print(f'   ❌ Syntax error in {file_path}: {exc}')
+                    print(f"   ❌ Syntax error in {file_path}: {exc}")
                     failed_count += 1
                     continue
 
             target = os.path.join(path, file_path)
             os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
-            with open(target, 'w', encoding='utf-8') as handle:
+            with open(target, "w", encoding="utf-8") as handle:
                 handle.write(generated_code)
-                if generated_code and not generated_code.endswith('\n'):
-                    handle.write('\n')
-            print(f'   ✅ Generated {file_path}')
+                if generated_code and not generated_code.endswith("\n"):
+                    handle.write("\n")
+            print(f"   ✅ Generated {file_path}")
             success_count += 1
         except Exception as exc:
-            print(f'   ❌ Failed: {exc}')
+            print(f"   ❌ Failed: {exc}")
             failed_count += 1
 
     # Step 3: Initialize git if requested
     if args.git:
-        subprocess.run(['git', 'init'], cwd=path)
-        print('\n📦 Git repository initialized')
+        subprocess.run(["git", "init"], cwd=path)
+        print("\n📦 Git repository initialized")
 
     # Step 4: Install dependencies if requirements.txt exists
-    req_path = os.path.join(path, 'requirements.txt')
+    req_path = os.path.join(path, "requirements.txt")
     if os.path.exists(req_path) and args.install:
-        print('\n📦 Installing dependencies...')
-        subprocess.run(['pip', 'install', '-r', req_path], cwd=path)
+        print("\n📦 Installing dependencies...")
+        subprocess.run(["pip", "install", "-r", req_path], cwd=path)
 
     # Summary
     print(f'\n{"=" * 50}')
-    print('🎉 Project generation complete!')
-    print(f'✅ Successful: {success_count}')
-    print(f'❌ Failed: {failed_count}')
-    print(f'📁 Location: {os.path.abspath(path)}')
+    print("🎉 Project generation complete!")
+    print(f"✅ Successful: {success_count}")
+    print(f"❌ Failed: {failed_count}")
+    print(f"📁 Location: {os.path.abspath(path)}")
 
     if failed_count == 0:
-        print('\n🚀 Ready to run! Try:')
-        print(f'   cd {path}')
-        if os.path.exists(os.path.join(path, 'requirements.txt')):
-            print('   pip install -r requirements.txt')
-        print('   python main.py  # or whatever the entry point is')
+        print("\n🚀 Ready to run! Try:")
+        print(f"   cd {path}")
+        if os.path.exists(os.path.join(path, "requirements.txt")):
+            print("   pip install -r requirements.txt")
+        print("   python main.py  # or whatever the entry point is")
 
 
 def config_cmd(lai: LAI, args):
-    config_file = os.path.expanduser('~/.lai/config.json') if args.global_ else './.lai/config.json'
+    config_file = os.path.expanduser("~/.lai/config.json") if args.global_ else "./.lai/config.json"
     os.makedirs(os.path.dirname(config_file), exist_ok=True)
     config = {}
     if os.path.exists(config_file):
         with open(config_file) as f:
             config = json.load(f)
-    if args.action == 'get':
+    if args.action == "get":
         print(json.dumps(config.get(args.key, {}), indent=2))
-    elif args.action == 'set':
-        config[args.key] = json.loads(args.value) if args.value.startswith('{') else args.value
-        with open(config_file, 'w') as f:
+    elif args.action == "set":
+        config[args.key] = json.loads(args.value) if args.value.startswith("{") else args.value
+        with open(config_file, "w") as f:
             json.dump(config, f, indent=2)
-    elif args.action == 'list':
+    elif args.action == "list":
         print(json.dumps(config, indent=2))
-    elif args.action == 'edit':
-        editor = os.environ.get('EDITOR', 'vim')
+    elif args.action == "edit":
+        editor = os.environ.get("EDITOR", "vim")
         subprocess.run([editor, config_file], check=False)
 
 
 def install_cmd(lai: LAI, args):
-    pip = [sys.executable, '-m', 'pip']
+    pip = [sys.executable, "-m", "pip"]
     if args.requirements:
-        subprocess.run(pip + ['install', '-r', args.requirements], check=True)
+        subprocess.run(pip + ["install", "-r", args.requirements], check=True)
     if args.packages:
-        subprocess.run(pip + ['install'] + args.packages, check=True)
+        subprocess.run(pip + ["install"] + args.packages, check=True)
     if args.dev:
         # `pip install --dev` is not a valid flag. Editable install with the
         # project's optional dev dependencies is the portable equivalent.
-        subprocess.run(pip + ['install', '-e', '.[dev]'], check=True)
+        subprocess.run(pip + ["install", "-e", ".[dev]"], check=True)
     if not (args.requirements or args.packages or args.dev):
-        print('Nothing to install. Use packages, --requirements, or --dev.')
+        print("Nothing to install. Use packages, --requirements, or --dev.")
 
 
 def update_cmd(lai: LAI, args):
-    pip = [sys.executable, '-m', 'pip']
+    pip = [sys.executable, "-m", "pip"]
     if args.all:
         result = subprocess.run(
-            pip + ['list', '--outdated', '--format=freeze'],
+            pip + ["list", "--outdated", "--format=freeze"],
             capture_output=True,
             text=True,
         )
         print(result.stdout or result.stderr)
-        outdated = [line.split('==', 1)[0] for line in result.stdout.splitlines() if '==' in line]
+        outdated = [line.split("==", 1)[0] for line in result.stdout.splitlines() if "==" in line]
         if outdated:
-            cmd = pip + ['install', '--upgrade'] + outdated
+            cmd = pip + ["install", "--upgrade"] + outdated
             if args.dry_run:
-                print('DRY RUN:', ' '.join(cmd))
+                print("DRY RUN:", " ".join(cmd))
             else:
                 subprocess.run(cmd, check=True)
     if args.packages:
-        cmd = pip + ['install', '--upgrade'] + args.packages
+        cmd = pip + ["install", "--upgrade"] + args.packages
         if args.dry_run:
-            print('DRY RUN:', ' '.join(cmd))
+            print("DRY RUN:", " ".join(cmd))
         else:
             subprocess.run(cmd, check=True)
 
 
 def exec_cmd(lai: LAI, args):
     cwd = args.cwd or os.getcwd()
-    cmd = args.command if isinstance(args.command, str) else ' '.join(args.command)
+    cmd = args.command if isinstance(args.command, str) else " ".join(args.command)
     result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)  # nosec B602
     print(result.stdout)
     if result.stderr:
@@ -2170,38 +2168,38 @@ def exec_cmd(lai: LAI, args):
 
 
 def doctor_cmd(lai: LAI, args):
-    print('Diagnosing environment...')
+    print("Diagnosing environment...")
     checks = [
-        ('Python', ['python3', '--version']),
-        ('Git', ['git', '--version']),
-        ('Docker', ['docker', '--version']),
-        ('Node', ['node', '--version']),
-        ('Docker Compose', ['docker-compose', '--version']),
+        ("Python", ["python3", "--version"]),
+        ("Git", ["git", "--version"]),
+        ("Docker", ["docker", "--version"]),
+        ("Node", ["node", "--version"]),
+        ("Docker Compose", ["docker-compose", "--version"]),
     ]
     for name, cmd in checks:
         try:
             subprocess.run(cmd, shell=False, check=True, capture_output=True)
-            print(f'✓ {name}')
+            print(f"✓ {name}")
         except Exception:
-            print(f'✗ {name} - NOT FOUND')
+            print(f"✗ {name} - NOT FOUND")
             if args.fix:
-                print(f'  Would install {name}...')
+                print(f"  Would install {name}...")
     if args.fix:
-        print('Auto-fix not yet implemented')
+        print("Auto-fix not yet implemented")
 
 
 def clean_cmd(lai: LAI, args):
     patterns = []
     if args.all or args.cache:
         patterns += [
-            '**/__pycache__',
-            '**/.pytest_cache',
-            '**/.mypy_cache',
-            '**/.ruff_cache',
-            '**/*.pyc',
+            "**/__pycache__",
+            "**/.pytest_cache",
+            "**/.mypy_cache",
+            "**/.ruff_cache",
+            "**/*.pyc",
         ]
     if args.all or args.build:
-        patterns += ['**/build', '**/dist', '**/*.egg-info']
+        patterns += ["**/build", "**/dist", "**/*.egg-info"]
     removed = 0
     for pattern in patterns:
         for path in glob.glob(pattern, recursive=True):
@@ -2212,10 +2210,10 @@ def clean_cmd(lai: LAI, args):
                     os.remove(path)
                 except OSError:
                     pass
-            print(f'Removed: {path}')
+            print(f"Removed: {path}")
             removed += 1
     if not removed:
-        print('Nothing to clean.')
+        print("Nothing to clean.")
 
 
 def ocr_cmd(args):
@@ -2224,38 +2222,38 @@ def ocr_cmd(args):
 
     image_path = args.image
     if not os.path.exists(image_path):
-        print(f'ERROR: Imagen no encontrada: {image_path}', file=sys.stderr)
+        print(f"ERROR: Imagen no encontrada: {image_path}", file=sys.stderr)
         sys.exit(1)
 
-    lang = getattr(args, 'lang', 'spa+eng')
+    lang = getattr(args, "lang", "spa+eng")
     try:
         result = subprocess.run(
-            ['tesseract', image_path, 'stdout', '-l', lang],
+            ["tesseract", image_path, "stdout", "-l", lang],
             capture_output=True,
             text=True,
             timeout=60,
         )
         if result.returncode != 0:
-            print(f'ERROR: tesseract falló: {result.stderr}', file=sys.stderr)
+            print(f"ERROR: tesseract falló: {result.stderr}", file=sys.stderr)
             sys.exit(1)
         text = result.stdout.strip()
         if not text:
-            print('(no se detectó texto en la imagen)')
+            print("(no se detectó texto en la imagen)")
             return
-        if getattr(args, 'output', None):
-            with open(args.output, 'w', encoding='utf-8') as f:
-                f.write(text + '\n')
-            print(f'Texto guardado en: {args.output}')
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+            print(f"Texto guardado en: {args.output}")
         else:
             print(text)
     except FileNotFoundError:
         print(
-            'ERROR: tesseract no está instalado. Instálalo con: sudo apt install tesseract-ocr',
+            "ERROR: tesseract no está instalado. Instálalo con: sudo apt install tesseract-ocr",
             file=sys.stderr,
         )
         sys.exit(1)
     except subprocess.TimeoutExpired:
-        print('ERROR: tesseract excedió el tiempo de espera (60s)', file=sys.stderr)
+        print("ERROR: tesseract excedió el tiempo de espera (60s)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -2277,12 +2275,12 @@ def tools_cmd(lai: LAI, args):
 
 def version_cmd():
     """Show lai version."""
-    print(f'lai {get_version()}')
+    print(f"lai {get_version()}")
 
 
 def completion_cmd(args):
     """Generate shell completion script."""
-    shell = getattr(args, 'shell', 'bash')
+    shell = getattr(args, "shell", "bash")
     print(_generate_completion(shell))
 
 
@@ -2293,7 +2291,7 @@ def completion_cmd(args):
 
 def _generate_completion(shell: str) -> str:
     """Generate shell completion script for lai."""
-    if shell == 'bash':  # noqa: SIM116
+    if shell == "bash":  # noqa: SIM116
         return """# lai bash completion
 _lai_complete() {
     local cur prev opts
@@ -2364,7 +2362,7 @@ _lai_complete() {
 }
 complete -F _lai_complete lai
 """
-    elif shell == 'zsh':
+    elif shell == "zsh":
         return """# lai zsh completion
 #compdef lai
 _lai() {
@@ -2469,7 +2467,7 @@ _lai() {
 }
 compdef _lai lai
 """
-    elif shell == 'fish':
+    elif shell == "fish":
         return """# lai fish completion
 function __fish_lai_complete
     set -l commands chat generate code think auto run serve status models tools search find fix repair review diff test init project config install update exec doctor clean version
@@ -2515,13 +2513,13 @@ end
 complete -c lai -f -a "(__fish_lai_complete)"
 """
     else:
-        return f'Unsupported shell: {shell}'
+        return f"Unsupported shell: {shell}"
 
 
 def cli():
     parser = argparse.ArgumentParser(
-        prog='lai',
-        description='Local AI CLI Tool - Qwen3-8B via llama.cpp',
+        prog="lai",
+        description="Local AI CLI Tool - Qwen3-8B via llama.cpp",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -2542,322 +2540,324 @@ Examples:
         """,
     )
 
+    parser.add_argument("--version", action="version", version=f"lai {get_version()}")
+    parser.add_argument("-m", "--model", default="qwen3-8b", help="Model to use")
     parser.add_argument(
-        '--version', action='version', version=f'lai {get_version()}'
-    )
-    parser.add_argument('-m', '--model', default='qwen3-8b', help='Model to use')
-    parser.add_argument(
-        '-u', '--base-url', default='http://localhost:8080/v1', help='Base URL for API'
+        "-u", "--base-url", default="http://localhost:8080/v1", help="Base URL for API"
     )
     parser.add_argument(
-        '--provider',
-        default='ollama',
-        choices=['ollama', 'llama-cpp', 'openai', 'anthropic', 'gemini', 'custom'],
-        help='Model provider (default: ollama)',
+        "--provider",
+        default="ollama",
+        choices=["ollama", "llama-cpp", "openai", "anthropic", "gemini", "custom"],
+        help="Model provider (default: ollama)",
     )
     parser.add_argument(
-        '--api-key', default=None, help='API key for remote providers (default: None)'
+        "--api-key", default=None, help="API key for remote providers (default: None)"
     )
     parser.add_argument(
-        '--allow-remote',
-        action='store_true',
-        help='Allow non-local endpoints (bypasses Rule 4 local-only guard)',
+        "--allow-remote",
+        action="store_true",
+        help="Allow non-local endpoints (bypasses Rule 4 local-only guard)",
     )
     parser.add_argument(
-        '-l', '--lang', default='es', choices=['es', 'en'], help='Language (es|en, default: es)'
+        "-l", "--lang", default="es", choices=["es", "en"], help="Language (es|en, default: es)"
     )
-    parser.add_argument('-t', '--temp', type=float, default=0.7, help='Temperature')
-    parser.add_argument('--max-tokens', type=int, default=4096, help='Max tokens')
-    parser.add_argument('--stream', action='store_true', help='Stream output')
-    parser.add_argument('--no-stream', action='store_true', help='Disable streaming')
-    parser.add_argument('--thinking', action='store_true', help='Enable thinking mode')
-    parser.add_argument('--no-thinking', action='store_true', help='Disable thinking mode')
-    parser.add_argument('--tools', action='store_true', help='Enable tools')
-    parser.add_argument('--no-tools', action='store_true', help='Disable tools')
-    parser.add_argument('--yolo', action='store_true', help='YOLO mode: no confirmations, no approvals, full autonomy')
-    parser.add_argument('--auto', action='store_true', help='Auto mode')
-    parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output')
-    parser.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
+    parser.add_argument("-t", "--temp", type=float, default=0.7, help="Temperature")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="Max tokens")
+    parser.add_argument("--stream", action="store_true", help="Stream output")
+    parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
+    parser.add_argument("--thinking", action="store_true", help="Enable thinking mode")
+    parser.add_argument("--no-thinking", action="store_true", help="Disable thinking mode")
+    parser.add_argument("--tools", action="store_true", help="Enable tools")
+    parser.add_argument("--no-tools", action="store_true", help="Disable tools")
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        help="YOLO mode: no confirmations, no approvals, full autonomy",
+    )
+    parser.add_argument("--auto", action="store_true", help="Auto mode")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Verbose output")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode")
 
-    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Chat
-    chat_parser = subparsers.add_parser('chat', help='Chat with AI')
-    chat_parser.add_argument('prompt', nargs='*', help='Prompt')
-    chat_parser.add_argument('-i', '--interactive', action='store_true', help='Interactive REPL')
-    chat_parser.add_argument('--stream', action='store_true', help='Stream output')
-    chat_parser.add_argument('--no-stream', action='store_true', help='Disable streaming')
-    chat_parser.add_argument('--thinking', action='store_true', help='Enable thinking mode')
-    chat_parser.add_argument('--no-thinking', action='store_true', help='Disable thinking mode')
-    chat_parser.add_argument('--temp', type=float, help='Temperature')
-    chat_parser.add_argument('--max-tokens', type=int, help='Max tokens')
+    chat_parser = subparsers.add_parser("chat", help="Chat with AI")
+    chat_parser.add_argument("prompt", nargs="*", help="Prompt")
+    chat_parser.add_argument("-i", "--interactive", action="store_true", help="Interactive REPL")
+    chat_parser.add_argument("--stream", action="store_true", help="Stream output")
+    chat_parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
+    chat_parser.add_argument("--thinking", action="store_true", help="Enable thinking mode")
+    chat_parser.add_argument("--no-thinking", action="store_true", help="Disable thinking mode")
+    chat_parser.add_argument("--temp", type=float, help="Temperature")
+    chat_parser.add_argument("--max-tokens", type=int, help="Max tokens")
     chat_parser.set_defaults(func=chat_cmd)
 
     # Generate
-    gen_parser = subparsers.add_parser('generate', help='Generate text')
-    gen_parser.add_argument('prompt', nargs='*', help='Prompt')
+    gen_parser = subparsers.add_parser("generate", help="Generate text")
+    gen_parser.add_argument("prompt", nargs="*", help="Prompt")
     gen_parser.set_defaults(func=generate_cmd)
 
     # Code
-    code_parser = subparsers.add_parser('code', help='Generate code')
-    code_parser.add_argument('description', help='Description')
-    code_parser.add_argument('filename', help='Output file')
-    code_parser.add_argument('--auto', action='store_true')
-    code_parser.add_argument('--yolo', action='store_true')
+    code_parser = subparsers.add_parser("code", help="Generate code")
+    code_parser.add_argument("description", help="Description")
+    code_parser.add_argument("filename", help="Output file")
+    code_parser.add_argument("--auto", action="store_true")
+    code_parser.add_argument("--yolo", action="store_true")
     code_parser.add_argument(
-        '--max-iterations', type=int, default=3, help='Max iterations for code generation'
+        "--max-iterations", type=int, default=3, help="Max iterations for code generation"
     )
     code_parser.set_defaults(func=lambda a: code_cmd(get_lai_instance(), a))
 
     # Think
-    think_parser = subparsers.add_parser('think', help='Thinking mode')
-    think_parser.add_argument('problem', help='Problem')
+    think_parser = subparsers.add_parser("think", help="Thinking mode")
+    think_parser.add_argument("problem", help="Problem")
     think_parser.set_defaults(func=lambda a: think_cmd(get_lai_instance(), a))
 
     # Auto
-    auto_parser = subparsers.add_parser('auto', help='Auto mode')
-    auto_parser.add_argument('goal', help='Goal')
-    auto_parser.add_argument('--max-iterations', type=int, default=10, help='Max iterations')
+    auto_parser = subparsers.add_parser("auto", help="Auto mode")
+    auto_parser.add_argument("goal", help="Goal")
+    auto_parser.add_argument("--max-iterations", type=int, default=10, help="Max iterations")
     auto_parser.add_argument(
-        '--max-turns', type=int, default=20, help='Max tool turns (default: 20)'
+        "--max-turns", type=int, default=20, help="Max tool turns (default: 20)"
     )
-    auto_parser.add_argument('--no-cost', action='store_true', help='Disable cost tracking')
+    auto_parser.add_argument("--no-cost", action="store_true", help="Disable cost tracking")
     auto_parser.set_defaults(func=lambda a: auto_cmd(get_lai_instance(), a))
 
     # Run
-    run_parser = subparsers.add_parser('run', help='Run script')
-    run_parser.add_argument('script', help='Script file')
+    run_parser = subparsers.add_parser("run", help="Run script")
+    run_parser.add_argument("script", help="Script file")
     run_parser.set_defaults(func=lambda a: run_cmd(get_lai_instance(), a))
 
     # Serve
-    serve_parser = subparsers.add_parser('serve', help='Start API server')
+    serve_parser = subparsers.add_parser("serve", help="Start API server")
     serve_parser.add_argument(
-        '--host', default='127.0.0.1', help='Bind address (default: loopback)'
+        "--host", default="127.0.0.1", help="Bind address (default: loopback)"
     )
-    serve_parser.add_argument('--port', type=int, default=8082, help='Port (default: 8082)')
+    serve_parser.add_argument("--port", type=int, default=8082, help="Port (default: 8082)")
     serve_parser.set_defaults(func=lambda a: serve_cmd(get_lai_instance(), a))
 
     # Status
-    status_parser = subparsers.add_parser('status', help='Check status')
+    status_parser = subparsers.add_parser("status", help="Check status")
     status_parser.set_defaults(func=lambda a: status_cmd(get_lai_instance(), a))
 
     # Models
-    models_parser = subparsers.add_parser('models', help='List models')
+    models_parser = subparsers.add_parser("models", help="List models")
     models_parser.set_defaults(func=lambda a: models_cmd(get_lai_instance(), a))
 
     # Tools
-    tools_parser = subparsers.add_parser('tools', help='List tools')
+    tools_parser = subparsers.add_parser("tools", help="List tools")
     tools_parser.set_defaults(func=lambda a: tools_cmd(get_lai_instance(), a))
 
     # Version
-    version_parser = subparsers.add_parser('version', help='Show version')
+    version_parser = subparsers.add_parser("version", help="Show version")
     version_parser.set_defaults(func=lambda _: version_cmd())
 
     # Completion
-    completion_parser = subparsers.add_parser('completion', help='Generate shell completion script')
+    completion_parser = subparsers.add_parser("completion", help="Generate shell completion script")
     completion_parser.add_argument(
-        'shell',
-        choices=['bash', 'zsh', 'fish'],
-        default='bash',
-        nargs='?',
-        help='Shell type (bash|zsh|fish)',
+        "shell",
+        choices=["bash", "zsh", "fish"],
+        default="bash",
+        nargs="?",
+        help="Shell type (bash|zsh|fish)",
     )
     completion_parser.set_defaults(func=lambda a: completion_cmd(a))
 
     # Search
-    search_parser = subparsers.add_parser('search', help='Search code/files')
-    search_parser.add_argument('pattern', help='Pattern to search')
-    search_parser.add_argument('path', nargs='?', default='.', help='Path to search')
-    search_parser.add_argument('--type', help='File type filter (e.g. py, js, md)')
-    search_parser.add_argument('-i', '--ignore-case', action='store_true', help='Case insensitive')
-    search_parser.add_argument('-r', '--recursive', action='store_true', help='Recursive search')
+    search_parser = subparsers.add_parser("search", help="Search code/files")
+    search_parser.add_argument("pattern", help="Pattern to search")
+    search_parser.add_argument("path", nargs="?", default=".", help="Path to search")
+    search_parser.add_argument("--type", help="File type filter (e.g. py, js, md)")
+    search_parser.add_argument("-i", "--ignore-case", action="store_true", help="Case insensitive")
+    search_parser.add_argument("-r", "--recursive", action="store_true", help="Recursive search")
     search_parser.set_defaults(func=lambda a: search_cmd(get_lai_instance(), a))
 
     # Find
-    find_parser = subparsers.add_parser('find', help='Find files')
-    find_parser.add_argument('pattern', help='File name pattern')
-    find_parser.add_argument('path', nargs='?', default='.', help='Path to search')
+    find_parser = subparsers.add_parser("find", help="Find files")
+    find_parser.add_argument("pattern", help="File name pattern")
+    find_parser.add_argument("path", nargs="?", default=".", help="Path to search")
     find_parser.add_argument(
-        '--type', choices=['f', 'd', 'l'], help='File type (f=file, d=dir, l=link)'
+        "--type", choices=["f", "d", "l"], help="File type (f=file, d=dir, l=link)"
     )
-    find_parser.add_argument('--max-depth', type=int, help='Max depth')
+    find_parser.add_argument("--max-depth", type=int, help="Max depth")
     find_parser.set_defaults(func=lambda a: find_cmd(get_lai_instance(), a))
 
     # Fix
-    fix_parser = subparsers.add_parser('fix', help='Fix code issues')
-    fix_parser.add_argument('path', help='File or directory to fix')
-    fix_parser.add_argument('--auto', action='store_true', help='Auto-fix without confirmation')
+    fix_parser = subparsers.add_parser("fix", help="Fix code issues")
+    fix_parser.add_argument("path", help="File or directory to fix")
+    fix_parser.add_argument("--auto", action="store_true", help="Auto-fix without confirmation")
     fix_parser.add_argument(
-        '--type',
-        choices=['lint', 'format', 'imports', 'types', 'all'],
-        default='all',
-        help='Type of fix',
+        "--type",
+        choices=["lint", "format", "imports", "types", "all"],
+        default="all",
+        help="Type of fix",
     )
     fix_parser.set_defaults(func=lambda a: fix_cmd(get_lai_instance(), a))
 
     # Fix (alias for fix)
-    fix_parser2 = subparsers.add_parser('repair', help='Alias for fix')
-    fix_parser2.add_argument('path', help='File or directory to repair')
-    fix_parser2.add_argument('--auto', action='store_true')
+    fix_parser2 = subparsers.add_parser("repair", help="Alias for fix")
+    fix_parser2.add_argument("path", help="File or directory to repair")
+    fix_parser2.add_argument("--auto", action="store_true")
     fix_parser2.set_defaults(func=lambda a: fix_cmd(get_lai_instance(), a))
 
     # Review
-    review_parser = subparsers.add_parser('review', help='Code review')
-    review_parser.add_argument('path', help='File or directory to review')
+    review_parser = subparsers.add_parser("review", help="Code review")
+    review_parser.add_argument("path", help="File or directory to review")
     review_parser.add_argument(
-        '--focus', choices=['security', 'performance', 'style', 'bugs', 'all'], default='all'
+        "--focus", choices=["security", "performance", "style", "bugs", "all"], default="all"
     )
     review_parser.add_argument(
-        '--format', choices=['text', 'json', 'markdown', 'sarif'], default='text'
+        "--format", choices=["text", "json", "markdown", "sarif"], default="text"
     )
     review_parser.set_defaults(func=lambda a: review_cmd(get_lai_instance(), a))
 
     # Diff
-    diff_parser = subparsers.add_parser('diff', help='Show diff')
-    diff_parser.add_argument('file1', help='First file')
-    diff_parser.add_argument('file2', help='Second file')
-    diff_parser.add_argument('--context', type=int, default=3, help='Context lines')
+    diff_parser = subparsers.add_parser("diff", help="Show diff")
+    diff_parser.add_argument("file1", help="First file")
+    diff_parser.add_argument("file2", help="Second file")
+    diff_parser.add_argument("--context", type=int, default=3, help="Context lines")
     diff_parser.set_defaults(func=lambda a: diff_cmd(get_lai_instance(), a))
 
     # Test
-    test_parser = subparsers.add_parser('test', help='Run tests')
-    test_parser.add_argument('path', nargs='?', default='.', help='Path to test')
-    test_parser.add_argument('--pattern', help='Test file pattern')
-    test_parser.add_argument('-v', '--verbose', action='store_true')
-    test_parser.add_argument('--coverage', action='store_true')
+    test_parser = subparsers.add_parser("test", help="Run tests")
+    test_parser.add_argument("path", nargs="?", default=".", help="Path to test")
+    test_parser.add_argument("--pattern", help="Test file pattern")
+    test_parser.add_argument("-v", "--verbose", action="store_true")
+    test_parser.add_argument("--coverage", action="store_true")
     test_parser.set_defaults(func=lambda a: test_cmd(get_lai_instance(), a))
 
     # Init
-    init_parser = subparsers.add_parser('init', help='Initialize project')
+    init_parser = subparsers.add_parser("init", help="Initialize project")
     init_parser.add_argument(
-        'type',
-        choices=['python', 'fastapi', 'flask', 'django', 'react', 'vue', 'svelte', 'cli', 'lib'],
-        help='Project type',
+        "type",
+        choices=["python", "fastapi", "flask", "django", "react", "vue", "svelte", "cli", "lib"],
+        help="Project type",
     )
-    init_parser.add_argument('name', nargs='?', help='Project name')
-    init_parser.add_argument('--path', default='.', help='Target directory')
-    init_parser.add_argument('--git', action='store_true', help='Initialize git repo')
+    init_parser.add_argument("name", nargs="?", help="Project name")
+    init_parser.add_argument("--path", default=".", help="Target directory")
+    init_parser.add_argument("--git", action="store_true", help="Initialize git repo")
     init_parser.set_defaults(func=lambda a: init_cmd(get_lai_instance(), a))
 
     # Project
     project_parser = subparsers.add_parser(
-        'project', help='Generate complete project from description'
+        "project", help="Generate complete project from description"
     )
-    project_parser.add_argument('description', nargs='+', help='Project description')
-    project_parser.add_argument('--path', default='.', help='Target directory')
-    project_parser.add_argument('--git', action='store_true', help='Initialize git repo')
+    project_parser.add_argument("description", nargs="+", help="Project description")
+    project_parser.add_argument("--path", default=".", help="Target directory")
+    project_parser.add_argument("--git", action="store_true", help="Initialize git repo")
     project_parser.add_argument(
-        '--install', action='store_true', help='Install dependencies after generation'
+        "--install", action="store_true", help="Install dependencies after generation"
     )
-    project_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
-    project_parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
+    project_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    project_parser.add_argument("--yolo", action="store_true", help="YOLO mode (no confirmations)")
     project_parser.set_defaults(func=lambda a: project_cmd(get_lai_instance(), a))
 
     # Config
-    config_parser = subparsers.add_parser('config', help='Manage configuration')
-    config_parser.add_argument('action', choices=['get', 'set', 'list', 'edit'], help='Action')
-    config_parser.add_argument('key', nargs='?', help='Config key')
-    config_parser.add_argument('value', nargs='?', help='Config value')
-    config_parser.add_argument('--global', action='store_true', help='Global config')
+    config_parser = subparsers.add_parser("config", help="Manage configuration")
+    config_parser.add_argument("action", choices=["get", "set", "list", "edit"], help="Action")
+    config_parser.add_argument("key", nargs="?", help="Config key")
+    config_parser.add_argument("value", nargs="?", help="Config value")
+    config_parser.add_argument("--global", action="store_true", help="Global config")
     config_parser.set_defaults(func=lambda a: config_cmd(get_lai_instance(), a))
 
     # Install
-    install_parser = subparsers.add_parser('install', help='Install dependencies')
-    install_parser.add_argument('packages', nargs='*', help='Packages to install')
-    install_parser.add_argument('--requirements', '-r', help='Requirements file')
-    install_parser.add_argument('--dev', action='store_true', help='Install dev dependencies')
+    install_parser = subparsers.add_parser("install", help="Install dependencies")
+    install_parser.add_argument("packages", nargs="*", help="Packages to install")
+    install_parser.add_argument("--requirements", "-r", help="Requirements file")
+    install_parser.add_argument("--dev", action="store_true", help="Install dev dependencies")
     install_parser.set_defaults(func=lambda a: install_cmd(get_lai_instance(), a))
 
     # Update
-    update_parser = subparsers.add_parser('update', help='Update dependencies')
-    update_parser.add_argument('packages', nargs='*', help='Packages to update')
-    update_parser.add_argument('--all', action='store_true', help='Update all')
-    update_parser.add_argument('--dry-run', action='store_true')
+    update_parser = subparsers.add_parser("update", help="Update dependencies")
+    update_parser.add_argument("packages", nargs="*", help="Packages to update")
+    update_parser.add_argument("--all", action="store_true", help="Update all")
+    update_parser.add_argument("--dry-run", action="store_true")
     update_parser.set_defaults(func=lambda a: update_cmd(get_lai_instance(), a))
 
     # Exec
-    exec_parser = subparsers.add_parser('exec', help='Execute command in project context')
-    exec_parser.add_argument('command', nargs=argparse.REMAINDER, help='Command to execute')
-    exec_parser.add_argument('--cwd', help='Working directory')
+    exec_parser = subparsers.add_parser("exec", help="Execute command in project context")
+    exec_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute")
+    exec_parser.add_argument("--cwd", help="Working directory")
     exec_parser.set_defaults(func=lambda a: exec_cmd(get_lai_instance(), a))
 
     # Doctor
-    doctor_parser = subparsers.add_parser('doctor', help='Diagnose environment')
-    doctor_parser.add_argument('--fix', action='store_true', help='Auto-fix issues')
+    doctor_parser = subparsers.add_parser("doctor", help="Diagnose environment")
+    doctor_parser.add_argument("--fix", action="store_true", help="Auto-fix issues")
     doctor_parser.set_defaults(func=lambda a: doctor_cmd(get_lai_instance(), a))
 
     # Clean
-    clean_parser = subparsers.add_parser('clean', help='Clean build artifacts')
-    clean_parser.add_argument('--all', action='store_true', help='Clean all')
-    clean_parser.add_argument('--cache', action='store_true', help='Clean cache')
-    clean_parser.add_argument('--build', action='store_true', help='Clean build artifacts')
+    clean_parser = subparsers.add_parser("clean", help="Clean build artifacts")
+    clean_parser.add_argument("--all", action="store_true", help="Clean all")
+    clean_parser.add_argument("--cache", action="store_true", help="Clean cache")
+    clean_parser.add_argument("--build", action="store_true", help="Clean build artifacts")
     clean_parser.set_defaults(func=lambda a: clean_cmd(get_lai_instance(), a))
 
     # OCR
     ocr_parser = subparsers.add_parser(
-        'ocr', help='Extraer texto de imagen con OCR local (tesseract)'
+        "ocr", help="Extraer texto de imagen con OCR local (tesseract)"
     )
-    ocr_parser.add_argument('image', help='Ruta a la imagen')
+    ocr_parser.add_argument("image", help="Ruta a la imagen")
     ocr_parser.add_argument(
-        '--lang', default='spa+eng', help='Idiomas para tesseract (default: spa+eng)'
+        "--lang", default="spa+eng", help="Idiomas para tesseract (default: spa+eng)"
     )
-    ocr_parser.add_argument('--output', '-o', help='Guardar texto extraído en archivo')
+    ocr_parser.add_argument("--output", "-o", help="Guardar texto extraído en archivo")
     ocr_parser.set_defaults(func=lambda a: ocr_cmd(a))
 
     # MCP
-    mcp_parser = subparsers.add_parser('mcp', help='Start MCP server exposing lai tools')
+    mcp_parser = subparsers.add_parser("mcp", help="Start MCP server exposing lai tools")
     mcp_parser.add_argument(
-        '--transport', default='stdio', choices=['stdio'], help='Transport (stdio only)'
+        "--transport", default="stdio", choices=["stdio"], help="Transport (stdio only)"
     )
     mcp_parser.set_defaults(func=lambda _: mcp_cmd())
 
     # System One
     so_parser = subparsers.add_parser(
-        'system-one', help='System One decision client (choice/noul/score)'
+        "system-one", help="System One decision client (choice/noul/score)"
     )
     so_parser.add_argument(
-        '--endpoint', default='http://localhost:11434/v1/systemone', help='System One endpoint'
+        "--endpoint", default="http://localhost:11434/v1/systemone", help="System One endpoint"
     )
-    so_parser.add_argument('--model', default='nimble', help='Decision model name')
+    so_parser.add_argument("--model", default="nimble", help="Decision model name")
     so_parser.add_argument(
-        '--type', required=True, choices=['choice', 'noul', 'score'], help='Decision type'
+        "--type", required=True, choices=["choice", "noul", "score"], help="Decision type"
     )
-    so_parser.add_argument('--state', required=True, help='State/context')
-    so_parser.add_argument('--question', required=True, help='Question')
-    so_parser.add_argument('--options', nargs='*', help='Options for choice type')
-    so_parser.add_argument('--scale', default='1-10', help='Scale for score type')
-    so_parser.add_argument('--temp', type=float, default=0.7, help='Temperature for generation')
+    so_parser.add_argument("--state", required=True, help="State/context")
+    so_parser.add_argument("--question", required=True, help="Question")
+    so_parser.add_argument("--options", nargs="*", help="Options for choice type")
+    so_parser.add_argument("--scale", default="1-10", help="Scale for score type")
+    so_parser.add_argument("--temp", type=float, default=0.7, help="Temperature for generation")
     so_parser.add_argument(
-        '--precision', default='q4_k_m', help='Model precision (q4_k_m, q8_0, f16, etc.)'
+        "--precision", default="q4_k_m", help="Model precision (q4_k_m, q8_0, f16, etc.)"
     )
-    so_parser.add_argument('--json', action='store_true', help='JSON output')
+    so_parser.add_argument("--json", action="store_true", help="JSON output")
     so_parser.set_defaults(func=lambda a: system_one_cmd(get_lai_instance(), a))
 
     # RAG semantic search command
     rag_parser = subparsers.add_parser(
-        'rag', help='Semantic search with local RAG (sentence-transformers + numpy)'
+        "rag", help="Semantic search with local RAG (sentence-transformers + numpy)"
     )
-    rag_parser.add_argument('query', help='Search query')
-    rag_parser.add_argument('--collection', '-c', help='Collection name to search')
-    rag_parser.add_argument('--top-k', type=int, default=5, help='Number of results')
+    rag_parser.add_argument("query", help="Search query")
+    rag_parser.add_argument("--collection", "-c", help="Collection name to search")
+    rag_parser.add_argument("--top-k", type=int, default=5, help="Number of results")
     rag_parser.add_argument(
-        '--index', action='store_true', help='Index current directory before searching'
-    )
-    rag_parser.add_argument(
-        '--chunked',
-        action='store_true',
-        help='Use smart chunking for code files (functions, classes)',
+        "--index", action="store_true", help="Index current directory before searching"
     )
     rag_parser.add_argument(
-        '--hybrid',
-        action='store_true',
-        help='Use hybrid search (vector + keyword TF-IDF)',
+        "--chunked",
+        action="store_true",
+        help="Use smart chunking for code files (functions, classes)",
     )
     rag_parser.add_argument(
-        '--chunk-size',
+        "--hybrid",
+        action="store_true",
+        help="Use hybrid search (vector + keyword TF-IDF)",
+    )
+    rag_parser.add_argument(
+        "--chunk-size",
         type=int,
         default=2000,
-        help='Max chunk size for chunked indexing (default: 2000)',
+        help="Max chunk size for chunked indexing (default: 2000)",
     )
     rag_parser.set_defaults(func=lambda a: rag_cmd(a))
 
@@ -2865,44 +2865,38 @@ Examples:
     # agents – sub-agentes especializados (multi-agente)
     # ---------------------------------------------------------------
     agents_parser = subparsers.add_parser(
-        'agents', help='Sub-agentes especializados (multi-agente)'
+        "agents", help="Sub-agentes especializados (multi-agente)"
     )
     agents_parser.add_argument(
-        'action',
-        choices=['list', 'run', 'pipeline', 'collaborative'],
-        help='Acción: listar, ejecutar agente, pipeline o colaborativo',
+        "action",
+        choices=["list", "run", "pipeline", "collaborative"],
+        help="Acción: listar, ejecutar agente, pipeline o colaborativo",
     )
     agents_parser.add_argument(
-        '--agent', '-a', default='code', help='Nombre del sub-agente (default: code)'
+        "--agent", "-a", default="code", help="Nombre del sub-agente (default: code)"
     )
-    agents_parser.add_argument(
-        '--task', '-t', default='', help='Tarea para el sub-agente'
-    )
-    agents_parser.add_argument(
-        '--goal', '-g', default='', help='Meta para flujo colaborativo'
-    )
+    agents_parser.add_argument("--task", "-t", default="", help="Tarea para el sub-agente")
+    agents_parser.add_argument("--goal", "-g", default="", help="Meta para flujo colaborativo")
     agents_parser.set_defaults()
 
     # ---------------------------------------------------------------
     # complete – autocompletado de código (LSP-like)
     # ---------------------------------------------------------------
     complete_parser = subparsers.add_parser(
-        'complete', help='Autocompletado de código (análisis estático AST)'
+        "complete", help="Autocompletado de código (análisis estático AST)"
+    )
+    complete_parser.add_argument("file", help="Archivo de código para completar")
+    complete_parser.add_argument(
+        "--line", "-l", type=int, default=0, help="Línea del cursor (0-indexed)"
     )
     complete_parser.add_argument(
-        'file', help='Archivo de código para completar'
+        "--column", "-c", type=int, default=0, help="Columna del cursor (0-indexed)"
     )
     complete_parser.add_argument(
-        '--line', '-l', type=int, default=0, help='Línea del cursor (0-indexed)'
+        "--top-k", type=int, default=10, help="Número de resultados (default: 10)"
     )
     complete_parser.add_argument(
-        '--column', '-c', type=int, default=0, help='Columna del cursor (0-indexed)'
-    )
-    complete_parser.add_argument(
-        '--top-k', type=int, default=10, help='Número de resultados (default: 10)'
-    )
-    complete_parser.add_argument(
-        '--index', action='store_true', help='Indexar proyecto antes de completar'
+        "--index", action="store_true", help="Indexar proyecto antes de completar"
     )
     complete_parser.set_defaults(func=lambda a: complete_cmd(a))
 
@@ -2910,35 +2904,29 @@ Examples:
     # symbols – listar símbolos de un archivo o proyecto
     # ---------------------------------------------------------------
     symbols_parser = subparsers.add_parser(
-        'symbols', help='Listar símbolos de código (clases, funciones, imports)'
+        "symbols", help="Listar símbolos de código (clases, funciones, imports)"
     )
     symbols_parser.add_argument(
-        'file', nargs='?', help='Archivo específico (opcional, si se omite usa todo el proyecto)'
+        "file", nargs="?", help="Archivo específico (opcional, si se omite usa todo el proyecto)"
     )
     symbols_parser.add_argument(
-        '--kind', '-k', help='Filtrar por tipo: class, function, method, import, variable'
+        "--kind", "-k", help="Filtrar por tipo: class, function, method, import, variable"
     )
     symbols_parser.set_defaults(func=lambda a: symbols_cmd(a))
 
     # ---------------------------------------------------------------
     # goto – ir a la definición de un símbolo
     # ---------------------------------------------------------------
-    goto_parser = subparsers.add_parser(
-        'goto', help='Ir a la definición de un símbolo'
-    )
-    goto_parser.add_argument(
-        'symbol', help='Nombre del símbolo a buscar'
-    )
+    goto_parser = subparsers.add_parser("goto", help="Ir a la definición de un símbolo")
+    goto_parser.add_argument("symbol", help="Nombre del símbolo a buscar")
     goto_parser.set_defaults(func=lambda a: goto_cmd(a))
 
     # ---------------------------------------------------------------
     # repomap – mapa compacto del repositorio para contexto de LLM
     # ---------------------------------------------------------------
-    repomap_parser = subparsers.add_parser(
-        'repomap', help='Generar mapa compacto del repositorio'
-    )
+    repomap_parser = subparsers.add_parser("repomap", help="Generar mapa compacto del repositorio")
     repomap_parser.add_argument(
-        '--max-chars', type=int, default=8000, help='Máximo de caracteres (default: 8000)'
+        "--max-chars", type=int, default=8000, help="Máximo de caracteres (default: 8000)"
     )
     repomap_parser.set_defaults(func=lambda a: repomap_cmd(a))
 
@@ -2946,22 +2934,22 @@ Examples:
     # interactive – terminal interactivo continuo (sesión tipo REPL)
     # ---------------------------------------------------------------
     interactive_parser = subparsers.add_parser(
-        'interactive', help='Terminal interactivo continuo (sesión chat con historial)'
+        "interactive", help="Terminal interactivo continuo (sesión chat con historial)"
     )
     interactive_parser.add_argument(
-        '--no-stream', action='store_true', help='Desactivar streaming de respuesta'
+        "--no-stream", action="store_true", help="Desactivar streaming de respuesta"
     )
     interactive_parser.add_argument(
-        '--thinking', action='store_true', help='Activar modo thinking (deepseek)'
+        "--thinking", action="store_true", help="Activar modo thinking (deepseek)"
     )
     interactive_parser.add_argument(
-        '--no-thinking', action='store_true', help='Desactivar modo thinking'
+        "--no-thinking", action="store_true", help="Desactivar modo thinking"
     )
     interactive_parser.add_argument(
-        '--temp', type=float, default=0.7, help='Temperatura del modelo (default: 0.7)'
+        "--temp", type=float, default=0.7, help="Temperatura del modelo (default: 0.7)"
     )
     interactive_parser.add_argument(
-        '--max-tokens', type=int, default=4096, help='Máximo de tokens (default: 4096)'
+        "--max-tokens", type=int, default=4096, help="Máximo de tokens (default: 4096)"
     )
 
     args = parser.parse_args()
@@ -2993,50 +2981,56 @@ Examples:
     lai = get_lai_instance(
         model=args.model,
         base_url=args.base_url,
-        lang=getattr(args, 'lang', 'es'),
-        api_key=getattr(args, 'api_key', None),
-        allow_remote=getattr(args, 'allow_remote', False),
+        lang=getattr(args, "lang", "es"),
+        api_key=getattr(args, "api_key", None),
+        allow_remote=getattr(args, "allow_remote", False),
     )
     lai.temp = args.temp
     lai.max_tokens = args.max_tokens
-    lai.yolo = bool(getattr(args, 'yolo', False))
+    lai.yolo = bool(getattr(args, "yolo", False))
     if lai.yolo:
         lai.tools.disable_approval()
     else:
         lai.tools.enable_approval()
-    if getattr(args, 'stream', False):
+    if getattr(args, "stream", False):
         lai.stream = True
-    if getattr(args, 'no_stream', False):
+    if getattr(args, "no_stream", False):
         lai.stream = False
-    if getattr(args, 'thinking', False):
+    if getattr(args, "thinking", False):
         lai.thinking = True
-    if getattr(args, 'no_thinking', False):
+    if getattr(args, "no_thinking", False):
         lai.thinking = False
 
     # Comando interactivo: terminal continuo (no usa args.func)
-    if args.command == 'interactive':
+    if args.command == "interactive":
         interactive_cmd(lai, args)
         return
 
     # Comando agents: sub-agentes especializados (no usa args.func)
-    if args.command == 'agents':
+    if args.command == "agents":
         agents_cmd(lai, args)
         return
 
     # Comando complete: autocompletado de código (no usa args.func)
-    if args.command == 'complete':
+    if args.command == "complete":
         complete_cmd(args)
         return
 
     # Auto-start services (skip for commands that don't need llama.cpp/gateway)
     offline_commands = {
-        'mcp', 'system-one', 'symbols', 'goto', 'repomap', 'complete', 'rag',
+        "mcp",
+        "system-one",
+        "symbols",
+        "goto",
+        "repomap",
+        "complete",
+        "rag",
     }
     if args.command not in offline_commands and not args.quiet:
-        print('Checking services...')
+        print("Checking services...")
         check_services()
         for name, info in SERVICES.items():
-            status = 'Running' if info['running'] else 'Stopped'
+            status = "Running" if info["running"] else "Stopped"
             print(f'  {name}: {status} (Port {info["port"]})')
 
     args.func(args)
@@ -3048,12 +3042,12 @@ def mcp_cmd() -> None:
     import sys
 
     server_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), 'scripts', 'mcp_server.py'
+        os.path.dirname(os.path.abspath(__file__)), "scripts", "mcp_server.py"
     )
     if not os.path.exists(server_path):
-        print(f'ERROR: MCP server not found at {server_path}', file=sys.stderr)
+        print(f"ERROR: MCP server not found at {server_path}", file=sys.stderr)
         sys.exit(1)
-    print('Starting lai MCP server (stdio transport)...', file=sys.stderr)
+    print("Starting lai MCP server (stdio transport)...", file=sys.stderr)
     subprocess.run([sys.executable, server_path])
 
 
@@ -3077,24 +3071,24 @@ def system_one_cmd(lai_instance: Any, args: Any) -> None:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         # Formatear salida legible
-        if 'error' in result:
+        if "error" in result:
             print(f'ERROR: {result["error"]}', file=sys.stderr)
-            if result.get('detail'):
-                print(result['detail'][:500], file=sys.stderr)
+            if result.get("detail"):
+                print(result["detail"][:500], file=sys.stderr)
             sys.exit(1)
 
-        answers = result.get('answers', {})
+        answers = result.get("answers", {})
         if not answers:
-            answers = {k: v for k, v in result.items() if k not in ('model', 'state')}
+            answers = {k: v for k, v in result.items() if k not in ("model", "state")}
 
         for qid, answer in answers.items():
             if isinstance(answer, dict):
-                atype = answer.get('type', 'unknown')
-                value = answer.get('value', answer)
-                confidence = answer.get('confidence', answer.get('probability', 'N/A'))
-                print(f'{qid} [{atype}]: {value} (confianza: {confidence})')
+                atype = answer.get("type", "unknown")
+                value = answer.get("value", answer)
+                confidence = answer.get("confidence", answer.get("probability", "N/A"))
+                print(f"{qid} [{atype}]: {value} (confianza: {confidence})")
             else:
-                print(f'{qid}: {answer}')
+                print(f"{qid}: {answer}")
 
 
 def rag_cmd(args):
@@ -3103,43 +3097,43 @@ def rag_cmd(args):
     if args.index:
         if args.chunked:
             stats = rag.add_directory_chunked(
-                'default',
-                '.',
-                extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+                "default",
+                ".",
+                extensions=(".py", ".md", ".txt", ".json", ".yaml", ".yml"),
                 max_chunk_size=args.chunk_size,
             )
             print(f'Indexed {stats["files"]} files, {stats["chunks_added"]} chunks.')
         else:
             count = rag.add_directory(
-                'default',
-                '.',
-                extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+                "default",
+                ".",
+                extensions=(".py", ".md", ".txt", ".json", ".yaml", ".yml"),
             )
-            print(f'Indexed {count} documents.')
+            print(f"Indexed {count} documents.")
 
     if args.hybrid:
         results = rag.search_hybrid(
             args.query,
             collection=args.collection,
             top_k=args.top_k,
-            threshold=getattr(args, 'threshold', 0.3),
+            threshold=getattr(args, "threshold", 0.3),
         )
     else:
         results = rag.search(args.query, collection=args.collection, top_k=args.top_k)
     if not results:
-        print('No results found.')
+        print("No results found.")
         return
 
-    print(f'RAG results for: {args.query}')
-    print('=' * 60)
+    print(f"RAG results for: {args.query}")
+    print("=" * 60)
     for i, r in enumerate(results, 1):
         print(f'\n[{i}] {r["id"]} (score: {r["score"]:.3f})')
         print(f'    Collection: {r["collection"]}')
-        if r['metadata'].get('file'):
+        if r["metadata"].get("file"):
             print(f'    File: {r["metadata"]["file"]}')
-        if r.get('vector_score') is not None:
+        if r.get("vector_score") is not None:
             print(f'    Vector: {r["vector_score"]:.3f} | Keyword: {r["keyword_score"]:.3f}')
-        text = r['text']
+        text = r["text"]
         print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
 
 
@@ -3153,12 +3147,12 @@ def complete_cmd(args):
 
     file_path = args.file
     try:
-        source = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+        source = Path(file_path).read_text(encoding="utf-8", errors="ignore")
     except FileNotFoundError:
-        print(f'Error: archivo no encontrado: {file_path}', file=sys.stderr)
+        print(f"Error: archivo no encontrado: {file_path}", file=sys.stderr)
         return
     except Exception as e:
-        print(f'Error leyendo archivo: {e}', file=sys.stderr)
+        print(f"Error leyendo archivo: {e}", file=sys.stderr)
         return
 
     completions = completer.complete(
@@ -3170,15 +3164,15 @@ def complete_cmd(args):
     )
 
     if not completions:
-        print('No se encontraron sugerencias de completado.')
+        print("No se encontraron sugerencias de completado.")
         return
 
-    print(f'Autocompletado para {file_path} (línea {args.line}, columna {args.column}):')
-    print('=' * 60)
+    print(f"Autocompletado para {file_path} (línea {args.line}, columna {args.column}):")
+    print("=" * 60)
     for i, item in enumerate(completions, 1):
         kind_str = f"[{item.kind}]"
         detail_str = f" {item.detail}" if item.detail else ""
-        print(f'  {i}. {item.label}{kind_str}{detail_str}')
+        print(f"  {i}. {item.label}{kind_str}{detail_str}")
         if item.docstring:
             print(f'      {item.docstring[:120]}{"..." if len(item.docstring) > 120 else ""}')
 
@@ -3190,7 +3184,7 @@ def symbols_cmd(args):
     if args.file:
         file_path = args.file
         if not Path(file_path).exists():
-            print(f'Error: archivo no encontrado: {file_path}', file=sys.stderr)
+            print(f"Error: archivo no encontrado: {file_path}", file=sys.stderr)
             return
         symbols = completer.extract_symbols(file_path)
         rel = os.path.relpath(file_path, completer.project_root)
@@ -3205,31 +3199,31 @@ def symbols_cmd(args):
         symbols = [s for s in symbols if s.kind == args.kind]
 
     if not symbols:
-        print('No se encontraron símbolos.')
+        print("No se encontraron símbolos.")
         return
 
     if rel:
-        print(f'Símbolos en {rel}:')
+        print(f"Símbolos en {rel}:")
     else:
-        print('Símbolos del proyecto:')
+        print("Símbolos del proyecto:")
 
-    print('=' * 60)
+    print("=" * 60)
     current_file = None
     for s in sorted(symbols, key=lambda x: (x.file, x.line)):
         if rel is None and s.file != current_file:
             current_file = s.file
-            print(f'\n# {os.path.relpath(current_file, completer.project_root)}')
-        if s.kind == 'import':
-            rendered = f'  {s.signature or s.name}'
-        elif s.kind == 'class':
+            print(f"\n# {os.path.relpath(current_file, completer.project_root)}")
+        if s.kind == "import":
+            rendered = f"  {s.signature or s.name}"
+        elif s.kind == "class":
             rendered = f'  class {s.name}{s.signature or ""}'
-        elif s.kind == 'function':
+        elif s.kind == "function":
             rendered = f'  def {s.name}{s.signature or ""}'
-        elif s.kind == 'method':
+        elif s.kind == "method":
             rendered = f'    def {s.name}{s.signature or ""}'
         else:
-            rendered = f'  # var {s.name}'
-        print(f'{rendered}  # L{s.line}')
+            rendered = f"  # var {s.name}"
+        print(f"{rendered}  # L{s.line}")
 
 
 def goto_cmd(args):
@@ -3237,51 +3231,48 @@ def goto_cmd(args):
     completer = get_completer()
     completer.index_project()
 
-    matches = [
-        s for s in completer._symbols
-        if s.name == args.symbol and s.kind != 'import'
-    ]
+    matches = [s for s in completer._symbols if s.name == args.symbol and s.kind != "import"]
 
     if not matches:
-        print(f'Símbolo no encontrado: {args.symbol}')
-        suggestions = sorted({
-            s.name for s in completer._symbols
-            if args.symbol.lower() in s.name.lower()
-        })[:10]
+        print(f"Símbolo no encontrado: {args.symbol}")
+        suggestions = sorted(
+            {s.name for s in completer._symbols if args.symbol.lower() in s.name.lower()}
+        )[:10]
         if suggestions:
             print(f'Sugerencias: {", ".join(suggestions)}')
         return
 
     # Clases/funciones antes que métodos/variables; a igualdad, el archivo
     # modificado más recientemente suele ser el que el usuario está editando.
-    kind_rank = {'class': 0, 'function': 0, 'method': 1, 'variable': 2}
-    matches.sort(key=lambda s: (
-        kind_rank.get(s.kind, 3),
-        -Path(s.file).stat().st_mtime if Path(s.file).exists() else 0,
-        s.file,
-        s.line,
-    ))
+    kind_rank = {"class": 0, "function": 0, "method": 1, "variable": 2}
+    matches.sort(
+        key=lambda s: (
+            kind_rank.get(s.kind, 3),
+            -Path(s.file).stat().st_mtime if Path(s.file).exists() else 0,
+            s.file,
+            s.line,
+        )
+    )
     found = matches[0]
 
     rel = os.path.relpath(found.file, completer.project_root)
-    print(f'{args.symbol} definido en {rel}:{found.line} ({found.kind})')
+    print(f"{args.symbol} definido en {rel}:{found.line} ({found.kind})")
     if len(matches) > 1:
-        others = ', '.join(
-            f'{os.path.relpath(s.file, completer.project_root)}:{s.line}'
-            for s in matches[1:5]
+        others = ", ".join(
+            f"{os.path.relpath(s.file, completer.project_root)}:{s.line}" for s in matches[1:5]
         )
-        print(f'Otras definiciones ({len(matches) - 1}): {others}')
-    print('-' * 60)
+        print(f"Otras definiciones ({len(matches) - 1}): {others}")
+    print("-" * 60)
 
     try:
-        lines = Path(found.file).read_text(encoding='utf-8', errors='ignore').split('\n')
+        lines = Path(found.file).read_text(encoding="utf-8", errors="ignore").split("\n")
         start = max(0, found.line - 3)
         end = min(len(lines), found.line + 5)
         for i in range(start, end):
-            marker = '>>> ' if i == found.line - 1 else '    '
-            print(f'{marker}{i + 1:4d}  {lines[i]}')
+            marker = ">>> " if i == found.line - 1 else "    "
+            print(f"{marker}{i + 1:4d}  {lines[i]}")
     except Exception as e:
-        print(f'Error leyendo archivo: {e}', file=sys.stderr)
+        print(f"Error leyendo archivo: {e}", file=sys.stderr)
 
 
 def repomap_cmd(args):
@@ -3297,46 +3288,46 @@ def agents_cmd(lai: Any, args: Any) -> None:
         tools=lai.tools,
         model=lai.model,
         base_url=lai.base_url,
-        api_key=getattr(lai, 'api_key', None),
-        allow_remote=getattr(lai, 'allow_remote', False),
+        api_key=getattr(lai, "api_key", None),
+        allow_remote=getattr(lai, "allow_remote", False),
     )
 
-    if args.action == 'list':
-        print('Sub-agentes disponibles:')
+    if args.action == "list":
+        print("Sub-agentes disponibles:")
         for name in orchestrator.list_agents():
-            print(f'  - {name}')
+            print(f"  - {name}")
         return
 
-    if args.action == 'run':
+    if args.action == "run":
         if not args.task:
             print('Error: se requiere --task para la acción "run"')
             return
         result = orchestrator.run_agent(args.agent, args.task)
-        print(f'\n═══ {result.agent_name.upper()} ═══')
+        print(f"\n═══ {result.agent_name.upper()} ═══")
         print(result.output)
         if not result.success:
-            print(f'\n[Resultado: fallido tras {result.iterations} iteración(es)]')
+            print(f"\n[Resultado: fallido tras {result.iterations} iteración(es)]")
         return
 
-    if args.action == 'pipeline':
+    if args.action == "pipeline":
         if not args.task:
             print('Error: se requiere --task para la acción "pipeline"')
             return
         # Interpretar --task como "agente1:tarea1,agente2:tarea2,..."
         tasks = []
-        for part in args.task.split(','):
-            if ':' in part:
-                agent_name, task_desc = part.split(':', 1)
-                tasks.append({'agent': agent_name.strip(), 'task': task_desc.strip()})
+        for part in args.task.split(","):
+            if ":" in part:
+                agent_name, task_desc = part.split(":", 1)
+                tasks.append({"agent": agent_name.strip(), "task": task_desc.strip()})
             else:
-                tasks.append({'agent': args.agent, 'task': part.strip()})
+                tasks.append({"agent": args.agent, "task": part.strip()})
         results = orchestrator.run_pipeline(tasks)
         for result in results:
-            print(f'\n═══ {result.agent_name.upper()} ═══')
+            print(f"\n═══ {result.agent_name.upper()} ═══")
             print(result.output)
         return
 
-    if args.action == 'collaborative':
+    if args.action == "collaborative":
         if not args.goal:
             print('Error: se requiere --goal para la acción "collaborative"')
             return
@@ -3344,7 +3335,7 @@ def agents_cmd(lai: Any, args: Any) -> None:
         print(output)
         return
 
-    print(f'Acción desconocida: {args.action}')
+    print(f"Acción desconocida: {args.action}")
 
 
 def interactive_cmd(lai: Any, args: Any) -> None:
@@ -3352,138 +3343,144 @@ def interactive_cmd(lai: Any, args: Any) -> None:
 
     import asyncio
 
-    print('╔═══════════════════════════════════════════════╗')
-    print('║      lai - Terminal Interactivo              ║')
-    print('║      Local AI Code Assistant                 ║')
-    print('╚═══════════════════════════════════════════════╝')
+    print("╔═══════════════════════════════════════════════╗")
+    print("║      lai - Terminal Interactivo              ║")
+    print("║      Local AI Code Assistant                 ║")
+    print("╚═══════════════════════════════════════════════╝")
     print()
-    print('Comandos especiales:')
-    print('  /exit, /quit    - Salir')
-    print('  /help           - Mostrar esta ayuda')
-    print('  /clear          - Limpiar historial')
-    print('  /history        - Ver historial de conversación')
-    print('  /rag <query>    - Búsqueda semántica local (RAG)')
-    print('  /index          - Indexar directorio actual en RAG')
-    print('  /model          - Mostrar modelo actual')
-    print('  /temp <n>       - Cambiar temperatura (0.0-2.0)')
-    print('  /stream         - Alternar streaming on/off')
+    print("Comandos especiales:")
+    print("  /exit, /quit    - Salir")
+    print("  /help           - Mostrar esta ayuda")
+    print("  /clear          - Limpiar historial")
+    print("  /history        - Ver historial de conversación")
+    print("  /rag <query>    - Búsqueda semántica local (RAG)")
+    print("  /index          - Indexar directorio actual en RAG")
+    print("  /model          - Mostrar modelo actual")
+    print("  /temp <n>       - Cambiar temperatura (0.0-2.0)")
+    print("  /stream         - Alternar streaming on/off")
     print()
-    print('Escribe tu consulta o un comando. Ctrl+C para salir.')
+    print("Escribe tu consulta o un comando. Ctrl+C para salir.")
     print()
 
     history: list[dict[str, str]] = []
-    stream_enabled = not getattr(args, 'no_stream', False)
-    thinking_enabled = getattr(args, 'thinking', False)
-    if getattr(args, 'no_thinking', False):
+    stream_enabled = not getattr(args, "no_stream", False)
+    thinking_enabled = getattr(args, "thinking", False)
+    if getattr(args, "no_thinking", False):
         thinking_enabled = False
 
     while True:
         try:
-            user_input = input('lai> ').strip()
+            user_input = input("lai> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print('\n¡Hasta luego!')
+            print("\n¡Hasta luego!")
             break
 
         if not user_input:
             continue
 
         # Comandos especiales
-        if user_input.startswith('/'):
+        if user_input.startswith("/"):
             parts = user_input.split(None, 1)
             cmd = parts[0].lower()
-            arg = parts[1] if len(parts) > 1 else ''
+            arg = parts[1] if len(parts) > 1 else ""
 
-            if cmd in ('/exit', '/quit'):
-                print('¡Hasta luego!')
+            if cmd in ("/exit", "/quit"):
+                print("¡Hasta luego!")
                 break
 
-            if cmd == '/help':
-                print('Comandos disponibles: /exit, /quit, /help, /clear, /history, /rag, /index, /model, /temp, /stream')
+            if cmd == "/help":
+                print(
+                    "Comandos disponibles: /exit, /quit, /help, /clear, /history, /rag, /index, /model, /temp, /stream"
+                )
                 continue
 
-            if cmd == '/clear':
+            if cmd == "/clear":
                 history.clear()
-                print('Historial limpiado.')
+                print("Historial limpiado.")
                 continue
 
-            if cmd == '/history':
+            if cmd == "/history":
                 if not history:
-                    print('Historial vacío.')
+                    print("Historial vacío.")
                 else:
                     for i, entry in enumerate(history, 1):
-                        role = entry['role']
-                        text = entry['content'][:100]
-                        print(f'  {i}. [{role}] {text}{"..." if len(entry["content"]) > 100 else ""}')
+                        role = entry["role"]
+                        text = entry["content"][:100]
+                        print(
+                            f'  {i}. [{role}] {text}{"..." if len(entry["content"]) > 100 else ""}'
+                        )
                 continue
 
-            if cmd == '/rag':
+            if cmd == "/rag":
                 if not arg:
-                    print('Uso: /rag <consulta>')
+                    print("Uso: /rag <consulta>")
                     continue
                 rag = get_rag()
                 results = rag.search(arg, top_k=5)
                 if not results:
-                    print('No se encontraron resultados en RAG.')
+                    print("No se encontraron resultados en RAG.")
                 else:
-                    print(f'RAG results for: {arg}')
+                    print(f"RAG results for: {arg}")
                     for i, r in enumerate(results, 1):
                         print(f'\n  [{i}] {r["id"]} (score: {r["score"]:.3f})')
-                        if r['metadata'].get('file'):
+                        if r["metadata"].get("file"):
                             print(f'      File: {r["metadata"]["file"]}')
                         print(f'      {r["text"][:300]}{"..." if len(r["text"]) > 300 else ""}')
                 continue
 
-            if cmd == '/index':
+            if cmd == "/index":
                 rag = get_rag()
                 try:
                     count = rag.add_directory(
-                        'interactive', '.', extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml')
+                        "interactive",
+                        ".",
+                        extensions=(".py", ".md", ".txt", ".json", ".yaml", ".yml"),
                     )
                     print(f'Indexados {count} documentos en colección "interactive".')
                 except Exception as e:
-                    print(f'Error indexando: {e}')
+                    print(f"Error indexando: {e}")
                 continue
 
-            if cmd == '/model':
-                print(f'Modelo actual: {lai.model}')
-                print(f'Base URL: {lai.base_url}')
+            if cmd == "/model":
+                print(f"Modelo actual: {lai.model}")
+                print(f"Base URL: {lai.base_url}")
                 continue
 
-            if cmd == '/temp':
+            if cmd == "/temp":
                 if not arg:
-                    print(f'Temperatura actual: {lai.temp}')
+                    print(f"Temperatura actual: {lai.temp}")
                     continue
                 try:
                     lai.temp = float(arg)
-                    print(f'Temperatura establecida a {lai.temp}')
+                    print(f"Temperatura establecida a {lai.temp}")
                 except ValueError:
-                    print('Temperatura inválida. Usa un número entre 0.0 y 2.0.')
+                    print("Temperatura inválida. Usa un número entre 0.0 y 2.0.")
                 continue
 
-            if cmd == '/stream':
+            if cmd == "/stream":
                 stream_enabled = not stream_enabled
                 print(f'Streaming: {"activado" if stream_enabled else "desactivado"}')
                 continue
 
-            print(f'Comando desconocido: {cmd}. Escribe /help para ver comandos.')
+            print(f"Comando desconocido: {cmd}. Escribe /help para ver comandos.")
             continue
 
         # Consulta normal al modelo
-        history.append({'role': 'user', 'content': user_input})
+        history.append({"role": "user", "content": user_input})
 
         # Construir prompt con historial reciente (últimos 6 turnos)
         recent = history[-12:]
         prompt_parts = []
         for entry in recent:
-            role = entry['role']
-            content = entry['content']
-            if role == 'user':
-                prompt_parts.append(f'Usuario: {content}')
+            role = entry["role"]
+            content = entry["content"]
+            if role == "user":
+                prompt_parts.append(f"Usuario: {content}")
             else:
-                prompt_parts.append(f'Asistente: {content}')
-        full_prompt = '\n'.join(prompt_parts)
+                prompt_parts.append(f"Asistente: {content}")
+        full_prompt = "\n".join(prompt_parts)
 
-        print('Asistente: ', end='', flush=True)
+        print("Asistente: ", end="", flush=True)
 
         try:
             response = asyncio.run(
@@ -3497,11 +3494,11 @@ def interactive_cmd(lai: Any, args: Any) -> None:
             )
             if not stream_enabled:
                 print(response)
-            history.append({'role': 'assistant', 'content': response})
+            history.append({"role": "assistant", "content": response})
         except Exception as e:
-            print(f'Error: {e}')
+            print(f"Error: {e}")
             history.pop()  # quitar el user entry si falló
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

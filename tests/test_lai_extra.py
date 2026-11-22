@@ -31,14 +31,14 @@ class TestLAIInit:
 
     def test_init_defaults(self):
         instance = lai.LAI()
-        assert instance.model == 'qwen3-8b'
-        assert instance.base_url == 'http://localhost:8080/v1'
+        assert instance.model == "qwen3-8b"
+        assert instance.base_url == "http://localhost:8080/v1"
         assert instance.thinking is True
         assert instance.stream is True
         assert instance.temp == 0.7
         assert instance.max_tokens == 4096
         assert instance.history_max_tokens == 12000
-        assert instance.lang == 'es'
+        assert instance.lang == "es"
         assert instance.token_budget == 50000
         assert instance.total_prompt_tokens == 0
         assert instance.total_completion_tokens == 0
@@ -50,9 +50,9 @@ class TestLAIInit:
         assert instance.last_error is None
 
     def test_init_custom_model(self):
-        instance = lai.LAI(model='qwen3:8b', base_url='http://localhost:11434/v1')
-        assert instance.model == 'qwen3:8b'
-        assert instance.base_url == 'http://localhost:11434/v1'
+        instance = lai.LAI(model="qwen3:8b", base_url="http://localhost:11434/v1")
+        assert instance.model == "qwen3:8b"
+        assert instance.base_url == "http://localhost:11434/v1"
 
 
 class TestCostTracking:
@@ -72,19 +72,19 @@ class TestCostTracking:
         instance.request_count = 3
         instance.estimated_cost_usd = 0.1234
         summary = instance.get_cost_summary()
-        assert summary['prompt_tokens'] == 10000
-        assert summary['completion_tokens'] == 5000
-        assert summary['total_tokens'] == 15000
-        assert summary['requests'] == 3
-        assert summary['token_budget'] == 50000
-        assert summary['estimated_cost_usd'] == 0.1234
-        assert summary['lang'] == 'es'
+        assert summary["prompt_tokens"] == 10000
+        assert summary["completion_tokens"] == 5000
+        assert summary["total_tokens"] == 15000
+        assert summary["requests"] == 3
+        assert summary["token_budget"] == 50000
+        assert summary["estimated_cost_usd"] == 0.1234
+        assert summary["lang"] == "es"
 
     def test_get_cost_summary_english(self):
         instance = lai.LAI()
-        instance.lang = 'en'
+        instance.lang = "en"
         summary = instance.get_cost_summary()
-        assert summary['lang'] == 'en'
+        assert summary["lang"] == "en"
 
 
 class TestRateLimit:
@@ -131,30 +131,30 @@ class TestSystemPrompt:
 
     def test_system_prompt_spanish(self):
         instance = lai.LAI()
-        instance.lang = 'es'
+        instance.lang = "es"
         prompt = instance._system_prompt()
-        assert prompt['role'] == 'system'
-        assert 'Lai' in prompt['content']
+        assert prompt["role"] == "system"
+        assert "Lai" in prompt["content"]
 
     def test_system_prompt_english(self):
         instance = lai.LAI()
-        instance.lang = 'en'
+        instance.lang = "en"
         prompt = instance._system_prompt()
-        assert prompt['role'] == 'system'
-        assert 'English' in prompt['content'] or 'english' in prompt['content'].lower()
+        assert prompt["role"] == "system"
+        assert "English" in prompt["content"] or "english" in prompt["content"].lower()
 
     def test_ensure_system_prompt_adds(self):
         instance = lai.LAI()
-        messages = [{'role': 'user', 'content': 'hola'}]
+        messages = [{"role": "user", "content": "hola"}]
         result = instance._ensure_system_prompt(messages)
         assert len(result) == 2
-        assert result[0]['role'] == 'system'
-        assert result[1]['role'] == 'user'
+        assert result[0]["role"] == "system"
+        assert result[1]["role"] == "user"
 
     def test_ensure_system_prompt_keeps_existing(self):
         instance = lai.LAI()
-        system = {'role': 'system', 'content': 'custom system'}
-        messages = [system, {'role': 'user', 'content': 'hola'}]
+        system = {"role": "system", "content": "custom system"}
+        messages = [system, {"role": "user", "content": "hola"}]
         result = instance._ensure_system_prompt(messages)
         assert result[0] is system
 
@@ -165,8 +165,8 @@ class TestTrimHistory:
     def test_trim_history_no_op_under_budget(self):
         instance = lai.LAI()
         instance.conversation_history = [
-            {'role': 'user', 'content': 'hola'},
-            {'role': 'assistant', 'content': 'mundo'},
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "mundo"},
         ]
         before = len(instance.conversation_history)
         instance._trim_history()
@@ -176,9 +176,9 @@ class TestTrimHistory:
         instance = lai.LAI()
         instance.history_max_tokens = 10
         instance.conversation_history = [
-            {'role': 'system', 'content': 'system prompt here'},
-            {'role': 'user', 'content': 'a' * 100},
-            {'role': 'assistant', 'content': 'b' * 100},
+            {"role": "system", "content": "system prompt here"},
+            {"role": "user", "content": "a" * 100},
+            {"role": "assistant", "content": "b" * 100},
         ]
         instance._trim_history()
         assert len(instance.conversation_history) <= 3
@@ -189,17 +189,17 @@ class TestStripThinkingArtifacts:
 
     def test_strip_thinking_tags(self):
         instance = lai.LAI()
-        text = '<thinking> reasoning </thinking> final answer'
+        text = "<thinking> reasoning </thinking> final answer"
         result = instance._strip_thinking_artifacts(text)
-        assert '<thinking>' not in result
-        assert 'final answer' in result
+        assert "<thinking>" not in result
+        assert "final answer" in result
 
     def test_strip_code_fence(self):
         instance = lai.LAI()
-        text = '```python\nprint(1)\n```'
+        text = "```python\nprint(1)\n```"
         result = instance._strip_thinking_artifacts(text)
-        assert '```' not in result
-        assert 'print(1)' in result
+        assert "```" not in result
+        assert "print(1)" in result
 
 
 class TestAutoModeBasics:
@@ -207,10 +207,10 @@ class TestAutoModeBasics:
 
     def test_auto_mode_run_mocked(self):
         instance = lai.LAI()
-        mock_run = MagicMock(return_value='mocked result')
-        with patch.object(AutoMode, 'run', mock_run):
-            result = instance.auto_mode_run('do something', max_iterations=1, max_turns=2)
-            assert result == 'mocked result'
+        mock_run = MagicMock(return_value="mocked result")
+        with patch.object(AutoMode, "run", mock_run):
+            result = instance.auto_mode_run("do something", max_iterations=1, max_turns=2)
+            assert result == "mocked result"
 
 
 class TestCostAndStatus:
@@ -223,19 +223,19 @@ class TestCostAndStatus:
         instance.request_count = 2
         instance.estimated_cost_usd = 0.05
         summary = instance.get_cost_summary()
-        assert summary['total_tokens'] == 7500
-        assert summary['estimated_cost_usd'] == 0.05
+        assert summary["total_tokens"] == 7500
+        assert summary["estimated_cost_usd"] == 0.05
 
 
 class TestIsLocalUrlExtra:
     """Extra edge cases for is_local_url."""
 
     def test_public_hostnames(self):
-        assert lai.is_local_url('http://google.com') is False
-        assert lai.is_local_url('https://api.github.com') is False
+        assert lai.is_local_url("http://google.com") is False
+        assert lai.is_local_url("https://api.github.com") is False
 
     def test_reserved_private_ranges(self):
-        assert lai.is_local_url('http://127.0.0.1') is True
+        assert lai.is_local_url("http://127.0.0.1") is True
 
     def test_invalid_inputs(self):
         assert lai.is_local_url(None) is False
@@ -251,7 +251,7 @@ class TestWriteFileEdgeCases:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                result = reg.write_file('empty.py', '')
+                result = reg.write_file("empty.py", "")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -262,7 +262,7 @@ class TestWriteFileEdgeCases:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                result = reg.write_file('data.txt', 'hello world')
+                result = reg.write_file("data.txt", "hello world")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -277,9 +277,9 @@ class TestGrepEdgeCases:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.txt', 'w') as f:
-                    f.write('nothing here\n')
-                result = reg.grep('zzzxyz', tmpdir)
+                with open("test.txt", "w") as f:
+                    f.write("nothing here\n")
+                result = reg.grep("zzzxyz", tmpdir)
                 assert result == []
             finally:
                 os.chdir(old_cwd)
@@ -298,31 +298,31 @@ class TestLAIChat:
 
     def test_chat_success_spanish(self):
         instance = lai.LAI()
-        instance.lang = 'es'
+        instance.lang = "es"
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            'choices': [{'message': {'content': 'Hola mundo', 'role': 'assistant'}}]
+            "choices": [{"message": {"content": "Hola mundo", "role": "assistant"}}]
         }
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = False
-        with patch('httpx.AsyncClient', return_value=mock_client):
-            result = asyncio.run(instance._chat('di hola', stream=False))
-            assert result == 'Hola mundo'
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = asyncio.run(instance._chat("di hola", stream=False))
+            assert result == "Hola mundo"
 
     def test_chat_empty_content_uses_reasoning(self):
         instance = lai.LAI()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            'choices': [
+            "choices": [
                 {
-                    'message': {
-                        'content': '',
-                        'reasoning_content': 'razonamiento interno',
-                        'role': 'assistant',
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "razonamiento interno",
+                        "role": "assistant",
                     }
                 }
             ]
@@ -331,9 +331,9 @@ class TestLAIChat:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = False
-        with patch('httpx.AsyncClient', return_value=mock_client):
-            result = asyncio.run(instance._chat('test', stream=False))
-            assert 'razonamiento interno' in result
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = asyncio.run(instance._chat("test", stream=False))
+            assert "razonamiento interno" in result
 
 
 class TestToolRegistryRunCommand:
@@ -341,16 +341,16 @@ class TestToolRegistryRunCommand:
 
     def test_run_command_success(self):
         reg = lai.ToolRegistry()
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout='ok', stderr='')
-            result = reg.run_command('echo ok')
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = reg.run_command("echo ok")
             assert result is not None
 
     def test_run_command_failure(self):
         reg = lai.ToolRegistry()
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout='', stderr='error')
-            result = reg.run_command('false')
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+            result = reg.run_command("false")
             assert result is not None
 
 
@@ -363,9 +363,9 @@ class TestToolRegistryLintFormatTypes:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('x = 1\n')
-                result = reg.lint_file('test.py')
+                with open("test.py", "w") as f:
+                    f.write("x = 1\n")
+                result = reg.lint_file("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -376,9 +376,9 @@ class TestToolRegistryLintFormatTypes:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('x = 1\n')
-                result = reg.check_types('test.py')
+                with open("test.py", "w") as f:
+                    f.write("x = 1\n")
+                result = reg.check_types("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -389,9 +389,9 @@ class TestToolRegistryLintFormatTypes:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('x=1\n')
-                result = reg.format_code('test.py')
+                with open("test.py", "w") as f:
+                    f.write("x=1\n")
+                result = reg.format_code("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -406,9 +406,9 @@ class TestToolRegistryAnalyzeComplexity:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('def foo():\n    pass\n')
-                result = reg.analyze_complexity('test.py')
+                with open("test.py", "w") as f:
+                    f.write("def foo():\n    pass\n")
+                result = reg.analyze_complexity("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -432,10 +432,10 @@ class TestLAIAutoMode:
 
     def test_auto_mode_run_mocked(self):
         instance = lai.LAI()
-        mock_run = MagicMock(return_value='auto result')
-        with patch.object(AutoMode, 'run', mock_run):
-            result = instance.auto_mode_run('do something', max_iterations=1, max_turns=2)
-            assert result == 'auto result'
+        mock_run = MagicMock(return_value="auto result")
+        with patch.object(AutoMode, "run", mock_run):
+            result = instance.auto_mode_run("do something", max_iterations=1, max_turns=2)
+            assert result == "auto result"
 
 
 class TestLaiReview:
@@ -447,11 +447,11 @@ class TestLaiReview:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('def foo():\n    return 1\n')
+                with open("test.py", "w") as f:
+                    f.write("def foo():\n    return 1\n")
                 from argparse import Namespace
 
-                args = Namespace(path='test.py', focus='all', format='text')
+                args = Namespace(path="test.py", focus="all", format="text")
                 lai.review_cmd(instance, args)  # prints to stdout, returns None
             finally:
                 os.chdir(old_cwd)
@@ -466,9 +466,9 @@ class TestFindUnused:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('import os\nx = 1\n')
-                result = reg.find_unused_imports('test.py')
+                with open("test.py", "w") as f:
+                    f.write("import os\nx = 1\n")
+                result = reg.find_unused_imports("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -479,9 +479,9 @@ class TestFindUnused:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('def unused():\n    pass\nx = 1\n')
-                result = reg.find_unused_code('test.py')
+                with open("test.py", "w") as f:
+                    f.write("def unused():\n    pass\nx = 1\n")
+                result = reg.find_unused_code("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -496,9 +496,9 @@ class TestFindTodos:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
-                    f.write('# TODO: fix this\nx = 1\n')
-                result = reg.find_todos('test.py')
+                with open("test.py", "w") as f:
+                    f.write("# TODO: fix this\nx = 1\n")
+                result = reg.find_todos("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -513,9 +513,9 @@ class TestCheckSecurity:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('test.py', 'w') as f:
+                with open("test.py", "w") as f:
                     f.write('password = "secret"\n')
-                result = reg.check_security('test.py')
+                result = reg.check_security("test.py")
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
@@ -530,10 +530,10 @@ class TestFindDuplicates:
             old_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
-                with open('a.py', 'w') as f:
-                    f.write('x = 1\n')
-                with open('b.py', 'w') as f:
-                    f.write('x = 1\n')
+                with open("a.py", "w") as f:
+                    f.write("x = 1\n")
+                with open("b.py", "w") as f:
+                    f.write("x = 1\n")
                 result = reg.find_duplicates(tmpdir)
                 assert result is not None
             finally:
@@ -549,18 +549,18 @@ class TestVersionAndUrl:
         assert len(version) > 0
 
     @pytest.mark.parametrize(
-        'url,expected',
+        "url,expected",
         [
-            ('http://localhost:8080/v1', True),
-            ('http://127.0.0.1:11434', True),
-            ('http://[::1]:8080', True),
-            ('http://192.168.1.10:8080/v1', True),
-            ('http://10.0.0.5:8080', True),
-            ('http://172.16.0.1:8080', True),
-            ('http://myhost.local:8080', True),
-            ('https://api.openai.com/v1', False),
-            ('http://example.com', False),
-            ('', False),
+            ("http://localhost:8080/v1", True),
+            ("http://127.0.0.1:11434", True),
+            ("http://[::1]:8080", True),
+            ("http://192.168.1.10:8080/v1", True),
+            ("http://10.0.0.5:8080", True),
+            ("http://172.16.0.1:8080", True),
+            ("http://myhost.local:8080", True),
+            ("https://api.openai.com/v1", False),
+            ("http://example.com", False),
+            ("", False),
             (None, False),
             (12345, False),
         ],
@@ -579,14 +579,14 @@ class TestCheckService:
         def fake_get(url, timeout=1):
             return FakeResp()
 
-        monkeypatch.setattr(lai.httpx, 'get', fake_get)
+        monkeypatch.setattr(lai.httpx, "get", fake_get)
         assert lai.check_service(8080) is True
 
     def test_check_service_down(self, monkeypatch):
         def fake_get(url, timeout=1):
             raise OSError
 
-        monkeypatch.setattr(lai.httpx, 'get', fake_get)
+        monkeypatch.setattr(lai.httpx, "get", fake_get)
         # httpx falla, luego socket.create_connection también falla -> False
         assert lai.check_service(9999) is False
 
@@ -595,30 +595,30 @@ class TestCompletion:
     """Tests for shell completion helpers."""
 
     def test_generate_completion_bash(self):
-        result = lai._generate_completion('bash')
+        result = lai._generate_completion("bash")
         assert isinstance(result, str)
-        assert 'lai' in result
+        assert "lai" in result
 
     def test_generate_completion_zsh(self):
-        result = lai._generate_completion('zsh')
+        result = lai._generate_completion("zsh")
         assert isinstance(result, str)
 
     def test_completion_cmd_unknown_shell(self, capsys):
-        args = argparse.Namespace(shell='fish')
+        args = argparse.Namespace(shell="fish")
         lai.completion_cmd(args)
         captured = capsys.readouterr()
-        assert 'fish' in captured.out or 'fish' in captured.err
+        assert "fish" in captured.out or "fish" in captured.err
 
 
 class TestMcpAndSystemOne:
     """Tests for mcp_cmd and system_one_cmd (no external services)."""
 
     def test_mcp_cmd_not_found(self, capsys, monkeypatch):
-        monkeypatch.setattr(lai.os.path, 'exists', lambda _: False)
+        monkeypatch.setattr(lai.os.path, "exists", lambda _: False)
         with pytest.raises(SystemExit):
             lai.mcp_cmd()
         captured = capsys.readouterr()
-        assert 'MCP server not found' in captured.err
+        assert "MCP server not found" in captured.err
 
     def test_system_one_cmd_error(self, capsys, monkeypatch):
         class FakeClient:
@@ -627,19 +627,19 @@ class TestMcpAndSystemOne:
                 self.model = model
 
             def decide(self, **_):
-                return {'error': 'no server', 'detail': 'gateway down'}
+                return {"error": "no server", "detail": "gateway down"}
 
-        fake_module = type(sys)('scripts.system_one_client')
+        fake_module = type(sys)("scripts.system_one_client")
         fake_module.SystemOneClient = FakeClient
-        monkeypatch.setitem(sys.modules, 'scripts.system_one_client', fake_module)
+        monkeypatch.setitem(sys.modules, "scripts.system_one_client", fake_module)
 
         args = argparse.Namespace(
-            endpoint='http://127.0.0.1:8081/v1/systemone',
-            model='qwen3-8b',
-            action='status',
-            state='init',
-            type='choice',
-            question='q',
+            endpoint="http://127.0.0.1:8081/v1/systemone",
+            model="qwen3-8b",
+            action="status",
+            state="init",
+            type="choice",
+            question="q",
             options=[],
             scale=10,
             json=False,
@@ -647,7 +647,7 @@ class TestMcpAndSystemOne:
         with pytest.raises(SystemExit):
             lai.system_one_cmd(lai.LAI(), args)
         captured = capsys.readouterr()
-        assert 'no server' in captured.err
+        assert "no server" in captured.err
 
 
 class TestOCR:
@@ -655,91 +655,91 @@ class TestOCR:
 
     def test_ocr_image_not_found(self, capsys):
         args = argparse.Namespace(
-            image='/tmp/archivo_inexistente_12345.png', lang='spa+eng', output=None
+            image="/tmp/archivo_inexistente_12345.png", lang="spa+eng", output=None
         )
         with pytest.raises(SystemExit):
             lai.ocr_cmd(args)
         captured = capsys.readouterr()
-        assert 'no encontrada' in captured.err
+        assert "no encontrada" in captured.err
 
     def test_ocr_tesseract_not_installed(self, capsys, monkeypatch, tmp_path):
-        image = tmp_path / 'test.png'
-        image.write_bytes(b'fake image data')
+        image = tmp_path / "test.png"
+        image.write_bytes(b"fake image data")
 
         def fake_run(cmd, **kwargs):
-            raise FileNotFoundError('tesseract')
+            raise FileNotFoundError("tesseract")
 
-        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
-        args = argparse.Namespace(image=str(image), lang='spa+eng', output=None)
+        monkeypatch.setattr(lai.subprocess, "run", fake_run)
+        args = argparse.Namespace(image=str(image), lang="spa+eng", output=None)
         with pytest.raises(SystemExit):
             lai.ocr_cmd(args)
         captured = capsys.readouterr()
-        assert 'no está instalado' in captured.err
+        assert "no está instalado" in captured.err
 
     def test_ocr_success(self, capsys, monkeypatch, tmp_path):
-        image = tmp_path / 'test.png'
-        image.write_bytes(b'fake image data')
+        image = tmp_path / "test.png"
+        image.write_bytes(b"fake image data")
 
         class FakeResult:
             returncode = 0
-            stdout = 'Texto extraído de prueba'
-            stderr = ''
+            stdout = "Texto extraído de prueba"
+            stderr = ""
 
         def fake_run(cmd, **kwargs):
             return FakeResult()
 
-        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
-        args = argparse.Namespace(image=str(image), lang='spa+eng', output=None)
+        monkeypatch.setattr(lai.subprocess, "run", fake_run)
+        args = argparse.Namespace(image=str(image), lang="spa+eng", output=None)
         lai.ocr_cmd(args)
         captured = capsys.readouterr()
-        assert 'Texto extraído de prueba' in captured.out
+        assert "Texto extraído de prueba" in captured.out
 
     def test_ocr_with_output_file(self, capsys, monkeypatch, tmp_path):
-        image = tmp_path / 'test.png'
-        image.write_bytes(b'fake image data')
-        output = tmp_path / 'out.txt'
+        image = tmp_path / "test.png"
+        image.write_bytes(b"fake image data")
+        output = tmp_path / "out.txt"
 
         class FakeResult:
             returncode = 0
-            stdout = 'Texto guardado en archivo'
-            stderr = ''
+            stdout = "Texto guardado en archivo"
+            stderr = ""
 
         def fake_run(cmd, **kwargs):
             return FakeResult()
 
-        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
-        args = argparse.Namespace(image=str(image), lang='spa+eng', output=str(output))
+        monkeypatch.setattr(lai.subprocess, "run", fake_run)
+        args = argparse.Namespace(image=str(image), lang="spa+eng", output=str(output))
         lai.ocr_cmd(args)
         captured = capsys.readouterr()
         assert output.exists()
-        assert output.read_text(encoding='utf-8').strip() == 'Texto guardado en archivo'
-        assert 'guardado en' in captured.out
+        assert output.read_text(encoding="utf-8").strip() == "Texto guardado en archivo"
+        assert "guardado en" in captured.out
 
 
 class TestCommandFunctions:
     """Tests for CLI command functions with mocked LAI instance."""
 
     def test_get_lai_instance_singleton(self):
-        instance1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
-        instance2 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
+        instance1 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080/v1")
+        instance2 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080/v1")
         assert instance1 is instance2
 
     def test_get_lai_instance_different_model(self):
-        instance1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
-        instance2 = lai.get_lai_instance(model='llama3', base_url='http://localhost:8080/v1')
+        instance1 = lai.get_lai_instance(model="qwen3-8b", base_url="http://localhost:8080/v1")
+        instance2 = lai.get_lai_instance(model="llama3", base_url="http://localhost:8080/v1")
         assert instance1 is not instance2
 
     def test_get_lai_instance_lang_change(self):
         instance = lai.get_lai_instance(
-            model='qwen3-8b', base_url='http://localhost:8080/v1', lang='en'
+            model="qwen3-8b", base_url="http://localhost:8080/v1", lang="en"
         )
-        assert instance.lang == 'en'
+        assert instance.lang == "en"
 
     def test_chat_cmd_no_prompt(self, capsys):
         args = argparse.Namespace(
-            model='qwen3-8b',
-            base_url='http://localhost:8080/v1',
-            lang='es',
+            model="qwen3-8b",
+            base_url="http://localhost:8080/v1",
+            lang="es",
             stream=True,
             thinking=True,
             temp=0.7,
@@ -751,12 +751,12 @@ class TestCommandFunctions:
         )
         lai.chat_cmd(args)
         captured = capsys.readouterr()
-        assert 'No prompt provided' in captured.out
+        assert "No prompt provided" in captured.out
 
     def test_status_cmd(self, capsys):
         lai.status_cmd(lai.LAI(), argparse.Namespace())
         captured = capsys.readouterr()
-        assert 'Services status' in captured.out or 'llama.cpp' in captured.out
+        assert "Services status" in captured.out or "llama.cpp" in captured.out
 
     def test_version_cmd(self, capsys):
         lai.version_cmd()
@@ -765,27 +765,27 @@ class TestCommandFunctions:
 
     def test_models_cmd(self, capsys, monkeypatch):
         def fake_models(self):
-            print('qwen3-8b')
+            print("qwen3-8b")
 
-        monkeypatch.setattr(lai.LAI, 'models', fake_models)
+        monkeypatch.setattr(lai.LAI, "models", fake_models)
         lai.models_cmd(lai.LAI(), argparse.Namespace())
         captured = capsys.readouterr()
-        assert 'qwen3-8b' in captured.out
+        assert "qwen3-8b" in captured.out
 
     def test_tools_cmd(self, capsys, monkeypatch):
         def fake_tools_list(self):
-            print('read_file')
+            print("read_file")
 
-        monkeypatch.setattr(lai.LAI, 'tools_list', fake_tools_list)
+        monkeypatch.setattr(lai.LAI, "tools_list", fake_tools_list)
         lai.tools_cmd(lai.LAI(), argparse.Namespace())
         captured = capsys.readouterr()
-        assert 'read_file' in captured.out
+        assert "read_file" in captured.out
 
     def test_generate_cmd_no_prompt(self, capsys):
         args = argparse.Namespace(
             prompt=[],
-            model='qwen3-8b',
-            base_url='http://localhost:8080/v1',
+            model="qwen3-8b",
+            base_url="http://localhost:8080/v1",
             stream=True,
             thinking=True,
             temp=0.7,
@@ -793,50 +793,52 @@ class TestCommandFunctions:
         )
         lai.generate_cmd(args)
         captured = capsys.readouterr()
-        assert 'No prompt provided' in captured.out
+        assert "No prompt provided" in captured.out
 
     def test_run_cmd(self, capsys, monkeypatch, tmp_path):
-        script = tmp_path / 'script.py'
+        script = tmp_path / "script.py"
         script.write_text('print("hola")\n')
 
         def fake_run_script(self, path):
-            return f'Output of {path}'
+            return f"Output of {path}"
 
-        monkeypatch.setattr(lai.LAI, 'run_script', fake_run_script)
+        monkeypatch.setattr(lai.LAI, "run_script", fake_run_script)
         lai.run_cmd(lai.LAI(), argparse.Namespace(script=str(script)))
         captured = capsys.readouterr()
-        assert 'Output of' in captured.out
+        assert "Output of" in captured.out
 
     def test_think_cmd(self, capsys, monkeypatch):
         def fake_think(self, problem):
-            return f'Thinking about: {problem}'
+            return f"Thinking about: {problem}"
 
-        monkeypatch.setattr(lai.LAI, 'think', fake_think)
-        lai.think_cmd(lai.LAI(), argparse.Namespace(problem='¿Cómo funciona la recursión?'))
+        monkeypatch.setattr(lai.LAI, "think", fake_think)
+        lai.think_cmd(lai.LAI(), argparse.Namespace(problem="¿Cómo funciona la recursión?"))
         captured = capsys.readouterr()
-        assert 'Thinking about' in captured.out
+        assert "Thinking about" in captured.out
 
     def test_code_cmd(self, monkeypatch, tmp_path):
-        outfile = tmp_path / 'generated.py'
+        outfile = tmp_path / "generated.py"
 
-        def fake_code(self, description, filename, auto=False, yolo=False, max_iterations=3, corpus=None):
-            with open(filename, 'w') as f:
-                f.write('# generated code\n')
+        def fake_code(
+            self, description, filename, auto=False, yolo=False, max_iterations=3, corpus=None
+        ):
+            with open(filename, "w") as f:
+                f.write("# generated code\n")
 
-        monkeypatch.setattr(lai.LAI, 'code', fake_code)
+        monkeypatch.setattr(lai.LAI, "code", fake_code)
         lai.code_cmd(
             lai.LAI(),
             argparse.Namespace(
-                description='test', filename=str(outfile), auto=False, yolo=False, max_iterations=3
+                description="test", filename=str(outfile), auto=False, yolo=False, max_iterations=3
             ),
         )
         assert outfile.exists()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import pytest as _pytest
 
-    _pytest.main([__file__, '-v'])
+    _pytest.main([__file__, "-v"])
 
 
 class TestUtilityFunctions:
@@ -848,18 +850,18 @@ class TestUtilityFunctions:
         assert len(version) > 0
 
     @pytest.mark.parametrize(
-        'url,expected',
+        "url,expected",
         [
-            ('http://localhost:8080/v1', True),
-            ('http://127.0.0.1:11434', True),
-            ('http://[::1]:8080', True),
-            ('http://192.168.1.10:8080/v1', True),
-            ('http://10.0.0.5:8080', True),
-            ('http://172.16.0.1:8080', True),
-            ('http://myhost.local:8080', True),
-            ('https://api.openai.com/v1', False),
-            ('http://example.com', False),
-            ('', False),
+            ("http://localhost:8080/v1", True),
+            ("http://127.0.0.1:11434", True),
+            ("http://[::1]:8080", True),
+            ("http://192.168.1.10:8080/v1", True),
+            ("http://10.0.0.5:8080", True),
+            ("http://172.16.0.1:8080", True),
+            ("http://myhost.local:8080", True),
+            ("https://api.openai.com/v1", False),
+            ("http://example.com", False),
+            ("", False),
             (None, False),
             (12345, False),
         ],
@@ -873,13 +875,13 @@ class TestToolRegistryBasic:
 
     def test_tool_registry_init(self):
         reg = lai_tools()
-        assert hasattr(reg, 'tools')
+        assert hasattr(reg, "tools")
         assert isinstance(reg.tools, dict)
         assert len(reg.tools) > 0
 
     def test_tool_registry_has_core_tools(self):
         reg = lai_tools()
-        expected_tools = ['read_file', 'write_file', 'list_dir', 'grep', 'find_files']
+        expected_tools = ["read_file", "write_file", "list_dir", "grep", "find_files"]
         for tool in expected_tools:
             assert tool in reg.tools
 
@@ -890,7 +892,7 @@ class TestToolRegistryBasic:
         assert len(schema) > 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import pytest as _pytest
 
-    _pytest.main([__file__, '-v'])
+    _pytest.main([__file__, "-v"])
