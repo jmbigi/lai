@@ -4440,6 +4440,25 @@ Examples:
     clean_parser.add_argument('--build', action='store_true', help='Clean build artifacts')
     clean_parser.set_defaults(func=lambda a: clean_cmd(get_lai_instance(), a))
 
+    # MCP
+    mcp_parser = subparsers.add_parser('mcp', help='Start MCP server exposing lai tools')
+    mcp_parser.add_argument('--transport', default='stdio', choices=['stdio'], help='Transport (stdio only)')
+    mcp_parser.set_defaults(func=lambda _: mcp_cmd())
+
+    # System One
+    so_parser = subparsers.add_parser('system-one', help='System One decision client (choice/noul/score)')
+    so_parser.add_argument('--endpoint', default='http://localhost:11434/v1/systemone', help='System One endpoint')
+    so_parser.add_argument('--model', default='nimble', help='Decision model name')
+    so_parser.add_argument('--type', required=True, choices=['choice', 'noul', 'score'], help='Decision type')
+    so_parser.add_argument('--state', required=True, help='State/context')
+    so_parser.add_argument('--question', required=True, help='Question')
+    so_parser.add_argument('--options', nargs='*', help='Options for choice type')
+    so_parser.add_argument('--scale', default='1-10', help='Scale for score type')
+    so_parser.add_argument('--temp', type=float, default=0.7, help='Temperature for generation')
+    so_parser.add_argument('--precision', default='q4_k_m', help='Model precision (q4_k_m, q8_0, f16, etc.)')
+    so_parser.add_argument('--json', action='store_true', help='JSON output')
+    so_parser.set_defaults(func=lambda a: system_one_cmd(get_lai_instance(), a))
+
     args = parser.parse_args()
 
     if not hasattr(args, 'func') or args.command is None:
@@ -4480,8 +4499,8 @@ Examples:
     if getattr(args, 'no_thinking', False):
         lai.thinking = False
 
-    # Auto-start services
-    if not args.quiet:
+    # Auto-start services (skip for mcp and system-one which don't need lai services)
+    if args.command not in ('mcp', 'system-one') and not args.quiet:
         print('Checking services...')
         check_services()
         for name, info in SERVICES.items():
@@ -4489,6 +4508,58 @@ Examples:
             print(f'  {name}: {status} (Port {info["port"]})')
 
     args.func(args)
+
+
+def mcp_cmd() -> None:
+    """Start the MCP server exposing lai tools via stdio."""
+    import subprocess
+    import sys
+
+    server_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scripts', 'mcp_server.py')
+    if not os.path.exists(server_path):
+        print(f'ERROR: MCP server not found at {server_path}', file=sys.stderr)
+        sys.exit(1)
+    print('Starting lai MCP server (stdio transport)...', file=sys.stderr)
+    subprocess.run([sys.executable, server_path])
+
+
+def system_one_cmd(lai_instance: Any, args: Any) -> None:
+    """System One decision client (choice/noul/score)."""
+    from scripts.system_one_client import SystemOneClient
+
+    client = SystemOneClient(endpoint=args.endpoint, model=args.model)
+    result = client.decide(
+        state=args.state,
+        qtype=args.type,
+        question=args.question,
+        options=args.options,
+        scale=args.scale,
+        timeout=30.0,
+    )
+
+    if args.json:
+        import json
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        # Formatear salida legible
+        if 'error' in result:
+            print(f"ERROR: {result['error']}", file=sys.stderr)
+            if result.get('detail'):
+                print(result['detail'][:500], file=sys.stderr)
+            sys.exit(1)
+
+        answers = result.get('answers', {})
+        if not answers:
+            answers = {k: v for k, v in result.items() if k not in ('model', 'state')}
+
+        for qid, answer in answers.items():
+            if isinstance(answer, dict):
+                atype = answer.get('type', 'unknown')
+                value = answer.get('value', answer)
+                confidence = answer.get('confidence', answer.get('probability', 'N/A'))
+                print(f"{qid} [{atype}]: {value} (confianza: {confidence})")
+            else:
+                print(f"{qid}: {answer}")
 
 
 if __name__ == '__main__':
