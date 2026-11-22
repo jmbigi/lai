@@ -14,7 +14,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 use syn;
-use quote;
+use quote::quote;
+use proc_macro2::TokenStream;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -255,7 +256,7 @@ impl ToolRegistry {
                                     let sig = format!("  {} {}({})",
                                         if f.sig.asyncness.is_some() { "async fn" } else { "fn" },
                                         f.sig.ident,
-                                        f.sig.inputs.iter().map(|a| quote::to_string(a)).collect::<Vec<_>>().join(", ")
+                                        f.sig.inputs.iter().map(|a| quote!(#a).to_string()).collect::<Vec<_>>().join(", ")
                                     );
                                     symbols.push(sig);
                                 }
@@ -270,7 +271,7 @@ impl ToolRegistry {
                                 }
                                 syn::Item::Impl(i) => {
                                     if let Some((_, path, _)) = i.trait_ {
-                                        symbols.push(format!("  impl {} for {};", quote::to_string(&path), quote::to_string(&i.self_ty)));
+                                        symbols.push(format!("  impl {} for {};", quote!(#path).to_string(), quote!(#i.self_ty).to_string()));
                                     }
                                 }
                                 _ => {}

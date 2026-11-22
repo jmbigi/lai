@@ -5,6 +5,7 @@
 mod commands;
 mod llm;
 mod services;
+mod safety;
 // mod tools;        // Has issues with quote crate
 // mod automode;     // Has borrow checker issues
 // mod agents;       // Has duplicate imports
@@ -326,9 +327,9 @@ enum Commands {
     },
     /// Execute command in project context
     Exec {
-        #[arg(help = "Command to execute")]
+        #[arg(help = "Command to execute", num_args = 1..)]
         command: Vec<String>,
-        #[arg(help = "Working directory")]
+        #[arg(long = "cwd", help = "Working directory")]
         cwd: Option<String>,
     },
     /// Diagnose environment
@@ -519,6 +520,8 @@ enum Commands {
     },
     /// Generate repository map
     Repomap {
+        #[arg(index = 1, default_value = ".", help = "Path to scan")]
+        path: String,
         #[arg(long = "max-chars", default_value = "8000", help = "Max characters")]
         max_chars: i32,
     },
@@ -797,8 +800,8 @@ async fn main() {
         Some(Commands::Goto { .. }) => {
             println!("Goto: not yet ported to Rust.");
         }
-        Some(Commands::Repomap { .. }) => {
-            println!("Repomap: not yet ported to Rust.");
+        Some(Commands::Repomap { path, max_chars }) => {
+            cmd_repomap(&path, max_chars as usize);
         }
         Some(Commands::Interactive {
             no_stream,

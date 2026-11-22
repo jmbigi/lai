@@ -5,6 +5,7 @@
 
 use crate::llm::{LlmClient, Message};
 use crate::services::Services;
+use quote::quote;
 use serde_json::json;
 use std::fs;
 use std::io::Write;
@@ -62,7 +63,8 @@ pub async fn cmd_chat(
 ) {
     // Regla 9 - Supervivencia: verificar modelos locales ANTES de chat
     let svc = services();
-    if let Err(e) = crate::services::ensure_local_model_available(&svc) {
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
         if !allow_remote {
             eprintln!("{}", e);
             return;
@@ -555,7 +557,8 @@ pub async fn cmd_review(
 ) {
     // Regla 9 - Supervivencia: verificar modelos locales ANTES de review
     let svc = services();
-    if let Err(e) = crate::services::ensure_local_model_available(&svc) {
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
         if !allow_remote {
             eprintln!("{}", e);
             return;
@@ -588,7 +591,7 @@ pub async fn cmd_review(
             let path = entry.path();
             if skip
                 .iter()
-                .any(|s| path.components().any(|c| c.as_os_str() == *s))
+                .any(|s| path.components().any(|c| c.as_os_str().to_str() == Some(s)))
             {
                 continue;
             }
@@ -1011,20 +1014,18 @@ pub fn cmd_update(packages: &[String], all: bool, dry_run: bool) {
 
 pub fn cmd_exec(command: &[String], cwd: Option<&str>) {
     let cmd_str = command.join(" ");
-    let mut cmd = std::process::Command::new("sh");
-    cmd.arg("-c").arg(&cmd_str);
-    if let Some(d) = cwd {
-        cmd.current_dir(d);
+    let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+    if parts.is_empty() {
+        eprintln!("Error: comando vacío");
+        return;
     }
-    let result = cmd.output();
-    match result {
-        Ok(r) => {
-            print!("{}", String::from_utf8_lossy(&r.stdout));
-            if !r.stderr.is_empty() {
-                eprintln!("{}", String::from_utf8_lossy(&r.stderr));
-            }
-        }
-        Err(e) => eprintln!("Error executing command: {}", e),
+    
+    let (cmd, args) = (parts[0], &parts[1..]);
+    
+    // Regla 9 - Supervivencia: validación de seguridad
+    match crate::safety::safe_exec(cmd, args, true) {
+        Ok(output) => print!("{}", output),
+        Err(e) => eprintln!("Error: {}", e),
     }
 }
 
@@ -1055,6 +1056,15 @@ pub fn cmd_doctor(fix: bool) {
 }
 
 // ============================================================================
+// Repomap
+// ============================================================================
+
+// TODO: Fix syn/quote imports and borrow checker issues
+pub fn cmd_repomap(_path: &str, _max_chars: usize) {
+    println!("Repomap: temporarily disabled (syn/quote issues)");
+}
+
+// ============================================================================
 // Clean
 // ============================================================================
 
@@ -1076,6 +1086,13 @@ pub fn cmd_clean(all: bool, cache: bool, build: bool) {
     let mut removed = 0;
     for pattern in &patterns {
         for entry in glob::glob(pattern).unwrap().filter_map(|e| e.ok()) {
+            // Regla 9 - Supervivencia: no auto-destrucción - proteger archivos críticos
+            let path_str = entry.display().to_string();
+            if crate::safety::is_protected_path(&path_str) {
+                eprintln!("⚠️  Protegido - no se elimina: {}", path_str);
+                continue;
+            }
+            
             if entry.is_dir() {
                 let _ = fs::remove_dir_all(&entry);
             } else {
