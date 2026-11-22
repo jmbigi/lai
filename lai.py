@@ -31,6 +31,7 @@ from lai_tools import ToolRegistry
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
 from lai_agents import get_orchestrator  # noqa: E402
 from rag_local import get_rag  # noqa: E402
+from code_completion import get_completer, CodeCompleter  # noqa: E402
 
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
 
@@ -2873,6 +2874,65 @@ Examples:
     agents_parser.set_defaults()
 
     # ---------------------------------------------------------------
+    # complete – autocompletado de código (LSP-like)
+    # ---------------------------------------------------------------
+    complete_parser = subparsers.add_parser(
+        'complete', help='Autocompletado de código (análisis estático AST)'
+    )
+    complete_parser.add_argument(
+        'file', help='Archivo de código para completar'
+    )
+    complete_parser.add_argument(
+        '--line', '-l', type=int, default=0, help='Línea del cursor (0-indexed)'
+    )
+    complete_parser.add_argument(
+        '--column', '-c', type=int, default=0, help='Columna del cursor (0-indexed)'
+    )
+    complete_parser.add_argument(
+        '--top-k', type=int, default=10, help='Número de resultados (default: 10)'
+    )
+    complete_parser.add_argument(
+        '--index', action='store_true', help='Indexar proyecto antes de completar'
+    )
+    complete_parser.set_defaults(func=lambda a: complete_cmd(a))
+
+    # ---------------------------------------------------------------
+    # symbols – listar símbolos de un archivo o proyecto
+    # ---------------------------------------------------------------
+    symbols_parser = subparsers.add_parser(
+        'symbols', help='Listar símbolos de código (clases, funciones, imports)'
+    )
+    symbols_parser.add_argument(
+        'file', nargs='?', help='Archivo específico (opcional, si se omite usa todo el proyecto)'
+    )
+    symbols_parser.add_argument(
+        '--kind', '-k', help='Filtrar por tipo: class, function, method, import, variable'
+    )
+    symbols_parser.set_defaults(func=lambda a: symbols_cmd(a))
+
+    # ---------------------------------------------------------------
+    # goto – ir a la definición de un símbolo
+    # ---------------------------------------------------------------
+    goto_parser = subparsers.add_parser(
+        'goto', help='Ir a la definición de un símbolo'
+    )
+    goto_parser.add_argument(
+        'symbol', help='Nombre del símbolo a buscar'
+    )
+    goto_parser.set_defaults(func=lambda a: goto_cmd(a))
+
+    # ---------------------------------------------------------------
+    # repomap – mapa compacto del repositorio para contexto de LLM
+    # ---------------------------------------------------------------
+    repomap_parser = subparsers.add_parser(
+        'repomap', help='Generar mapa compacto del repositorio'
+    )
+    repomap_parser.add_argument(
+        '--max-chars', type=int, default=8000, help='Máximo de caracteres (default: 8000)'
+    )
+    repomap_parser.set_defaults(func=lambda a: repomap_cmd(a))
+
+    # ---------------------------------------------------------------
     # interactive – terminal interactivo continuo (sesión tipo REPL)
     # ---------------------------------------------------------------
     interactive_parser = subparsers.add_parser(
@@ -2951,6 +3011,11 @@ Examples:
     # Comando agents: sub-agentes especializados (no usa args.func)
     if args.command == 'agents':
         agents_cmd(lai, args)
+        return
+
+    # Comando complete: autocompletado de código (no usa args.func)
+    if args.command == 'complete':
+        complete_cmd(args)
         return
 
     # Auto-start services (skip for mcp and system-one which don't need lai services)
@@ -3063,6 +3128,131 @@ def rag_cmd(args):
             print(f'    Vector: {r["vector_score"]:.3f} | Keyword: {r["keyword_score"]:.3f}')
         text = r['text']
         print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
+
+
+def complete_cmd(args):
+    """Autocompletado de código basado en análisis AST estático."""
+    completer = get_completer()
+
+    if args.index:
+        stats = completer.index_project()
+        print(f'Indexado: {stats["files"]} archivos, {stats["symbols"]} símbolos.')
+
+    file_path = args.file
+    try:
+        source = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+    except FileNotFoundError:
+        print(f'Error: archivo no encontrado: {file_path}', file=sys.stderr)
+        return
+    except Exception as e:
+        print(f'Error leyendo archivo: {e}', file=sys.stderr)
+        return
+
+    completions = completer.complete(
+        code=source,
+        cursor_line=args.line,
+        cursor_column=args.column,
+        max_results=args.top_k,
+    )
+
+    if not completions:
+        print('No se encontraron sugerencias de completado.')
+        return
+
+    print(f'Autocompletado para {file_path} (línea {args.line}, columna {args.column}):')
+    print('=' * 60)
+    for i, item in enumerate(completions, 1):
+        kind_str = f"[{item.kind}]"
+        detail_str = f" {item.detail}" if item.detail else ""
+        print(f'  {i}. {item.label}{kind_str}{detail_str}')
+        if item.docstring:
+            print(f'      {item.docstring[:120]}{"..." if len(item.docstring) > 120 else ""}')
+
+
+def symbols_cmd(args):
+    """Listar símbolos de código."""
+    completer = get_completer()
+
+    if args.file:
+        file_path = args.file
+        if not Path(file_path).exists():
+            print(f'Error: archivo no encontrado: {file_path}', file=sys.stderr)
+            return
+        symbols = completer._extract_symbols(Path(file_path))
+        rel = os.path.relpath(file_path, completer.project_root)
+    else:
+        stats = completer.index_project()
+        print(f'Proyecto: {stats["files"]} archivos, {stats["symbols"]} símbolos.')
+        print()
+        symbols = completer._symbols
+        rel = None
+
+    if args.kind:
+        symbols = [s for s in symbols if s.kind == args.kind]
+
+    if not symbols:
+        print('No se encontraron símbolos.')
+        return
+
+    if rel:
+        print(f'Símbolos en {rel}:')
+    else:
+        print('Símbolos del proyecto:')
+
+    print('=' * 60)
+    current_file = None
+    for s in sorted(symbols, key=lambda x: (x.file, x.line)):
+        if rel is None and s.file != current_file:
+            current_file = s.file
+            print(f'\n# {os.path.relpath(current_file, completer.project_root)}')
+        kind_prefix = {
+            'class': 'class ',
+            'function': 'def ',
+            'method': '    def ',
+            'import': '# import ',
+            'variable': '# var ',
+        }.get(s.kind, '')
+        sig = f' {s.signature}' if s.signature else ''
+        print(f'  {kind_prefix}{s.name}{sig}  # L{s.line}')
+
+
+def goto_cmd(args):
+    """Ir a la definición de un símbolo."""
+    completer = get_completer()
+
+    # Leer el archivo actual si se especifica, sino buscar en todo el proyecto
+    # Primero intentamos encontrar el símbolo en los símbolos indexados
+    stats = completer.index_project()
+
+    found = None
+    for s in completer._symbols:
+        if s.name == args.symbol:
+            found = s
+            break
+
+    if not found:
+        print(f'Símbolo no encontrado: {args.symbol}')
+        return
+
+    rel = os.path.relpath(found.file, completer.project_root)
+    print(f'{args.symbol} definido en {rel}:{found.line}')
+    print('-' * 60)
+
+    try:
+        lines = Path(found.file).read_text(encoding='utf-8', errors='ignore').split('\n')
+        start = max(0, found.line - 3)
+        end = min(len(lines), found.line + 5)
+        for i in range(start, end):
+            marker = '>>> ' if i == found.line - 1 else '    '
+            print(f'{marker}{i + 1:4d}  {lines[i]}')
+    except Exception as e:
+        print(f'Error leyendo archivo: {e}', file=sys.stderr)
+
+
+def repomap_cmd(args):
+    """Generar mapa compacto del repositorio."""
+    completer = get_completer()
+    print(completer.get_repo_map(max_chars=args.max_chars))
 
 
 def agents_cmd(lai: Any, args: Any) -> None:

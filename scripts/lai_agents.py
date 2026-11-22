@@ -17,6 +17,8 @@ import httpx
 
 from lai_tools import ToolRegistry
 
+from rag_local import get_rag
+
 # ---------------------------------------------------------------------------
 # System prompts especializados por dominio
 # ---------------------------------------------------------------------------
@@ -137,6 +139,47 @@ class SubAgent:
             return result
 
 
+class SharedMemory:
+    """Memoria vectorial compartida entre sub-agentes.
+
+    Permite que los sub-agentes almacenen y recuperen conocimiento
+    común usando búsqueda semántica (RAG local).
+    """
+
+    def __init__(self, collection_name: str = "shared_agent_memory"):
+        self.rag = get_rag()
+        self.collection = collection_name
+
+    def store(self, text: str, metadata: dict | None = None) -> str:
+        """Almacena un fragmento de conocimiento en la memoria compartida."""
+        meta = metadata or {}
+        doc_id = self.rag.add_document(
+            collection=self.collection,
+            text=text,
+            metadata=meta,
+        )
+        return doc_id
+
+    def search(self, query: str, top_k: int = 5) -> list[dict]:
+        """Busca conocimiento relevante en la memoria compartida."""
+        return self.rag.search(
+            query=query,
+            collection=self.collection,
+            top_k=top_k,
+            threshold=0.3,
+        )
+
+    def get_context(self, query: str, top_k: int = 3) -> str:
+        """Devuelve contexto de memoria como texto formateado para prompts."""
+        results = self.search(query, top_k=top_k)
+        if not results:
+            return ""
+        parts = ["Memoria compartida relevante:"]
+        for r in results:
+            parts.append(f"- [{r['score']:.2f}] {r['text'][:300]}")
+        return "\n".join(parts)
+
+
 class MultiAgentOrchestrator:
     """Orquesta múltiples sub-agentes especializados."""
 
@@ -153,6 +196,7 @@ class MultiAgentOrchestrator:
         self.base_url = base_url
         self.api_key = api_key
         self.allow_remote = allow_remote
+        self.shared_memory = SharedMemory()
         self.agents: dict[str, SubAgent] = {}
         self._initialize_agents()
 
@@ -178,7 +222,11 @@ class MultiAgentOrchestrator:
         return self.agents.get(name)
 
     def run_agent(self, agent_name: str, task: str) -> SubAgentResult:
-        """Ejecuta una tarea en un sub-agente específico."""
+        """Ejecuta una tarea en un sub-agente específico.
+
+        Inyecta contexto de memoria compartida antes de ejecutar.
+        Almacena el resultado en la memoria compartida si tuvo éxito.
+        """
         agent = self.get_agent(agent_name)
         if agent is None:
             return SubAgentResult(
@@ -188,7 +236,22 @@ class MultiAgentOrchestrator:
                 f'Disponibles: {", ".join(self.list_agents())}',
                 success=False,
             )
-        return agent.run(task)
+
+        # Inyectar contexto de memoria compartida en el prompt del agente
+        memory_context = self.shared_memory.get_context(task, top_k=3)
+        if memory_context:
+            agent.system_prompt = agent.system_prompt + "\n\n" + memory_context
+
+        result = agent.run(task)
+
+        # Almacenar resultado exitoso en memoria compartida
+        if result.success and result.output:
+            self.shared_memory.store(
+                text=f"[{agent_name}] {task}\nResultado: {result.output[:1000]}",
+                metadata={"agent": agent_name, "task": task, "success": True},
+            )
+
+        return result
 
     def run_pipeline(self, tasks: list[dict[str, str]]) -> list[SubAgentResult]:
         """Ejecuta una pipeline de tareas en diferentes sub-agentes.
@@ -208,7 +271,8 @@ class MultiAgentOrchestrator:
         """Ejecuta un flujo colaborativo entre sub-agentes para lograr una meta.
 
         Flujo: code → review → test → doc (opcional).
-        Cada sub-agente usa la salida del anterior como contexto.
+        Cada sub-agente usa la salida del anterior como contexto y
+        la memoria vectorial compartida persiste entre iteraciones.
         """
         pipeline = [
             {'agent': 'code', 'task': goal},
