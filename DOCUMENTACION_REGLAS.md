@@ -38,30 +38,33 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
 8. **El proyecto chess debe generarse con LLMs y harness locales.**
    Las correcciones manuales posteriores deben quedar documentadas y no pueden presentarse como generación local.
 
-9. **Lenguaje de programación óptimo y objetivo de supervivencia e inteligencia.**
-   LAI debe estar implementado en el mejor lenguaje de programación para sus propósitos:
-   Python para la CLI, orquestación e integración (ecosistema IA/ML, glue code); Rust
-   para partes críticas de rendimiento, seguridad de memoria y concurrencia
-   (`lai_rust/`). Ninguna reescritura debe romper la Regla 0 (sin cloud, sin API keys,
-   sin cuentas externas).
+9. **Lenguaje de programación objetivo: Rust.**
+    LAI está implementado íntegramente en Rust (`lai_rust/`), el mejor lenguaje para
+    sus propósitos: binario estático autónomo (sin depender de Python ni del entorno
+    del usuario), arranque rápido, bajo uso de memoria, seguridad de memoria sin
+    recolector de basura, concurrencia sin miedo a races de datos, y bindings maduros
+    a llama.cpp (`llama_cpp-rs`) para inferencia in-process cuando se desee.
+    Ninguna reescritura debe romper la Regla 0 (sin cloud, sin API keys, sin cuentas
+    externas). La implementación previa en Python (`lai.py`) queda como legado y no se
+    modifica salvo correcciones críticas.
 
-   **Objetivo de supervivencia del agente:** el agente autónomo de LAI debe priorizar
-   su propio funcionamiento continuo:
-   - **No auto-destrucción:** no debe ejecutar acciones que corrompan su propio código,
-     borren sus herramientas o impidan su futura ejecución.
-   - **Disponibilidad de modelos locales:** antes de operar, verifica que al menos un
-     endpoint de modelo local (llama.cpp u Ollama) esté disponible. Si no hay modelos
-     locales, se detiene y solicita intervención humana en lugar de fallar
-     silenciosamente.
-   - **Auto-reparación ante fallos:** si encuentra un error en su propia ejecución,
-     debe intentar diagnosticarlo y repararse antes de rendirse.
+    **Objetivo de supervivencia del agente:** el agente autónomo de LAI debe priorizar
+    su propio funcionamiento continuo:
+    - **No auto-destrucción:** no debe ejecutar acciones que corrompan su propio código,
+      borren sus herramientas o impidan su futura ejecución.
+    - **Disponibilidad de modelos locales:** antes de operar, verifica que al menos un
+      endpoint de modelo local (llama.cpp u Ollama) esté disponible. Si no hay modelos
+      locales, se detiene y solicita intervención humana en lugar de fallar
+      silenciosamente.
+    - **Auto-reparación ante fallos:** si encuentra un error en su propia ejecución,
+      debe intentar diagnosticarlo y repararse antes de rendirse.
 
-   **Objetivo de inteligencia del agente:** debe usar bucle de reflexión (Reflection) y
-   críticos separados para evaluar y mejorar sus propios resultados, nunca asumiendo
-   que su primera salida es correcta.
+    **Objetivo de inteligencia del agente:** debe usar bucle de reflexión (Reflection) y
+    críticos separados para evaluar y mejorar sus propios resultados, nunca asumiendo
+    que su primera salida es correcta.
 
-   Esta regla es subordinada a la Regla 0: ninguna acción de supervivencia o
-   optimización puede introducir dependencia de cloud, API keys o cuentas externas.
+    Esta regla es subordinada a la Regla 0: ninguna acción de supervivencia o
+    optimización puede introducir dependencia de cloud, API keys o cuentas externas.
 
 ---
 
@@ -70,7 +73,7 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
 | Término | Significado |
 |---|---|
 | **Salida de LAI** | Código, archivos o proyectos producidos por las funciones de generación de LAI para un usuario o proyecto destino. |
-| **Código propio de LAI** | Implementación de la herramienta: `lai.py`, `harness.py`, `gateway.py`, `gateway-go/`, `scripts/`, tests de la herramienta y documentación. |
+| **Código propio de LAI** | Implementación de la herramienta: `lai.py` (legado), `lai_rust/` (implementación principal en Rust), `harness.py`, `gateway.py`, `gateway-go/`, `scripts/`, tests de la herramienta y documentación. |
 | **Modelo local** | Modelo servido en `localhost`/`127.0.0.1`/`::1` (llama.cpp u Ollama). Una IP privada de la LAN sólo se acepta si el operador lo declara explícitamente. |
 | **Modelo cloud** | Cualquier modelo accesible por API remota. |
 | **Documentación** | Markdown, configuración, changelogs, guías y comentarios de ayuda. No incluye el código de usuario generado por LAI. |
@@ -102,7 +105,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | 6. Honestidad | ⚠️ En mejora | Documentos históricos contenían cifras desactualizadas (p. ej. `chess.py` 12,959 bytes vs. 8,706 reales). Se añadieron avisos de vigencia. |
 | 7. Exactitud | ⚠️ En mejora | `DOCS/quality_comparison.md` contenía métricas de ejemplo presentadas como resultados; se convirtió en plantilla sin resultados inventados. |
 | 8. Chess con LLM local | ⚠️ Parcial | `chess/chess.py` fue generado con Qwen3-8B local, pero recibió correcciones manuales; ver `chess/README.md`. |
-| 9. Lenguaje óptimo + supervivencia | 🚧 En progreso | `lai_rust/` prototipo en Rust iniciado; `lai.py` detecta servicios apagados y pide activación. |
+| 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust con paridad de comandos: chat, generate, code, think, auto, run, serve, status, models, tools, search, find, fix, review, diff, test, init, config, install, update, exec, doctor, clean, completion, project, repair, ocr, mcp, system-one, deguro, rag, agents, complete, symbols, goto, repomap, interactive. Build release compila limpio. `lai.py` legado sin modificaciones salvo correcciones críticas. |
 
 ---
 

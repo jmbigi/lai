@@ -10,7 +10,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
@@ -273,9 +273,7 @@ impl LlmClient {
                                     if data == "[DONE]" {
                                         break;
                                     }
-                                    if let Ok(chunk) =
-                                        serde_json::from_str::<StreamChunk>(data)
-                                    {
+                                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
                                         if let Some(choice) = chunk.choices.first() {
                                             if let Some(content) = &choice.delta.content {
                                                 print!("{}", content);

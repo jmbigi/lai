@@ -54,4 +54,5 @@ htmlcov/
 /home/kubuntu/models/*.gguf
 
 # Gateway logs (rotated)
-gateway-go/*.loglai_rust/target/
+gateway-go/*.log
+lai_rust/target/

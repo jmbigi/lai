@@ -5,9 +5,15 @@
 mod commands;
 mod llm;
 mod services;
+// mod tools;        // Has issues with quote crate
+// mod automode;     // Has borrow checker issues
+// mod agents;       // Has duplicate imports
+// mod session;      // OK
+// mod thinking;     // OK
+// mod config;       // OK
 
-use clap::Parser;
 use crate::commands::*;
+use clap::Parser;
 
 /// Current version (mirrors the Python project's version).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -49,7 +55,12 @@ struct Cli {
     )]
     lang: String,
 
-    #[arg(short = 't', long = "temp", default_value = "0.7", help = "Temperature")]
+    #[arg(
+        short = 't',
+        long = "temp",
+        default_value = "0.7",
+        help = "Temperature"
+    )]
     temp: f64,
 
     #[arg(long = "max-tokens", default_value = "4096", help = "Max tokens")]
@@ -149,11 +160,7 @@ enum Commands {
     Auto {
         #[arg(help = "Goal")]
         goal: String,
-        #[arg(
-            long = "max-iterations",
-            default_value = "10",
-            help = "Max iterations"
-        )]
+        #[arg(long = "max-iterations", default_value = "10", help = "Max iterations")]
         max_iterations: i32,
         #[arg(
             long = "max-turns",
@@ -177,11 +184,7 @@ enum Commands {
             help = "Bind address (default: loopback)"
         )]
         host: String,
-        #[arg(
-            long,
-            default_value = "8082",
-            help = "Port (default: 8082)"
-        )]
+        #[arg(long, default_value = "8082", help = "Port (default: 8082)")]
         port: u16,
     },
     /// Check status
@@ -194,10 +197,7 @@ enum Commands {
     Version,
     /// Generate shell completion script
     Completion {
-        #[arg(
-            default_value = "bash",
-            help = "Shell type (bash|zsh|fish)"
-        )]
+        #[arg(default_value = "bash", help = "Shell type (bash|zsh|fish)")]
         shell: String,
     },
     /// Search code/files
@@ -219,11 +219,7 @@ enum Commands {
         pattern: String,
         #[arg(default_value = ".", help = "Path to search")]
         path: String,
-        #[arg(
-            short = 't',
-            long = "type",
-            help = "File type (f=file, d=dir, l=link)"
-        )]
+        #[arg(short = 't', long = "type", help = "File type (f=file, d=dir, l=link)")]
         r#type: Option<String>,
         #[arg(long = "max-depth", help = "Max depth")]
         max_depth: Option<usize>,
@@ -234,11 +230,7 @@ enum Commands {
         path: String,
         #[arg(long = "auto", help = "Auto-fix without confirmation")]
         auto: bool,
-        #[arg(
-            long = "type",
-            default_value = "all",
-            help = "Type of fix"
-        )]
+        #[arg(long = "type", default_value = "all", help = "Type of fix")]
         fix_type: String,
     },
     /// Alias for fix
@@ -252,17 +244,9 @@ enum Commands {
     Review {
         #[arg(help = "File or directory to review")]
         path: String,
-        #[arg(
-            long = "focus",
-            default_value = "all",
-            help = "Focus area"
-        )]
+        #[arg(long = "focus", default_value = "all", help = "Focus area")]
         focus: String,
-        #[arg(
-            long = "format",
-            default_value = "text",
-            help = "Output format"
-        )]
+        #[arg(long = "format", default_value = "text", help = "Output format")]
         format: String,
     },
     /// Show diff
@@ -271,11 +255,7 @@ enum Commands {
         file1: String,
         #[arg(help = "Second file")]
         file2: String,
-        #[arg(
-            long = "context",
-            default_value = "3",
-            help = "Context lines"
-        )]
+        #[arg(long = "context", default_value = "3", help = "Context lines")]
         context: usize,
     },
     /// Run tests
@@ -291,19 +271,11 @@ enum Commands {
     },
     /// Initialize project
     Init {
-        #[arg(
-            long = "type",
-            default_value = "python",
-            help = "Project type"
-        )]
+        #[arg(long = "type", default_value = "python", help = "Project type")]
         project_type: String,
         #[arg(help = "Project name")]
         name: Option<String>,
-        #[arg(
-            long = "path",
-            default_value = ".",
-            help = "Target directory"
-        )]
+        #[arg(long = "path", default_value = ".", help = "Target directory")]
         path: String,
         #[arg(long = "git", help = "Initialize git repo")]
         git: bool,
@@ -312,24 +284,13 @@ enum Commands {
     Project {
         #[arg(help = "Project description")]
         description: Vec<String>,
-        #[arg(
-            long = "path",
-            default_value = ".",
-            help = "Target directory"
-        )]
+        #[arg(long = "path", default_value = ".", help = "Target directory")]
         path: String,
         #[arg(long = "git", help = "Initialize git repo")]
         git: bool,
-        #[arg(
-            long = "install",
-            help = "Install dependencies after generation"
-        )]
+        #[arg(long = "install", help = "Install dependencies after generation")]
         install: bool,
-        #[arg(
-            short = 'y',
-            long = "yes",
-            help = "Skip confirmation prompt"
-        )]
+        #[arg(short = 'y', long = "yes", help = "Skip confirmation prompt")]
         yes: bool,
         #[arg(long = "yolo", help = "YOLO mode (no confirmations)")]
         yolo: bool,
@@ -349,11 +310,7 @@ enum Commands {
     Install {
         #[arg(help = "Packages to install")]
         packages: Vec<String>,
-        #[arg(
-            short = 'r',
-            long = "requirements",
-            help = "Requirements file"
-        )]
+        #[arg(short = 'r', long = "requirements", help = "Requirements file")]
         requirements: Option<String>,
         #[arg(long = "dev", help = "Install dev dependencies")]
         dev: bool,
@@ -411,37 +368,17 @@ enum Commands {
             help = "System One endpoint"
         )]
         endpoint: String,
-        #[arg(
-            long = "model",
-            default_value = "nimble",
-            help = "Decision model name"
-        )]
+        #[arg(long = "model", default_value = "nimble", help = "Decision model name")]
         model: String,
-        #[arg(
-            long = "type",
-            required = true,
-            help = "Decision type"
-        )]
+        #[arg(long = "type", required = true, help = "Decision type")]
         decision_type: String,
-        #[arg(
-            long = "state",
-            required = true,
-            help = "State/context"
-        )]
+        #[arg(long = "state", required = true, help = "State/context")]
         state: String,
-        #[arg(
-            long = "question",
-            required = true,
-            help = "Question"
-        )]
+        #[arg(long = "question", required = true, help = "Question")]
         question: String,
         #[arg(long = "options", help = "Options for choice type")]
         options: Vec<String>,
-        #[arg(
-            long = "scale",
-            default_value = "1-10",
-            help = "Scale for score type"
-        )]
+        #[arg(long = "scale", default_value = "1-10", help = "Scale for score type")]
         scale: String,
         #[arg(
             long = "temp",
@@ -449,11 +386,7 @@ enum Commands {
             help = "Temperature for generation"
         )]
         temp: f64,
-        #[arg(
-            long = "precision",
-            default_value = "q4_k_m",
-            help = "Model precision"
-        )]
+        #[arg(long = "precision", default_value = "q4_k_m", help = "Model precision")]
         precision: String,
         #[arg(long = "json", help = "JSON output")]
         json: bool,
@@ -502,29 +435,15 @@ enum Commands {
     Rag {
         #[arg(help = "Search query")]
         query: String,
-        #[arg(
-            short = 'c',
-            long = "collection",
-            help = "Collection name to search"
-        )]
+        #[arg(short = 'c', long = "collection", help = "Collection name to search")]
         collection: Option<String>,
-        #[arg(
-            long = "top-k",
-            default_value = "5",
-            help = "Number of results"
-        )]
+        #[arg(long = "top-k", default_value = "5", help = "Number of results")]
         top_k: i32,
         #[arg(long = "index", help = "Index current directory before searching")]
         index: bool,
-        #[arg(
-            long = "chunked",
-            help = "Use smart chunking for code files"
-        )]
+        #[arg(long = "chunked", help = "Use smart chunking for code files")]
         chunked: bool,
-        #[arg(
-            long = "hybrid",
-            help = "Use hybrid search (vector + keyword)"
-        )]
+        #[arg(long = "hybrid", help = "Use hybrid search (vector + keyword)")]
         hybrid: bool,
         #[arg(
             long = "chunk-size",
@@ -535,9 +454,7 @@ enum Commands {
     },
     /// Sub-agents (multi-agent)
     Agents {
-        #[arg(
-            help = "Action: list, run, pipeline, collaborative"
-        )]
+        #[arg(help = "Action: list, run, pipeline, collaborative")]
         action: String,
         #[arg(
             short = 'a',
@@ -579,11 +496,7 @@ enum Commands {
             help = "Cursor column (0-indexed)"
         )]
         column: i32,
-        #[arg(
-            long = "top-k",
-            default_value = "10",
-            help = "Number of results"
-        )]
+        #[arg(long = "top-k", default_value = "10", help = "Number of results")]
         top_k: i32,
         #[arg(long = "index", help = "Index project before completing")]
         index: bool,
@@ -606,29 +519,16 @@ enum Commands {
     },
     /// Generate repository map
     Repomap {
-        #[arg(
-            long = "max-chars",
-            default_value = "8000",
-            help = "Max characters"
-        )]
+        #[arg(long = "max-chars", default_value = "8000", help = "Max characters")]
         max_chars: i32,
     },
     /// Interactive terminal
     Interactive {
-        #[arg(
-            long = "no-stream",
-            help = "Disable response streaming"
-        )]
+        #[arg(long = "no-stream", help = "Disable response streaming")]
         no_stream: bool,
-        #[arg(
-            long = "thinking",
-            help = "Enable thinking mode"
-        )]
+        #[arg(long = "thinking", help = "Enable thinking mode")]
         thinking: bool,
-        #[arg(
-            long = "no-thinking",
-            help = "Disable thinking mode"
-        )]
+        #[arg(long = "no-thinking", help = "Disable thinking mode")]
         no_thinking: bool,
         #[arg(
             short = 't',
@@ -637,11 +537,7 @@ enum Commands {
             help = "Model temperature"
         )]
         temp: f64,
-        #[arg(
-            long = "max-tokens",
-            default_value = "4096",
-            help = "Max tokens"
-        )]
+        #[arg(long = "max-tokens", default_value = "4096", help = "Max tokens")]
         max_tokens: i32,
     },
 }
@@ -696,6 +592,7 @@ async fn main() {
                 max_tokens,
                 &cli.model,
                 &cli.base_url,
+                cli.allow_remote,
             )
             .await;
         }
@@ -714,11 +611,12 @@ async fn main() {
                 max_iterations,
                 &cli.model,
                 &cli.base_url,
+                cli.allow_remote,
             )
             .await;
         }
         Some(Commands::Think { problem }) => {
-            cmd_think(&problem, &cli.model, &cli.base_url).await;
+            cmd_think(&problem, &cli.model, &cli.base_url, cli.allow_remote).await;
         }
         Some(Commands::Auto {
             goal,
@@ -726,11 +624,17 @@ async fn main() {
             max_turns,
             no_cost,
         }) => {
-            // Auto mode not yet ported to Rust
-            println!(
-                "Auto mode: not yet ported to Rust. Goal: {}",
-                goal
-            );
+            cmd_auto(
+                &goal,
+                max_iterations as usize,
+                max_turns as usize,
+                !no_cost,
+                &cli.model,
+                &cli.base_url,
+                cli.allow_remote,
+                cli.tools || cli.auto,
+            )
+            .await;
         }
         Some(Commands::Run { script }) => {
             cmd_run(&script);
@@ -739,7 +643,7 @@ async fn main() {
             cmd_serve(&host, port, &cli.model, &cli.base_url);
         }
         Some(Commands::Status) => {
-            cmd_status();
+            cmd_status().await;
         }
         Some(Commands::Models) => {
             cmd_models();
@@ -785,7 +689,15 @@ async fn main() {
             focus,
             format,
         }) => {
-            cmd_review(&path, &focus, &format, &cli.model, &cli.base_url).await;
+            cmd_review(
+                &path,
+                &focus,
+                &format,
+                &cli.model,
+                &cli.base_url,
+                cli.allow_remote,
+            )
+            .await;
         }
         Some(Commands::Diff {
             file1,
@@ -812,10 +724,10 @@ async fn main() {
         }
         Some(Commands::Project {
             description,
-            path,
-            git,
-            install,
-            yes,
+            path: _,
+            git: _,
+            install: _,
+            yes: _,
             yolo: _,
         }) => {
             println!(
@@ -851,11 +763,7 @@ async fn main() {
         Some(Commands::Doctor { fix }) => {
             cmd_doctor(fix);
         }
-        Some(Commands::Clean {
-            all,
-            cache,
-            build,
-        }) => {
+        Some(Commands::Clean { all, cache, build }) => {
             cmd_clean(all, cache, build);
         }
         Some(Commands::Ocr {

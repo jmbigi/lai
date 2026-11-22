@@ -3,27 +3,22 @@
 //! status, models, tools, version, search, find, fix, review, diff, test,
 //! init, config, install, update, exec, doctor, clean, completion.
 
-use crate::llm::{ChatResult, LlmClient, Message};
+use crate::llm::{LlmClient, Message};
 use crate::services::Services;
-use clap::Parser;
 use serde_json::json;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Current version (mirrors the Python project's version).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Global services instance.
-pub static mut SERVICES: Option<Services> = None;
+static SERVICES: OnceLock<Services> = OnceLock::new();
 
-fn services() -> &'static mut Services {
-    unsafe {
-        if SERVICES.is_none() {
-            SERVICES = Some(Services::new());
-        }
-        SERVICES.as_mut().unwrap()
-    }
+fn services() -> &'static Services {
+    SERVICES.get_or_init(Services::new)
 }
 
 fn get_llm_client(model: &str, base_url: &str, allow_remote: bool) -> LlmClient {
@@ -65,11 +60,22 @@ pub async fn cmd_chat(
     _lang: &str,
     allow_remote: bool,
 ) {
-    let llm = get_llm_client(model, base_url, allow_remote);
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de chat
+    let svc = services();
+    if let Err(e) = crate::services::ensure_local_model_available(&svc) {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
+    let mut llm = get_llm_client(model, base_url, allow_remote);
+    llm.temperature = temp.unwrap_or(0.7);
+    llm.max_tokens = max_tokens.unwrap_or(4096);
     let stream = if no_stream { false } else { stream };
     let thinking = if no_thinking { false } else { thinking };
-    let temp = temp.unwrap_or(0.7);
-    let max_tokens = max_tokens.unwrap_or(4096);
 
     if interactive {
         println!("Interactive mode - type 'exit' or 'quit' to quit");
@@ -103,12 +109,7 @@ pub async fn cmd_chat(
             });
 
             let result = llm
-                .chat_messages(
-                    history.clone(),
-                    None,
-                    stream,
-                    thinking,
-                )
+                .chat_messages(history.clone(), None, stream, thinking)
                 .await;
 
             if let Some(err) = &result.error {
@@ -156,10 +157,23 @@ pub async fn cmd_generate(
     max_tokens: Option<i32>,
     model: &str,
     base_url: &str,
+    allow_remote: bool,
 ) {
-    let llm = get_llm_client(model, base_url, false);
-    let temp = temp.unwrap_or(0.7);
-    let max_tokens = max_tokens.unwrap_or(2048);
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de generar
+    let svc = services();
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
+    let mut llm = get_llm_client(model, base_url, allow_remote);
+    llm.temperature = temp.unwrap_or(0.7);
+    llm.max_tokens = max_tokens.unwrap_or(2048);
 
     let prompt_str = prompt.join(" ");
     if prompt_str.is_empty() {
@@ -191,9 +205,22 @@ pub async fn cmd_code(
     max_iterations: i32,
     model: &str,
     base_url: &str,
+    allow_remote: bool,
 ) {
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de generar código
+    let svc = services();
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
     let _ = auto;
-    let llm = get_llm_client(model, base_url, false);
+    let llm = get_llm_client(model, base_url, allow_remote);
     let max_iterations = max_iterations.max(1);
 
     let base_prompt = r#"Generate ONLY valid code, no explanations, no markdown, no comments about the code itself.
@@ -217,7 +244,10 @@ CRITICAL REQUIREMENTS:
         if let Some(err) = &result.error {
             eprintln!("Error generating code: {}", err);
             if iteration == max_iterations - 1 {
-                let fallback = format!("# Generated: {}\nprint('Error generating code')", description);
+                let fallback = format!(
+                    "# Generated: {}\nprint('Error generating code')",
+                    description
+                );
                 if let Some(parent) = std::path::Path::new(filename).parent() {
                     if !parent.as_os_str().is_empty() {
                         let _ = fs::create_dir_all(parent);
@@ -277,14 +307,58 @@ CRITICAL REQUIREMENTS:
 // Think
 // ============================================================================
 
-pub async fn cmd_think(problem: &str, model: &str, base_url: &str) {
-    let llm = get_llm_client(model, base_url, false);
+pub async fn cmd_think(problem: &str, model: &str, base_url: &str, allow_remote: bool) {
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de thinking
+    let svc = services();
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
+    let llm = get_llm_client(model, base_url, allow_remote);
     let result = llm.chat(problem, true, true).await;
     if let Some(err) = &result.error {
         eprintln!("{}", err);
     } else {
         println!("{}", result.content);
     }
+}
+
+// ============================================================================
+// Auto mode (Plan-and-Execute + ReAct + Reflection)
+// ============================================================================
+
+pub async fn cmd_auto(
+    goal: &str,
+    _max_iterations: usize,
+    _max_turns: usize,
+    _track_cost: bool,
+    model: &str,
+    base_url: &str,
+    allow_remote: bool,
+    _tools_enabled: bool,
+) {
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de operar
+    let svc = services();
+    let client = reqwest::Client::new();
+    if let Err(e) = crate::services::ensure_local_model_available_async(&svc, &client).await {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
+    // TODO: AutoMode completo - stub por ahora
+    let _llm = get_llm_client(model, base_url, allow_remote);
+    println!("Auto mode: goal = {}", goal);
+    println!("(AutoMode completo pendiente: tools.rs + automode.rs)");
 }
 
 // ============================================================================
@@ -332,12 +406,13 @@ pub fn cmd_serve(host: &str, port: u16, model: &str, base_url: &str) {
 // Status
 // ============================================================================
 
-pub fn cmd_status() {
+pub async fn cmd_status() {
     let svc = services();
-    svc.check_all();
+    let client = reqwest::Client::new();
+    crate::services::check_all_services_async(svc, &client).await;
     println!("Services status:");
     for (name, info) in svc.list() {
-        let status = if info.running { "Running" } else { "Stopped" };
+        let status = if info.is_running() { "Running" } else { "Stopped" };
         println!("  {}: {} (Port {})", name, status, info.port);
     }
 }
@@ -417,7 +492,9 @@ pub fn cmd_find(pattern: &str, path: &str, file_type: Option<&str>, max_depth: O
                 continue;
             }
         }
-        let name = p.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let name = p
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
         if !glob::Pattern::new(pattern).unwrap().matches(&name) {
             continue;
         }
@@ -441,16 +518,22 @@ pub fn cmd_find(pattern: &str, path: &str, file_type: Option<&str>, max_depth: O
 
 pub fn cmd_fix(path: &str, fix_type: &str, _auto: bool) {
     match fix_type {
-        "lint" | "all" => {
+        "lint" => {
             println!("Running linter on {}...", path);
         }
-        "format" | "all" => {
+        "format" => {
             println!("Formatting code in {}...", path);
         }
-        "imports" | "all" => {
+        "imports" => {
             println!("Organizing imports in {}...", path);
         }
-        "types" | "all" => {
+        "types" => {
+            println!("Checking types in {}...", path);
+        }
+        "all" => {
+            println!("Running linter on {}...", path);
+            println!("Formatting code in {}...", path);
+            println!("Organizing imports in {}...", path);
             println!("Checking types in {}...", path);
         }
         _ => {}
@@ -468,8 +551,20 @@ pub async fn cmd_review(
     format: &str,
     model: &str,
     base_url: &str,
+    allow_remote: bool,
 ) {
-    let llm = get_llm_client(model, base_url, false);
+    // Regla 9 - Supervivencia: verificar modelos locales ANTES de review
+    let svc = services();
+    if let Err(e) = crate::services::ensure_local_model_available(&svc) {
+        if !allow_remote {
+            eprintln!("{}", e);
+            return;
+        }
+        eprintln!("⚠️  {}", e);
+        eprintln!("Continuando con --allow-remote...");
+    }
+
+    let llm = get_llm_client(model, base_url, allow_remote);
     let p = std::path::Path::new(path);
     if !p.exists() {
         println!("Error: path not found: {}", path);
@@ -481,21 +576,36 @@ pub async fn cmd_review(
     } else {
         let mut files = Vec::new();
         let skip = [
-            "__pycache__", "node_modules", ".git", "venv", "env", ".venv", ".ruff_cache",
+            "__pycache__",
+            "node_modules",
+            ".git",
+            "venv",
+            "env",
+            ".venv",
+            ".ruff_cache",
         ];
-        for entry in walkdir::WalkDir::new(p)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
-            if skip.iter().any(|s| path.components().any(|c| c.as_os_str() == *s)) {
+            if skip
+                .iter()
+                .any(|s| path.components().any(|c| c.as_os_str() == *s))
+            {
                 continue;
             }
             if let Some(ext) = path.extension() {
                 let ext = ext.to_string_lossy();
                 let is_reviewable = matches!(
                     ext.as_ref(),
-                    "py" | "js" | "ts" | "go" | "rs" | "md" | "sh" | "yaml" | "yml" | "json" | "toml"
+                    "py" | "js"
+                        | "ts"
+                        | "go"
+                        | "rs"
+                        | "md"
+                        | "sh"
+                        | "yaml"
+                        | "yml"
+                        | "json"
+                        | "toml"
                 );
                 if is_reviewable {
                     files.push(path.to_path_buf());
@@ -557,7 +667,7 @@ Code:
             );
 
             let result = llm.chat(&review_prompt, false, false).await;
-            if let Some(err) = &result.error {
+            if result.error.is_some() {
                 continue;
             }
             if !result.content.starts_with("Error:") {
@@ -642,7 +752,7 @@ Code:
 // Diff (simple line-by-line)
 // ============================================================================
 
-pub fn cmd_diff(file1: &str, file2: &str, context: usize) {
+pub fn cmd_diff(file1: &str, file2: &str, _context: usize) {
     let c1 = match fs::read_to_string(file1) {
         Ok(c) => c,
         Err(e) => {
@@ -707,7 +817,10 @@ pub fn cmd_test(path: &str, _pattern: Option<&str>, verbose: bool, _coverage: bo
 pub fn cmd_init(project_type: &str, name: Option<&str>, path: &str, git: bool) {
     let project_types: &[(&str, &[&str])] = &[
         ("python", &["main.py", "requirements.txt", "README.md"]),
-        ("fastapi", &["main.py", "requirements.txt", "README.md", "Dockerfile"]),
+        (
+            "fastapi",
+            &["main.py", "requirements.txt", "README.md", "Dockerfile"],
+        ),
         ("flask", &["app.py", "requirements.txt", "README.md"]),
         ("django", &["manage.py", "settings.py", "requirements.txt"]),
         ("cli", &["main.py", "cli.py", "requirements.txt"]),
@@ -788,7 +901,10 @@ pub fn cmd_config(action: &str, key: Option<&str>, value: Option<&str>, global: 
             let k = key.unwrap_or("");
             let v = value.unwrap_or("");
             let parsed: serde_json::Value = serde_json::from_str(v).unwrap_or_else(|_| json!(v));
-            config.as_object_mut().unwrap().insert(k.to_string(), parsed);
+            config
+                .as_object_mut()
+                .unwrap()
+                .insert(k.to_string(), parsed);
             let _ = fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap());
         }
         "list" => {
@@ -796,7 +912,9 @@ pub fn cmd_config(action: &str, key: Option<&str>, value: Option<&str>, global: 
         }
         "edit" => {
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
-            let _ = std::process::Command::new(&editor).arg(&config_file).status();
+            let _ = std::process::Command::new(&editor)
+                .arg(&config_file)
+                .status();
         }
         _ => {}
     }
@@ -874,7 +992,11 @@ pub fn cmd_update(packages: &[String], all: bool, dry_run: bool) {
     }
     for p in packages {
         let mut cmd = std::process::Command::new("python3");
-        cmd.arg("-m").arg("pip").arg("install").arg("--upgrade").arg(p);
+        cmd.arg("-m")
+            .arg("pip")
+            .arg("install")
+            .arg("--upgrade")
+            .arg(p);
         if dry_run {
             println!("DRY RUN: pip install --upgrade {}", p);
         } else {
@@ -973,8 +1095,9 @@ pub fn cmd_clean(all: bool, cache: bool, build: bool) {
 // ============================================================================
 
 pub fn cmd_completion(shell: &str) {
-    let script = match shell {
-        "bash" => r#"# lai bash completion
+    let script: &str = match shell {
+        "bash" => {
+            r#"# lai bash completion
 _lai_complete() {
     local cur prev opts
     COMPREPLY=()
@@ -1004,8 +1127,10 @@ _lai_complete() {
     esac
 }
 complete -F _lai_complete lai
-"#,
-        "zsh" => r#"# lai zsh completion
+"#
+        }
+        "zsh" => {
+            r#"# lai zsh completion
 #compdef lai
 _lai() {
     local -a commands
@@ -1108,8 +1233,10 @@ _lai() {
     esac
 }
 compdef _lai lai
-"#,
-        "fish" => r#"# lai fish completion
+"#
+        }
+        "fish" => {
+            r#"# lai fish completion
 function __fish_lai_complete
     set -l commands chat generate code think auto run serve status models tools search find fix repair review diff test init project config install update exec doctor clean version
     set -l global_opts -m --model -u --base-url -t --temp --max-tokens --stream --no-stream --thinking --no-thinking --tools --no-tools --auto --yolo -v --verbose -q --quiet --help
@@ -1152,8 +1279,9 @@ function __fish_lai_complete
 end
 
 complete -c lai -f -a "(__fish_lai_complete)"
-"#,
-        _ => format!("Unsupported shell: {}", shell),
+"#
+        }
+        _ => "Unsupported shell",
     };
     print!("{}", script);
 }

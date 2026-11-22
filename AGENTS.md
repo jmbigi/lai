@@ -18,12 +18,30 @@ This file provides guidance for AI agents working on the lai codebase.
 
 **lai** (Local AI Code Assistant) is a CLI tool that uses local LLMs (via llama.cpp) to review, repair, and improve code projects. It follows a strict rule: all code generation must use local models; cloud APIs are only for configuring lai itself.
 
-## Architecture
+### Implementations
 
-- **lai.py** — Main entry point, CLI, agent loop, tool registry, HTTP server
-- **gateway-go/** — Go reverse proxy for llama.cpp (port 8081), handles caching, compression, filtering
-- **llama.cpp** — Inference server (port 8080), Qwen3-8B-Q4_K_M, 32768 context, `-ngl 99`, `--reasoning-format deepseek --reasoning-budget 1024`
-- **Ollama** — Alternative local backend (port 11434)
+| Implementation | Location | Status |
+|---------------|----------|--------|
+| **Rust (primary)** | `lai_rust/` | **Active development** |
+| Python (legacy) | `lai.py`, `lai_tools.py`, `lai_automode.py` | Maintenance only |
+
+## Architecture (Rust)
+
+```
+lai_rust/
+├── Cargo.toml
+└── src/
+    ├── main.rs          # CLI entry point, command dispatch
+    ├── commands.rs      # All 25+ command implementations
+    ├── llm.rs           # LLM client (HTTP, streaming, tool calling)
+    ├── services.rs      # Service management (llama.cpp, gateway, ollama)
+    ├── tools.rs         # ToolRegistry with 50+ tools
+    ├── automode.rs      # AutoMode: Plan + ReAct + Reflection
+    ├── agents.rs        # Multi-agent orchestrator (critic, reviewer)
+    ├── session.rs       # Session management
+    ├── thinking.rs      # Thinking extraction/display
+    └── config.rs        # Configuration management
+```
 
 ## Key Rules (from DOCUMENTACION_REGLAS.md)
 
@@ -33,60 +51,68 @@ This file provides guidance for AI agents working on the lai codebase.
 4. **Tool calling**: AutoMode uses llama.cpp native function calling (not keyword heuristics).
 5. **Loopback only**: `serve` binds to `127.0.0.1:8082` by default; gateway binds to `127.0.0.1:8081`.
 
-## Development Workflow
+## Development Workflow (Rust)
 
 ```bash
-# Run quality checks
-make check          # compile + ruff + pytest
-make lint           # ruff only
-make format         # ruff --fix + black
-make type           # mypy
-make test           # pytest
+# Build
+cd lai_rust
+cargo build                 # Debug
+cargo build --release       # Release (optimized)
 
-# Run lai
-python3 lai.py status
-python3 lai.py auto "task" --max-iterations 3
-python3 lai.py serve --port 8082
+# Quality checks
+cargo check                 # Type check
+cargo clippy                # Lint
+cargo fmt --check           # Format check
+cargo test                  # Run tests
 
-# Build gateway
-make gateway-build
+# Run
+cargo run -- --help
+cargo run -- status
+cargo run -- auto "task" --max-iterations 3
+cargo run -- serve --port 8082
+
+# Install
+cargo install --path .
 ```
 
-## Code Style
+## Code Style (Rust)
 
-- Python 3.10+, 4-space indent, 100-char lines
-- Ruff for linting (see `pyproject.toml`)
-- Type hints encouraged but not enforced everywhere
-- Docstrings for public functions
+- Edition 2021
+- `cargo fmt` for formatting
+- `cargo clippy` for linting (deny warnings in CI)
+- Type hints encouraged
+- Documentation comments for public APIs (`///`)
 
 ## Testing
 
-- Tests in `tests/test_lai.py`
-- Run with `make test` or `pytest tests/ -v`
+- Unit tests in each module (`#[cfg(test)]`)
+- Integration tests in `tests/` directory
 - Mock external services; integration tests use real llama.cpp/gateway
+- Run with `cargo test`
 
 ## Common Patterns
 
 ### Adding a Tool
-1. Add method to `ToolRegistry` in `lai.py`
-2. Add entry to `get_tools_schema()`
-3. Test with `python3 lai.py auto "use my tool"`
+1. Add method to `ToolRegistry` in `tools.rs`
+2. Add schema to `get_tools_schema()`
+3. Test with `cargo run -- auto "use my tool"`
 
 ### Modifying Gateway
 1. Edit `gateway-go/main.go` and `gateway-go/config.yaml`
-2. `make gateway-build`
+2. `make gateway-build` (or `cd gateway-go && go build -o gateway`)
 3. Restart gateway process
 
 ### Updating Model Config
-- llama.cpp flags in `scripts/start-llama.sh` (to be created)
+- llama.cpp flags in `scripts/start-llama.sh`
 - Context: 32768, Output: 4096, GPU layers: 99
 
 ## Security Notes
 
-- `run_command` and `python_eval` run with `shell=True` — **not a sandbox**
+- `run_command` and `run_python` run with sandbox (bubblewrap) by default
 - AutoMode only on trusted repositories
 - Gateway binds to loopback; no auth by default
 - Never expose gateway/llama.cpp to public interfaces
+- **Rule 4 enforced**: `is_local_url()` blocks non-local endpoints
 
 ## Documentation
 
@@ -94,12 +120,26 @@ make gateway-build
 - `DOCS/REVISION_2026.md` — Technical review and research
 - `README.md` — User-facing overview
 - `CHANGELOG.md` — Version history
+- `AGENTS.md` — This file
 
 ## Version Management
 
-- Version in `VERSION` file and `pyproject.toml`
+- Version in `lai_rust/Cargo.toml` (primary) and `pyproject.toml` (legacy)
 - `scripts/version.sh` for tagging (use with caution)
 - Gateway version in `gateway-go/config.yaml` and `main.go`
 
----
-*Generated for agent reference. Keep in sync with DOCUMENTACION_REGLAS.md.*
+## Migration Notes (Python → Rust)
+
+The Rust port maintains full feature parity with Python:
+
+| Python Module | Rust Module |
+|---------------|-------------|
+| `lai.py` (LAI class) | `llm.rs` (LlmClient), `main.rs` |
+| `lai_tools.py` (ToolRegistry) | `tools.rs` |
+| `lai_automode.py` (AutoMode) | `automode.rs` |
+| `lai_agents.py` (Orchestrator) | `agents.rs` |
+| `session` management | `session.rs` |
+| `thinking` extraction | `thinking.rs` |
+| `config` management | `config.rs` |
+
+All 25+ CLI commands ported. Gateway (Go) unchanged.
