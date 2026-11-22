@@ -373,6 +373,7 @@ class LAI:
         self.base_url = base_url
         self.api_key = api_key
         self.allow_remote = allow_remote
+        self.yolo = False
         self.harness = None
         self.thinking = True
         self.stream = True
@@ -2562,6 +2563,7 @@ Examples:
     parser.add_argument('--no-thinking', action='store_true', help='Disable thinking mode')
     parser.add_argument('--tools', action='store_true', help='Enable tools')
     parser.add_argument('--no-tools', action='store_true', help='Disable tools')
+    parser.add_argument('--yolo', action='store_true', help='YOLO mode: no confirmations, no approvals, full autonomy')
     parser.add_argument('--auto', action='store_true', help='Auto mode')
     parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output')
@@ -2912,6 +2914,11 @@ Examples:
     )
     lai.temp = args.temp
     lai.max_tokens = args.max_tokens
+    lai.yolo = bool(getattr(args, 'yolo', False))
+    if lai.yolo:
+        lai.tools.disable_approval()
+    else:
+        lai.tools.enable_approval()
     if getattr(args, 'stream', False):
         lai.stream = True
     if getattr(args, 'no_stream', False):
