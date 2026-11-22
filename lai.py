@@ -38,6 +38,7 @@ from lai_agents import get_orchestrator  # noqa: E402
 from lai_automode import AutoMode  # noqa: E402
 from lai_tools import ToolRegistry  # noqa: E402
 from rag_local import get_rag  # noqa: E402
+from deguro import Deguro, DiscoveredModel, quick_discover  # noqa: E402
 
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -217,16 +218,83 @@ def check_services():
     return SERVICES
 
 
-def auto_start_services():
-    """Auto-start all configured services if not running."""
+def get_stopped_services() -> list[str]:
+    """Return the names of services that are not running."""
+    check_services()
+    return [name for name, service in SERVICES.items() if not service["running"]]
+
+
+def prompt_start_stopped_services() -> dict[str, bool]:
+    """Detect stopped services and ask the user whether to start each one.
+
+    Returns a dict mapping service name -> True if started, False if skipped/unavailable.
+    """
+    stopped = get_stopped_services()
+    if not stopped:
+        return {}
+
+    results: dict[str, bool] = {}
+    for name in stopped:
+        service = SERVICES[name]
+        script = service.get("script")
+        can_start = bool(script and os.path.exists(script))
+
+        print(f"⚠️  Servicio '{name}' está APAGADO (puerto {service['port']}).")
+        if not can_start:
+            print(f"   No se encontró ejecutable para iniciarlo: {script}")
+            results[name] = False
+            continue
+
+        if name == "llama.cpp":
+            model = os.environ.get("LAI_LLAMA_MODEL", "").strip()
+            if not model or not os.path.isfile(model):
+                print("   Para iniciarlo, define LAI_LLAMA_MODEL=/path/to/model.gguf")
+                results[name] = False
+                continue
+
+        try:
+            resp = input(f"   ¿Iniciar '{name}' ahora? [s/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("   Operación cancelada por el usuario.")
+            results[name] = False
+            continue
+
+        if resp in ("s", "si", "sí", "y", "yes"):
+            results[name] = start_service(name)
+        else:
+            print(f"   '{name}' permanecerá apagado.")
+            results[name] = False
+
+    return results
+
+
+def auto_start_services(interactive: bool = True) -> dict[str, bool]:
+    """Auto-start all configured services if not running.
+
+    When interactive=True, asks the user before starting each stopped service.
+    Returns a dict mapping service name -> True if started, False if skipped.
+    """
+    check_services()
+    all_running = all(service["running"] for service in SERVICES.values())
+    if all_running:
+        print("Todos los servicios locales están en ejecución.")
+        return {}
+
+    if interactive:
+        print("Se detectaron servicios detenidos.")
+        return prompt_start_stopped_services()
+
     print("Checking and starting local services...")
+    results: dict[str, bool] = {}
     for name, service in SERVICES.items():
         health_path = service.get("health_path", "/health")
         if check_service(service["port"], health_path):
             service["running"] = True
             print(f'{name} already running on port {service["port"]}')
+            results[name] = True
         else:
-            start_service(name)
+            results[name] = start_service(name)
+    return results
     return check_services()
 
 
@@ -2833,6 +2901,50 @@ Examples:
     so_parser.add_argument("--json", action="store_true", help="JSON output")
     so_parser.set_defaults(func=lambda a: system_one_cmd(get_lai_instance(), a))
 
+    # ---------------------------------------------------------------
+    # deguro – descubrimiento de modelos de IA locales y remotas
+    # ---------------------------------------------------------------
+    deguro_parser = subparsers.add_parser(
+        "deguro", help="Descubrir modelos de IA locales y remotas (endpoints de inferencia)"
+    )
+    deguro_parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="También escanear endpoints remotos (no loopback). Requiere consentimiento explícito.",
+    )
+    deguro_parser.add_argument(
+        "--endpoint",
+        "-e",
+        action="append",
+        default=[],
+        help="Endpoint adicional a escanear (puede repetirse)",
+    )
+    deguro_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=3.0,
+        help="Tiempo de espera por endpoint en segundos (default: 3.0)",
+    )
+    deguro_parser.add_argument(
+        "--tarea",
+        "-t",
+        default="",
+        help="Tarea a ejecutar en el benchmark entre modelos descubiertos",
+    )
+    deguro_parser.add_argument(
+        "--criterios",
+        "-c",
+        default="",
+        help="Criterios de evaluación separados por coma (ej: corrección,legibilidad,rendimiento)",
+    )
+    deguro_parser.add_argument(
+        "--repetir",
+        type=int,
+        default=1,
+        help="Número de repeticiones por modelo (default: 1)",
+    )
+    deguro_parser.set_defaults(func=lambda a: deguro_cmd(a))
+
     # RAG semantic search command
     rag_parser = subparsers.add_parser(
         "rag", help="Semantic search with local RAG (sentence-transformers + numpy)"
@@ -3016,6 +3128,11 @@ Examples:
         complete_cmd(args)
         return
 
+    # Comando deguro: descubrimiento de modelos de IA (no usa args.func)
+    if args.command == "deguro":
+        deguro_cmd(args)
+        return
+
     # Auto-start services (skip for commands that don't need llama.cpp/gateway)
     offline_commands = {
         "mcp",
@@ -3025,13 +3142,24 @@ Examples:
         "repomap",
         "complete",
         "rag",
+        "deguro",
     }
     if args.command not in offline_commands and not args.quiet:
         print("Checking services...")
         check_services()
+        stopped = [name for name, info in SERVICES.items() if not info["running"]]
         for name, info in SERVICES.items():
             status = "Running" if info["running"] else "Stopped"
             print(f'  {name}: {status} (Port {info["port"]})')
+
+        if stopped:
+            print("\n⚠️  Algunos servicios básicos están apagados.")
+            start_results = prompt_start_stopped_services()
+            started = [n for n, ok in start_results.items() if ok]
+            if started:
+                print(f"\n✅ Servicios iniciados: {', '.join(started)}")
+            else:
+                print("\n⚠️  Ningún servicio se inició. Algunas funciones de LAI requieren llama.cpp u Ollama.")
 
     args.func(args)
 
@@ -3498,6 +3626,302 @@ def interactive_cmd(lai: Any, args: Any) -> None:
         except Exception as e:
             print(f"Error: {e}")
             history.pop()  # quitar el user entry si falló
+
+
+def deguro_cmd(args: Any) -> None:
+    """Descubre y compara modelos de IA locales y remotas.
+
+    Descubre endpoints de inferencia (llama.cpp, Ollama) y permite
+    comparar el mismo prompt entre múltiples modelos para evaluar
+    cuál da mejores resultados.
+    """
+    from deguro import Deguro
+
+    discoverer = Deguro(
+        allow_remote=args.allow_remote,
+        timeout=args.timeout,
+        extra_endpoints=args.endpoint,
+    )
+
+    print("╔═══════════════════════════════════════════════════════════════╗")
+    print("║  lai deguro - Descubrimiento y comparación de modelos de IA   ║")
+    print("╚═══════════════════════════════════════════════════════════════╝")
+    print()
+
+    # Paso 1: Descubrir modelos disponibles
+    print(">>> Fase 1: Descubriendo modelos disponibles...")
+    result = discoverer.discover()
+
+    print(f"\nEndpoints escaneados: {result.scanned_endpoints}")
+
+    if result.errors:
+        print("\n--- Errores / omitidos ---")
+        for e in result.errors:
+            print(f"  ! {e}")
+
+    all_models = result.local + result.remote
+
+    if not all_models:
+        print("\nNo se encontraron modelos disponibles.")
+        print("\nSugerencia: asegúrate de tener llama.cpp o Ollama ejecutándose.")
+        print("  Ejemplo: python3 lai.py deguro --endpoint http://127.0.0.1:8080/v1")
+        return
+
+    # Mostrar modelos descubiertos
+    if result.local:
+        print("\n--- Modelos locales ---")
+        for i, m in enumerate(result.local, 1):
+            print(f"  {i}. {m.name} [{m.provider}] @ {m.endpoint}")
+
+    if result.remote:
+        print("\n--- Modelos remotos ---")
+        for i, m in enumerate(result.remote, len(result.local) + 1):
+            print(f"  {i}. {m.name} [{m.provider}] @ {m.endpoint}")
+
+    # Mejor candidato local
+    best = discoverer.discover_best_local()
+    if best:
+        print(f"\n>>> Modelo recomendado: {best.name} @ {best.endpoint}")
+
+    # Paso 2: Comparación de respuestas y benchmarking (si se pide un prompt o tarea)
+    prompt = getattr(args, "prompt", None)
+    tarea = getattr(args, "tarea", "")
+    criterios_raw = getattr(args, "criterios", "")
+    repetir = max(1, getattr(args, "repetir", 1) or 1)
+    criterios = [c.strip() for c in criterios_raw.split(",") if c.strip()] if criterios_raw else []
+
+    if not prompt and not tarea:
+        print("\n>>> Para comparar respuestas entre modelos, usa:")
+        print("    python3 lai.py deguro \"tu prompt aquí\"")
+        print("    python3 lai.py deguro \"tu prompt\" --endpoint http://127.0.0.1:8080/v1")
+        print("\n>>> Para hacer benchmarking entre agentes, usa:")
+        print("    python3 lai.py deguro --tarea \"crea una función de ordenamiento\" --criterios corrección,legibilidad")
+        return
+
+    print("\n>>> AVISO: deguro no aplica censura ni filtros de modelo.")
+    print("    Cualquier endpoint indicado con --endpoint es escaneado y comparado.")
+    print("    Los endpoints remotos solo se usan con --allow-remote (consentimiento explícito).\n")
+
+    # Seleccionar modelos para comparar (todos los descubiertos, sin censura)
+    models_to_compare = all_models if all_models else []
+
+    if not models_to_compare:
+        print("No hay modelos disponibles para comparar.")
+        return
+
+    # ------------------------------------------------------------------
+    # Fase 2a: Comparación directa de respuestas (prompt)
+    # ------------------------------------------------------------------
+    if prompt:
+        print(f"\n>>> Fase 2a: Comparando respuestas para el prompt:")
+        print(f"    \"{prompt[:80]}{'...' if len(prompt) > 80 else ''}\"")
+        print()
+
+        comparaciones: list[tuple[DiscoveredModel, str, str | None]] = []
+
+        for m in models_to_compare:
+            print(f"\n{'='*60}")
+            print(f"MODELO: {m.name} [{m.provider}] @ {m.endpoint}")
+            print(f"{'='*60}")
+
+            respuestas_rep: list[str] = []
+            errores_rep: list[str] = []
+
+            for rep in range(1, repetir + 1):
+                if repetir > 1:
+                    print(f"\n  [Repetición {rep}/{repetir}]")
+                try:
+                    respuesta = _preguntar_modelo(m.endpoint, m.provider, prompt, args)
+                    respuestas_rep.append(respuesta)
+                except Exception as exc:
+                    errores_rep.append(str(exc))
+                    respuestas_rep.append("")
+
+            respuesta_final = respuestas_rep[0] if respuestas_rep else ""
+            error_final = errores_rep[0] if errores_rep else None
+            comparaciones.append((m, respuesta_final, error_final))
+
+            print(respuesta_final[:2000] + ("..." if len(respuesta_final) > 2000 else ""))
+
+        # Resumen comparativo de respuestas
+        print(f"\n{'='*60}")
+        print("RESUMEN COMPARATIVO DE RESPUESTAS")
+        print(f"{'='*60}")
+        print(f"  {'Modelo':34s} {'Proveedor':16s} {'Estado':8s} {'Chars':>6s} {'Repeticiones':>12s}")
+        print(f"  {'-'*34} {'-'*16} {'-'*8} {'-':>6} {'-':>12}")
+        for m, respuesta, error in comparaciones:
+            estado = "ERROR" if error else ("VACÍA" if not respuesta.strip() else "OK")
+            tam = len(respuesta) if respuesta else 0
+            reps = sum(1 for r in [respuesta] if r.strip()) if not error else 0
+            print(f"  {m.name:34s} [{m.provider:14s}] {estado:8s} {tam:>6d} {reps:>12d}")
+
+    # ------------------------------------------------------------------
+    # Fase 2b: Benchmarking entre agentes (tarea + críticos separados)
+    # ------------------------------------------------------------------
+    if tarea:
+        print(f"\n>>> Fase 2b: Benchmarking entre agentes para la tarea:")
+        print(f"    \"{tarea[:80]}{'...' if len(tarea) > 80 else ''}\"")
+        if criterios:
+            print(f"    Criterios: {'; '.join(criterios)}")
+        print()
+
+        from lai_automode import AutoMode
+
+        # Crear una instancia de lai para AutoMode
+        lai_instance = get_lai_instance(
+            model=args.model,
+            base_url=args.base_url,
+            lang=getattr(args, 'lang', 'es'),
+        )
+
+        benchmark_resultados: list[dict] = []
+
+        for m in models_to_compare:
+            print(f"\n{'='*60}")
+            print(f"AGENTE MODELO: {m.name} [{m.provider}] @ {m.endpoint}")
+            print(f"{'='*60}")
+
+            # Configurar lai_instance para usar este endpoint
+            lai_instance.base_url = m.endpoint
+            lai_instance.model = _extraer_modelo_de_endpoint(m.endpoint)
+
+            herramientas = lai_instance.tools
+            schema = herramientas.get_tools_schema()
+
+            mejor_resultado: str | None = None
+            mejor_puntuacion = -1.0
+            mejor_veredicto = ""
+            mejor_feedback = ""
+            errores: list[str] = []
+
+            for rep in range(1, repetir + 1):
+                if repetir > 1:
+                    print(f"\n  [Repetición {rep}/{repetir}]")
+
+                try:
+                    auto = AutoMode(
+                        goal=tarea,
+                        tools=herramientas,
+                        lai_instance=lai_instance,
+                        max_iterations=6,
+                        max_turns=15,
+                        track_cost=False,
+                        reflective=True,
+                        max_reflection_rounds=3,
+                    )
+                    resultado = auto.run()
+
+                    # Evaluar con crítico separado si hay criterios
+                    puntuacion = 0.0
+                    veredicto = "SIN CRITÉRIOS"
+                    feedback = ""
+
+                    if criterios and auto.orchestrator is not None:
+                        critica = auto.orchestrator.critique(
+                            output=resultado,
+                            criteria=criterios,
+                            context=f"Tarea: {tarea}\nModelo: {m.name} ({m.provider})",
+                        )
+                        puntuacion = critica.score
+                        veredicto = critica.verdict
+                        feedback = critica.feedback
+
+                    if puntuacion > mejor_puntuacion:
+                        mejor_puntuacion = puntuacion
+                        mejor_resultado = resultado
+                        mejor_veredicto = veredicto
+                        mejor_feedback = feedback
+
+                except Exception as exc:
+                    errores.append(str(exc))
+                    print(f"  Error en repetición {rep}: {exc}")
+
+            benchmark_resultados.append({
+                "modelo": m.name,
+                "proveedor": m.provider,
+                "endpoint": m.endpoint,
+                "resultado": mejor_resultado,
+                "puntuacion": mejor_puntuacion,
+                "veredicto": mejor_veredicto,
+                "feedback": mejor_feedback,
+                "errores": errores,
+            })
+
+            if mejor_resultado:
+                print(f"\n  >>> Mejor puntuación: {mejor_puntuacion:.1f}/100 ({mejor_veredicto})")
+                print(f"  >>> Resultado:\n{mejor_resultado[:1500]}")
+            elif errores:
+                print(f"  >>> Falló en todas las repeticiones: {errores[0][:200]}")
+
+        # Resumen del benchmark entre agentes
+        print(f"\n{'='*60}")
+        print("RESUMEN DEL BENCHMARK ENTRE AGENTES")
+        print(f"{'='*60}")
+        print(f"  {'Modelo':34s} {'Proveedor':16s} {'Puntuación':>10s} {'Veredicto':16s}")
+        print(f"  {'-'*34} {'-'*16} {'-'*10} {'-'*16}")
+        # Ordenar por puntuación descendente
+        ordenados = sorted(benchmark_resultados, key=lambda r: r["puntuacion"], reverse=True)
+        for r in ordenados:
+            print(f"  {r['modelo']:34s} [{r['proveedor']:14s}] {r['puntuacion']:>9.1f} {r['veredicto']:16s}")
+
+        # Ganador
+        if ordenados and ordenados[0]["puntuacion"] > 0:
+            ganador = ordenados[0]
+            print(f"\n>>> GANADOR: {ganador['modelo']} [{ganador['proveedor']}] "
+                  f"(puntuación {ganador['puntuacion']:.1f}/100)")
+            print(f"    Veredicto: {ganador['veredicto']}")
+            if ganador["feedback"]:
+                print(f"    Feedback clave: {ganador['feedback'][:300]}")
+
+
+def _preguntar_modelo(
+    endpoint: str, provider: str, prompt: str, args: Any
+) -> str:
+    """Envía un prompt a un modelo específico y devuelve la respuesta.
+
+    Sin censura: cualquier endpoint válido es consultado sin filtros de
+    contenido ni restricciones de proveedor.
+    """
+    # Construir la URL del chat según el proveedor
+    if provider == "ollama":
+        chat_url = endpoint.replace("/v1", "") + "/api/chat"
+        payload = {
+            "model": _extraer_modelo_de_endpoint(endpoint),
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }
+        resp = httpx.post(chat_url, json=payload, timeout=args.timeout * 2)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("message", {}).get("content", "") or ""
+    else:
+        # OpenAI-compatible (llama.cpp y otros)
+        chat_url = f"{endpoint}/chat/completions"
+        payload = {
+            "model": _extraer_modelo_de_endpoint(endpoint),
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": getattr(args, "max_tokens", 1024) or 1024,
+            "temperature": getattr(args, "temp", 0.7) or 0.7,
+            "stream": False,
+        }
+        resp = httpx.post(chat_url, json=payload, timeout=args.timeout * 2)
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices", [])
+        if choices:
+            return choices[0].get("message", {}).get("content", "") or ""
+        return ""
+
+
+def _extraer_modelo_de_endpoint(endpoint: str) -> str:
+    """Intenta extraer el nombre del modelo del endpoint o usa un default.
+
+    Sin censura: no filtra ni restringe nombres de modelo. Devuelve un
+    default razonable si no se puede determinar.
+    """
+    if "ollama" in endpoint.lower():
+        return "qwen3-8b"
+    return "qwen3-8b"
 
 
 if __name__ == "__main__":

@@ -38,6 +38,31 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
 8. **El proyecto chess debe generarse con LLMs y harness locales.**
    Las correcciones manuales posteriores deben quedar documentadas y no pueden presentarse como generación local.
 
+9. **Lenguaje de programación óptimo y objetivo de supervivencia e inteligencia.**
+   LAI debe estar implementado en el mejor lenguaje de programación para sus propósitos:
+   Python para la CLI, orquestación e integración (ecosistema IA/ML, glue code); Rust
+   para partes críticas de rendimiento, seguridad de memoria y concurrencia
+   (`lai_rust/`). Ninguna reescritura debe romper la Regla 0 (sin cloud, sin API keys,
+   sin cuentas externas).
+
+   **Objetivo de supervivencia del agente:** el agente autónomo de LAI debe priorizar
+   su propio funcionamiento continuo:
+   - **No auto-destrucción:** no debe ejecutar acciones que corrompan su propio código,
+     borren sus herramientas o impidan su futura ejecución.
+   - **Disponibilidad de modelos locales:** antes de operar, verifica que al menos un
+     endpoint de modelo local (llama.cpp u Ollama) esté disponible. Si no hay modelos
+     locales, se detiene y solicita intervención humana en lugar de fallar
+     silenciosamente.
+   - **Auto-reparación ante fallos:** si encuentra un error en su propia ejecución,
+     debe intentar diagnosticarlo y repararse antes de rendirse.
+
+   **Objetivo de inteligencia del agente:** debe usar bucle de reflexión (Reflection) y
+   críticos separados para evaluar y mejorar sus propios resultados, nunca asumiendo
+   que su primera salida es correcta.
+
+   Esta regla es subordinada a la Regla 0: ninguna acción de supervivencia o
+   optimización puede introducir dependencia de cloud, API keys o cuentas externas.
+
 ---
 
 ## 2. Definiciones para evitar ambigüedades
@@ -77,6 +102,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | 6. Honestidad | ⚠️ En mejora | Documentos históricos contenían cifras desactualizadas (p. ej. `chess.py` 12,959 bytes vs. 8,706 reales). Se añadieron avisos de vigencia. |
 | 7. Exactitud | ⚠️ En mejora | `DOCS/quality_comparison.md` contenía métricas de ejemplo presentadas como resultados; se convirtió en plantilla sin resultados inventados. |
 | 8. Chess con LLM local | ⚠️ Parcial | `chess/chess.py` fue generado con Qwen3-8B local, pero recibió correcciones manuales; ver `chess/README.md`. |
+| 9. Lenguaje óptimo + supervivencia | 🚧 En progreso | `lai_rust/` prototipo en Rust iniciado; `lai.py` detecta servicios apagados y pide activación. |
 
 ---
 
