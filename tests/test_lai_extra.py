@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lai  # noqa: E402
 from lai_automode import AutoMode
+from lai_tools import ToolRegistry as lai_tools
 
 
 class TestLAIInit:
@@ -729,14 +730,24 @@ class TestCommandFunctions:
         assert instance1 is not instance2
 
     def test_get_lai_instance_lang_change(self):
-        instance = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1', lang='en')
+        instance = lai.get_lai_instance(
+            model='qwen3-8b', base_url='http://localhost:8080/v1', lang='en'
+        )
         assert instance.lang == 'en'
 
     def test_chat_cmd_no_prompt(self, capsys):
         args = argparse.Namespace(
-            model='qwen3-8b', base_url='http://localhost:8080/v1', lang='es',
-            stream=True, thinking=True, temp=0.7, max_tokens=4096,
-            interactive=False, no_stream=False, no_thinking=False, prompt=[]
+            model='qwen3-8b',
+            base_url='http://localhost:8080/v1',
+            lang='es',
+            stream=True,
+            thinking=True,
+            temp=0.7,
+            max_tokens=4096,
+            interactive=False,
+            no_stream=False,
+            no_thinking=False,
+            prompt=[],
         )
         lai.chat_cmd(args)
         captured = capsys.readouterr()
@@ -755,6 +766,7 @@ class TestCommandFunctions:
     def test_models_cmd(self, capsys, monkeypatch):
         def fake_models(self):
             print('qwen3-8b')
+
         monkeypatch.setattr(lai.LAI, 'models', fake_models)
         lai.models_cmd(lai.LAI(), argparse.Namespace())
         captured = capsys.readouterr()
@@ -763,6 +775,7 @@ class TestCommandFunctions:
     def test_tools_cmd(self, capsys, monkeypatch):
         def fake_tools_list(self):
             print('read_file')
+
         monkeypatch.setattr(lai.LAI, 'tools_list', fake_tools_list)
         lai.tools_cmd(lai.LAI(), argparse.Namespace())
         captured = capsys.readouterr()
@@ -770,8 +783,13 @@ class TestCommandFunctions:
 
     def test_generate_cmd_no_prompt(self, capsys):
         args = argparse.Namespace(
-            prompt=[], model='qwen3-8b', base_url='http://localhost:8080/v1',
-            stream=True, thinking=True, temp=0.7, max_tokens=2048
+            prompt=[],
+            model='qwen3-8b',
+            base_url='http://localhost:8080/v1',
+            stream=True,
+            thinking=True,
+            temp=0.7,
+            max_tokens=2048,
         )
         lai.generate_cmd(args)
         captured = capsys.readouterr()
@@ -780,8 +798,10 @@ class TestCommandFunctions:
     def test_run_cmd(self, capsys, monkeypatch, tmp_path):
         script = tmp_path / 'script.py'
         script.write_text('print("hola")\n')
+
         def fake_run_script(self, path):
             return f'Output of {path}'
+
         monkeypatch.setattr(lai.LAI, 'run_script', fake_run_script)
         lai.run_cmd(lai.LAI(), argparse.Namespace(script=str(script)))
         captured = capsys.readouterr()
@@ -790,19 +810,84 @@ class TestCommandFunctions:
     def test_think_cmd(self, capsys, monkeypatch):
         def fake_think(self, problem):
             return f'Thinking about: {problem}'
+
         monkeypatch.setattr(lai.LAI, 'think', fake_think)
         lai.think_cmd(lai.LAI(), argparse.Namespace(problem='¿Cómo funciona la recursión?'))
         captured = capsys.readouterr()
         assert 'Thinking about' in captured.out
 
-    def test_code_cmd(self, capsys, monkeypatch, tmp_path):
+    def test_code_cmd(self, monkeypatch, tmp_path):
         outfile = tmp_path / 'generated.py'
+
         def fake_code(self, description, filename, auto=False, yolo=False, max_iterations=3):
             with open(filename, 'w') as f:
                 f.write('# generated code\n')
+
         monkeypatch.setattr(lai.LAI, 'code', fake_code)
-        lai.code_cmd(lai.LAI(), argparse.Namespace(description='test', filename=str(outfile), auto=False, yolo=False, max_iterations=3))
+        lai.code_cmd(
+            lai.LAI(),
+            argparse.Namespace(
+                description='test', filename=str(outfile), auto=False, yolo=False, max_iterations=3
+            ),
+        )
         assert outfile.exists()
+
+
+if __name__ == '__main__':
+    import pytest as _pytest
+
+    _pytest.main([__file__, '-v'])
+
+
+class TestUtilityFunctions:
+    """Tests para funciones de utilidad de lai.py."""
+
+    def test_get_version(self):
+        version = lai.get_version()
+        assert isinstance(version, str)
+        assert len(version) > 0
+
+    @pytest.mark.parametrize(
+        'url,expected',
+        [
+            ('http://localhost:8080/v1', True),
+            ('http://127.0.0.1:11434', True),
+            ('http://[::1]:8080', True),
+            ('http://192.168.1.10:8080/v1', True),
+            ('http://10.0.0.5:8080', True),
+            ('http://172.16.0.1:8080', True),
+            ('http://myhost.local:8080', True),
+            ('https://api.openai.com/v1', False),
+            ('http://example.com', False),
+            ('', False),
+            (None, False),
+            (12345, False),
+        ],
+    )
+    def test_is_local_url_parametrized(self, url, expected):
+        assert lai.is_local_url(url) is expected
+
+
+class TestToolRegistryBasic:
+    """Tests básicos para ToolRegistry con mocks."""
+
+    def test_tool_registry_init(self):
+        reg = lai_tools()
+        assert hasattr(reg, 'tools')
+        assert isinstance(reg.tools, dict)
+        assert len(reg.tools) > 0
+
+    def test_tool_registry_has_core_tools(self):
+        reg = lai_tools()
+        expected_tools = ['read_file', 'write_file', 'list_dir', 'grep', 'find_files']
+        for tool in expected_tools:
+            assert tool in reg.tools
+
+    def test_get_tools_schema(self):
+        reg = lai_tools()
+        schema = reg.get_tools_schema()
+        assert isinstance(schema, list)
+        assert len(schema) > 0
 
 
 if __name__ == '__main__':

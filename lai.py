@@ -6,7 +6,6 @@ using local LLMs (Qwen3-8B via llama.cpp)
 """
 
 import argparse
-import ast
 import fnmatch
 import glob
 import http.server
@@ -14,21 +13,19 @@ import ipaddress
 import json
 import os
 import re
-import select
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 from urllib.parse import urlparse
-from lai_automode import AutoMode
 
 import httpx
 
+from lai_automode import AutoMode
 from lai_tools import ToolRegistry
 
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
