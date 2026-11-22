@@ -2832,6 +2832,22 @@ Examples:
     rag_parser.add_argument(
         '--index', action='store_true', help='Index current directory before searching'
     )
+    rag_parser.add_argument(
+        '--chunked',
+        action='store_true',
+        help='Use smart chunking for code files (functions, classes)',
+    )
+    rag_parser.add_argument(
+        '--hybrid',
+        action='store_true',
+        help='Use hybrid search (vector + keyword TF-IDF)',
+    )
+    rag_parser.add_argument(
+        '--chunk-size',
+        type=int,
+        default=2000,
+        help='Max chunk size for chunked indexing (default: 2000)',
+    )
     rag_parser.set_defaults(func=lambda a: rag_cmd(a))
 
     # ---------------------------------------------------------------
@@ -3007,12 +3023,31 @@ def rag_cmd(args):
     """Semantic search with local RAG."""
     rag = get_rag()
     if args.index:
-        count = rag.add_directory(
-            'default', '.', extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml')
-        )
-        print(f'Indexed {count} documents.')
+        if args.chunked:
+            stats = rag.add_directory_chunked(
+                'default',
+                '.',
+                extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+                max_chunk_size=args.chunk_size,
+            )
+            print(f'Indexed {stats["files"]} files, {stats["chunks_added"]} chunks.')
+        else:
+            count = rag.add_directory(
+                'default',
+                '.',
+                extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml'),
+            )
+            print(f'Indexed {count} documents.')
 
-    results = rag.search(args.query, collection=args.collection, top_k=args.top_k)
+    if args.hybrid:
+        results = rag.search_hybrid(
+            args.query,
+            collection=args.collection,
+            top_k=args.top_k,
+            threshold=getattr(args, 'threshold', 0.3),
+        )
+    else:
+        results = rag.search(args.query, collection=args.collection, top_k=args.top_k)
     if not results:
         print('No results found.')
         return
@@ -3024,6 +3059,8 @@ def rag_cmd(args):
         print(f'    Collection: {r["collection"]}')
         if r['metadata'].get('file'):
             print(f'    File: {r["metadata"]["file"]}')
+        if r.get('vector_score') is not None:
+            print(f'    Vector: {r["vector_score"]:.3f} | Keyword: {r["keyword_score"]:.3f}')
         text = r['text']
         print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
 
