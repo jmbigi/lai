@@ -2565,7 +2565,6 @@ Examples:
     parser.add_argument('--no-tools', action='store_true', help='Disable tools')
     parser.add_argument('--yolo', action='store_true', help='YOLO mode: no confirmations, no approvals, full autonomy')
     parser.add_argument('--auto', action='store_true', help='Auto mode')
-    parser.add_argument('--yolo', action='store_true', help='YOLO mode (no confirmations)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output')
     parser.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
