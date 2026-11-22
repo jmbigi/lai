@@ -300,9 +300,7 @@ class TestLAIChat:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            'choices': [{
-                'message': {'content': 'Hola mundo', 'role': 'assistant'}
-            }]
+            'choices': [{'message': {'content': 'Hola mundo', 'role': 'assistant'}}]
         }
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
@@ -317,13 +315,15 @@ class TestLAIChat:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            'choices': [{
-                'message': {
-                    'content': '',
-                    'reasoning_content': 'razonamiento interno',
-                    'role': 'assistant'
+            'choices': [
+                {
+                    'message': {
+                        'content': '',
+                        'reasoning_content': 'razonamiento interno',
+                        'role': 'assistant',
+                    }
                 }
-            }]
+            ]
         }
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_resp)
@@ -448,6 +448,7 @@ class TestLaiReview:
                 with open('test.py', 'w') as f:
                     f.write('def foo():\n    return 1\n')
                 from argparse import Namespace
+
                 args = Namespace(path='test.py', focus='all', format='text')
                 lai.review_cmd(instance, args)  # prints to stdout, returns None
             finally:
@@ -535,6 +536,182 @@ class TestFindDuplicates:
                 assert result is not None
             finally:
                 os.chdir(old_cwd)
+
+
+class TestVersionAndUrl:
+    """Tests for get_version and is_local_url (rule 4 guard)."""
+
+    def test_get_version(self):
+        version = lai.get_version()
+        assert isinstance(version, str)
+        assert len(version) > 0
+
+    @pytest.mark.parametrize(
+        'url,expected',
+        [
+            ('http://localhost:8080/v1', True),
+            ('http://127.0.0.1:11434', True),
+            ('http://[::1]:8080', True),
+            ('http://192.168.1.10:8080/v1', True),
+            ('http://10.0.0.5:8080', True),
+            ('http://172.16.0.1:8080', True),
+            ('http://myhost.local:8080', True),
+            ('https://api.openai.com/v1', False),
+            ('http://example.com', False),
+            ('', False),
+            (None, False),
+            (12345, False),
+        ],
+    )
+    def test_is_local_url(self, url, expected):
+        assert lai.is_local_url(url) is expected
+
+
+class TestCheckService:
+    """Tests for check_service with mocked httpx."""
+
+    def test_check_service_up(self, monkeypatch):
+        class FakeResp:
+            status_code = 200
+
+        def fake_get(url, timeout=1):
+            return FakeResp()
+
+        monkeypatch.setattr(lai.httpx, 'get', fake_get)
+        assert lai.check_service(8080) is True
+
+    def test_check_service_down(self, monkeypatch):
+        def fake_get(url, timeout=1):
+            raise OSError
+
+        monkeypatch.setattr(lai.httpx, 'get', fake_get)
+        # httpx falla, luego socket.create_connection también falla -> False
+        assert lai.check_service(9999) is False
+
+
+class TestCompletion:
+    """Tests for shell completion helpers."""
+
+    def test_generate_completion_bash(self):
+        result = lai._generate_completion('bash')
+        assert isinstance(result, str)
+        assert 'lai' in result
+
+    def test_generate_completion_zsh(self):
+        result = lai._generate_completion('zsh')
+        assert isinstance(result, str)
+
+    def test_completion_cmd_unknown_shell(self, capsys):
+        args = argparse.Namespace(shell='fish')
+        lai.completion_cmd(args)
+        captured = capsys.readouterr()
+        assert 'fish' in captured.out or 'fish' in captured.err
+
+
+class TestMcpAndSystemOne:
+    """Tests for mcp_cmd and system_one_cmd (no external services)."""
+
+    def test_mcp_cmd_not_found(self, capsys, monkeypatch):
+        monkeypatch.setattr(lai.os.path, 'exists', lambda _: False)
+        with pytest.raises(SystemExit):
+            lai.mcp_cmd()
+        captured = capsys.readouterr()
+        assert 'MCP server not found' in captured.err
+
+    def test_system_one_cmd_error(self, capsys, monkeypatch):
+        class FakeClient:
+            def __init__(self, endpoint=None, model=None):
+                self.endpoint = endpoint
+                self.model = model
+
+            def decide(self, **_):
+                return {'error': 'no server', 'detail': 'gateway down'}
+
+        fake_module = type(sys)('scripts.system_one_client')
+        fake_module.SystemOneClient = FakeClient
+        monkeypatch.setitem(sys.modules, 'scripts.system_one_client', fake_module)
+
+        args = argparse.Namespace(
+            endpoint='http://127.0.0.1:8081/v1/systemone',
+            model='qwen3-8b',
+            action='status',
+            state='init',
+            type='choice',
+            question='q',
+            options=[],
+            scale=10,
+            json=False,
+        )
+        with pytest.raises(SystemExit):
+            lai.system_one_cmd(lai.LAI(), args)
+        captured = capsys.readouterr()
+        assert 'no server' in captured.err
+
+
+class TestOCR:
+    """Tests for ocr_cmd (OCR local con tesseract)."""
+
+    def test_ocr_image_not_found(self, capsys):
+        args = argparse.Namespace(
+            image='/tmp/archivo_inexistente_12345.png', lang='spa+eng', output=None
+        )
+        with pytest.raises(SystemExit):
+            lai.ocr_cmd(args)
+        captured = capsys.readouterr()
+        assert 'no encontrada' in captured.err
+
+    def test_ocr_tesseract_not_installed(self, capsys, monkeypatch, tmp_path):
+        image = tmp_path / 'test.png'
+        image.write_bytes(b'fake image data')
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError('tesseract')
+
+        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
+        args = argparse.Namespace(image=str(image), lang='spa+eng', output=None)
+        with pytest.raises(SystemExit):
+            lai.ocr_cmd(args)
+        captured = capsys.readouterr()
+        assert 'no está instalado' in captured.err
+
+    def test_ocr_success(self, capsys, monkeypatch, tmp_path):
+        image = tmp_path / 'test.png'
+        image.write_bytes(b'fake image data')
+
+        class FakeResult:
+            returncode = 0
+            stdout = 'Texto extraído de prueba'
+            stderr = ''
+
+        def fake_run(cmd, **kwargs):
+            return FakeResult()
+
+        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
+        args = argparse.Namespace(image=str(image), lang='spa+eng', output=None)
+        lai.ocr_cmd(args)
+        captured = capsys.readouterr()
+        assert 'Texto extraído de prueba' in captured.out
+
+    def test_ocr_with_output_file(self, capsys, monkeypatch, tmp_path):
+        image = tmp_path / 'test.png'
+        image.write_bytes(b'fake image data')
+        output = tmp_path / 'out.txt'
+
+        class FakeResult:
+            returncode = 0
+            stdout = 'Texto guardado en archivo'
+            stderr = ''
+
+        def fake_run(cmd, **kwargs):
+            return FakeResult()
+
+        monkeypatch.setattr(lai.subprocess, 'run', fake_run)
+        args = argparse.Namespace(image=str(image), lang='spa+eng', output=str(output))
+        lai.ocr_cmd(args)
+        captured = capsys.readouterr()
+        assert output.exists()
+        assert output.read_text(encoding='utf-8').strip() == 'Texto guardado en archivo'
+        assert 'guardado en' in captured.out
 
 
 if __name__ == '__main__':

@@ -144,14 +144,16 @@ class TestToolRegistry:
             os.chdir(tmpdir)
             try:
                 with open('mod.py', 'w') as f:
-                    f.write("""
+                    f.write(
+                        """
 class MyClass:
     def method(self):
         pass
 
 def my_function():
     return 42
-""")
+"""
+                    )
                 result = reg.repo_map()
                 assert 'MyClass' in result
                 assert 'method' in result

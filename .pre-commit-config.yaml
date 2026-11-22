@@ -1,43 +1,58 @@
 # Pre-commit configuration for lai
+# 100% local: hooks tipo 'local:' no requieren repos remotos ni cuentas de GitHub/GitLab.
 # Instalación: pre-commit install
 # Ejecución manual: pre-commit run --all-files
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.0
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
-  - repo: https://github.com/psf/black
-    rev: 24.4.2
-    hooks:
-      - id: black
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
-    hooks:
-      - id: mypy
-        additional_dependencies: []
+        name: ruff
+        entry: ruff check --fix
+        language: system
+        files: \.py$
         args: [lai.py, tests/]
 
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.9
-    hooks:
+      - id: ruff-format
+        name: ruff-format
+        entry: ruff format
+        language: system
+        files: \.py$
+        args: [lai.py, tests/]
+
+      - id: black
+        name: black
+        entry: black
+        language: system
+        files: \.py$
+        args: [lai.py, tests/]
+
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        files: \.py$
+        args: [lai.py, tests/]
+
       - id: bandit
-        args: [lai.py]
+        name: bandit
+        entry: bandit
+        language: system
+        files: \.py$
+        args: [-q, lai.py]
 
-  - repo: https://github.com/pycqa/radon
-    rev: 6.0.1
-    hooks:
       - id: radon-cc
-        args: [-a, -n, B, lai.py]
+        name: radon-cc
+        entry: radon
+        language: system
+        files: \.py$
+        args: [cc, -a, -n, B, lai.py]
 
-  - repo: https://github.com/jendrikseipp/vulture
-    rev: v2.11
-    hooks:
       - id: vulture
+        name: vulture
+        entry: vulture
+        language: system
+        files: \.py$
         args: [lai.py, --min-confidence, 90]
 
 ci:

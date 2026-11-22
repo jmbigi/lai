@@ -1,4 +1,4 @@
-.PHONY: help check lint test format type clean install dev-install build gateway-build
+.PHONY: help check lint test format type ci ci-quick install dev-install build gateway-build clean smoke
 
 # Default target
 help:
@@ -22,6 +22,13 @@ quality:
 
 quality-ci:
 	bash scripts/quality_gates.sh --ci
+
+# CI local 100% open source (sin cuentas, sin cloud, sin API keys)
+ci:
+	bash scripts/ci_local.sh --ci
+
+ci-quick:
+	bash scripts/ci_local.sh --quick --ci
 
 compile:
 	python3 -m py_compile lai.py

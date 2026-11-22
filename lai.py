@@ -1259,6 +1259,7 @@ class ToolRegistry:
                 return 'No syntax issues found to fix'
         except Exception as e:
             return f'Error fixing syntax: {str(e)}'
+        return 'File not found: ' + path
 
     def fix_formatting(self, path: str) -> str:
         """Format code with black and isort."""
@@ -1633,24 +1634,23 @@ class ToolRegistry:
             gray = cv2.medianBlur(gray, 3)
             # Umbralización adaptativa
             thresh = cv2.adaptiveThreshold(
-                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY, 11, 2
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
             )
             # Escalar para mejor detección de texto pequeño
             h, w = thresh.shape[:2]
             scale = max(1, 1600 / max(h, w))
             if scale > 1:
-                thresh = cv2.resize(
-                    thresh, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
-                )
+                thresh = cv2.resize(thresh, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
             # Convertir a PIL para pytesseract
             pil_image = Image.fromarray(thresh)
             text = pytesseract.image_to_string(pil_image, lang=lang, config='--psm 6')
             return text.strip() or '(no se detectó texto)'
         except ImportError:
-            return ('OpenCV/numpy/pytesseract no instalado. '
-                    'Instala con: pip install opencv-python numpy pytesseract Pillow')
+            return (
+                'OpenCV/numpy/pytesseract no instalado. '
+                'Instala con: pip install opencv-python numpy pytesseract Pillow'
+            )
         except FileNotFoundError:
             return f'Archivo no encontrado: {path}'
         except Exception as e:
@@ -1670,8 +1670,7 @@ class ToolRegistry:
                     x, y, w, h = [int(v) for v in region.split(',')]
                     bbox = (x, y, x + w, y + h)
                 except ValueError:
-                    return ('Región inválida. Usa formato: x,y,ancho,alto '
-                            '(ej: 100,100,800,600)')
+                    return 'Región inválida. Usa formato: x,y,ancho,alto (ej: 100,100,800,600)'
             else:
                 bbox = None
 
@@ -1679,8 +1678,7 @@ class ToolRegistry:
             text = pytesseract.image_to_string(screenshot, lang=lang)
             return text.strip() or '(no se detectó texto en la captura)'
         except ImportError:
-            return ('pytesseract/Pillow no instalado. '
-                    'Instala con: pip install pytesseract Pillow')
+            return 'pytesseract/Pillow no instalado. Instala con: pip install pytesseract Pillow'
         except Exception as e:
             return f'Error en OCR de screenshot: {str(e)}'
 
@@ -2230,9 +2228,9 @@ class LAI:
             'completion_tokens': self.total_completion_tokens,
             'total_tokens': total_tokens,
             'token_budget': self.token_budget,
-            'budget_used_pct': round((total_tokens / self.token_budget) * 100, 1)
-            if self.token_budget
-            else 0.0,
+            'budget_used_pct': (
+                round((total_tokens / self.token_budget) * 100, 1) if self.token_budget else 0.0
+            ),
             'estimated_cost_usd': round(self.estimated_cost_usd, 4),
             'estimated_cost_saved_usd': round(self.estimated_cost_usd, 4),
             'rate_limit_per_min': self.rate_limit_per_min,
@@ -3553,11 +3551,13 @@ Code:
                         sarif['runs'][0]['results'].append(
                             {
                                 'ruleId': f'LAI-{rule_id:04d}',
-                                'level': 'error'
-                                if 'P0' in line
-                                else 'warning'
-                                if 'P1' in line
-                                else 'note',
+                                'level': (
+                                    'error'
+                                    if 'P0' in line
+                                    else 'warning'
+                                    if 'P1' in line
+                                    else 'note'
+                                ),
                                 'message': {'text': line.strip()},
                                 'locations': [
                                     {
@@ -3872,7 +3872,7 @@ def update_cmd(lai: LAI, args):
 def exec_cmd(lai: LAI, args):
     cwd = args.cwd or os.getcwd()
     cmd = args.command if isinstance(args.command, str) else ' '.join(args.command)
-    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)  # nosec B602
     print(result.stdout)
     if result.stderr:
         print(result.stderr, file=sys.stderr)
@@ -3881,15 +3881,15 @@ def exec_cmd(lai: LAI, args):
 def doctor_cmd(lai: LAI, args):
     print('Diagnosing environment...')
     checks = [
-        ('Python', 'python3 --version'),
-        ('Git', 'git --version'),
-        ('Docker', 'docker --version'),
-        ('Node', 'node --version'),
-        ('Docker Compose', 'docker-compose --version'),
+        ('Python', ['python3', '--version']),
+        ('Git', ['git', '--version']),
+        ('Docker', ['docker', '--version']),
+        ('Node', ['node', '--version']),
+        ('Docker Compose', ['docker-compose', '--version']),
     ]
     for name, cmd in checks:
         try:
-            subprocess.run(cmd, shell=True, check=True, capture_output=True)
+            subprocess.run(cmd, shell=False, check=True, capture_output=True)
             print(f'✓ {name}')
         except Exception:
             print(f'✗ {name} - NOT FOUND')
@@ -3925,6 +3925,47 @@ def clean_cmd(lai: LAI, args):
             removed += 1
     if not removed:
         print('Nothing to clean.')
+
+
+def ocr_cmd(args):
+    """Extrae texto de una imagen usando OCR local (tesseract)."""
+    import subprocess
+
+    image_path = args.image
+    if not os.path.exists(image_path):
+        print(f'ERROR: Imagen no encontrada: {image_path}', file=sys.stderr)
+        sys.exit(1)
+
+    lang = getattr(args, 'lang', 'spa+eng')
+    try:
+        result = subprocess.run(
+            ['tesseract', image_path, 'stdout', '-l', lang],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print(f'ERROR: tesseract falló: {result.stderr}', file=sys.stderr)
+            sys.exit(1)
+        text = result.stdout.strip()
+        if not text:
+            print('(no se detectó texto en la imagen)')
+            return
+        if getattr(args, 'output', None):
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(text + '\n')
+            print(f'Texto guardado en: {args.output}')
+        else:
+            print(text)
+    except FileNotFoundError:
+        print(
+            'ERROR: tesseract no está instalado. Instálalo con: sudo apt install tesseract-ocr',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print('ERROR: tesseract excedió el tiempo de espera (60s)', file=sys.stderr)
+        sys.exit(1)
 
 
 def serve_cmd(lai: LAI, args):
@@ -4444,22 +4485,43 @@ Examples:
     clean_parser.add_argument('--build', action='store_true', help='Clean build artifacts')
     clean_parser.set_defaults(func=lambda a: clean_cmd(get_lai_instance(), a))
 
+    # OCR
+    ocr_parser = subparsers.add_parser(
+        'ocr', help='Extraer texto de imagen con OCR local (tesseract)'
+    )
+    ocr_parser.add_argument('image', help='Ruta a la imagen')
+    ocr_parser.add_argument(
+        '--lang', default='spa+eng', help='Idiomas para tesseract (default: spa+eng)'
+    )
+    ocr_parser.add_argument('--output', '-o', help='Guardar texto extraído en archivo')
+    ocr_parser.set_defaults(func=lambda a: ocr_cmd(a))
+
     # MCP
     mcp_parser = subparsers.add_parser('mcp', help='Start MCP server exposing lai tools')
-    mcp_parser.add_argument('--transport', default='stdio', choices=['stdio'], help='Transport (stdio only)')
+    mcp_parser.add_argument(
+        '--transport', default='stdio', choices=['stdio'], help='Transport (stdio only)'
+    )
     mcp_parser.set_defaults(func=lambda _: mcp_cmd())
 
     # System One
-    so_parser = subparsers.add_parser('system-one', help='System One decision client (choice/noul/score)')
-    so_parser.add_argument('--endpoint', default='http://localhost:11434/v1/systemone', help='System One endpoint')
+    so_parser = subparsers.add_parser(
+        'system-one', help='System One decision client (choice/noul/score)'
+    )
+    so_parser.add_argument(
+        '--endpoint', default='http://localhost:11434/v1/systemone', help='System One endpoint'
+    )
     so_parser.add_argument('--model', default='nimble', help='Decision model name')
-    so_parser.add_argument('--type', required=True, choices=['choice', 'noul', 'score'], help='Decision type')
+    so_parser.add_argument(
+        '--type', required=True, choices=['choice', 'noul', 'score'], help='Decision type'
+    )
     so_parser.add_argument('--state', required=True, help='State/context')
     so_parser.add_argument('--question', required=True, help='Question')
     so_parser.add_argument('--options', nargs='*', help='Options for choice type')
     so_parser.add_argument('--scale', default='1-10', help='Scale for score type')
     so_parser.add_argument('--temp', type=float, default=0.7, help='Temperature for generation')
-    so_parser.add_argument('--precision', default='q4_k_m', help='Model precision (q4_k_m, q8_0, f16, etc.)')
+    so_parser.add_argument(
+        '--precision', default='q4_k_m', help='Model precision (q4_k_m, q8_0, f16, etc.)'
+    )
     so_parser.add_argument('--json', action='store_true', help='JSON output')
     so_parser.set_defaults(func=lambda a: system_one_cmd(get_lai_instance(), a))
 
@@ -4519,7 +4581,9 @@ def mcp_cmd() -> None:
     import subprocess
     import sys
 
-    server_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scripts', 'mcp_server.py')
+    server_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'scripts', 'mcp_server.py'
+    )
     if not os.path.exists(server_path):
         print(f'ERROR: MCP server not found at {server_path}', file=sys.stderr)
         sys.exit(1)
@@ -4543,11 +4607,12 @@ def system_one_cmd(lai_instance: Any, args: Any) -> None:
 
     if args.json:
         import json
+
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         # Formatear salida legible
         if 'error' in result:
-            print(f"ERROR: {result['error']}", file=sys.stderr)
+            print(f'ERROR: {result["error"]}', file=sys.stderr)
             if result.get('detail'):
                 print(result['detail'][:500], file=sys.stderr)
             sys.exit(1)
@@ -4561,9 +4626,9 @@ def system_one_cmd(lai_instance: Any, args: Any) -> None:
                 atype = answer.get('type', 'unknown')
                 value = answer.get('value', answer)
                 confidence = answer.get('confidence', answer.get('probability', 'N/A'))
-                print(f"{qid} [{atype}]: {value} (confianza: {confidence})")
+                print(f'{qid} [{atype}]: {value} (confianza: {confidence})')
             else:
-                print(f"{qid}: {answer}")
+                print(f'{qid}: {answer}')
 
 
 if __name__ == '__main__':

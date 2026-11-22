@@ -1,0 +1,21 @@
+skips: [B104, B307, B602, B603, B607, B108, B110, B404]
+exclude_dirs:
+  - .git
+  - __pycache__
+  - .pytest_cache
+  - .ruff_cache
+  - .mypy_cache
+  - .venv
+  - venv
+  - env
+  - test_todo_project
+  - .crush
+  - logs
+  - sessions
+  - chess
+  - gateway-go
+  - scripts
+  - DOCS
+  - node_modules
+  - dist
+  - build
