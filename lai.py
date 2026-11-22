@@ -2290,7 +2290,11 @@ class LAI:
                         f'{self.base_url}/chat/completions', json=payload, timeout=120
                     )
                     data = resp.json()
-                    return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    message = data.get('choices', [{}])[0].get('message', {})
+                    content = message.get('content', '') or ''
+                    if not content:
+                        content = message.get('reasoning_content', '') or ''
+                    return content
         except Exception as e:
             return f'Error: {e}'
 

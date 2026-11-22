@@ -8,11 +8,14 @@ AutoMode basics, status_cmd, config_cmd, and cost summary.
 
 from __future__ import annotations
 
+import contextlib
+import argparse
+import asyncio
 import json
 import os
 import sys
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -286,6 +289,252 @@ class TestModelsCmd:
     def test_models_returns_list(self):
         instance = lai.LAI()
         instance.models()
+
+
+class TestLAIChat:
+    """Tests for LAI._chat with mocked httpx."""
+
+    def test_chat_success_spanish(self):
+        instance = lai.LAI()
+        instance.lang = 'es'
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            'choices': [{
+                'message': {'content': 'Hola mundo', 'role': 'assistant'}
+            }]
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+        with patch('httpx.AsyncClient', return_value=mock_client):
+            result = asyncio.run(instance._chat('di hola', stream=False))
+            assert result == 'Hola mundo'
+
+    def test_chat_empty_content_uses_reasoning(self):
+        instance = lai.LAI()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            'choices': [{
+                'message': {
+                    'content': '',
+                    'reasoning_content': 'razonamiento interno',
+                    'role': 'assistant'
+                }
+            }]
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+        with patch('httpx.AsyncClient', return_value=mock_client):
+            result = asyncio.run(instance._chat('test', stream=False))
+            assert 'razonamiento interno' in result
+
+
+class TestToolRegistryRunCommand:
+    """Tests for ToolRegistry.run_command."""
+
+    def test_run_command_success(self):
+        reg = lai.ToolRegistry()
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout='ok', stderr='')
+            result = reg.run_command('echo ok')
+            assert result is not None
+
+    def test_run_command_failure(self):
+        reg = lai.ToolRegistry()
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout='', stderr='error')
+            result = reg.run_command('false')
+            assert result is not None
+
+
+class TestToolRegistryLintFormatTypes:
+    """Tests for lint_file, check_types, format_code."""
+
+    def test_lint_file(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('x = 1\n')
+                result = reg.lint_file('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+    def test_check_types(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('x = 1\n')
+                result = reg.check_types('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+    def test_format_code(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('x=1\n')
+                result = reg.format_code('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestToolRegistryAnalyzeComplexity:
+    """Tests for analyze_complexity."""
+
+    def test_analyze_complexity(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('def foo():\n    pass\n')
+                result = reg.analyze_complexity('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestLAIStatus:
+    """Tests for LAI.status."""
+
+    def test_status_runs(self):
+        instance = lai.LAI()
+        instance.total_prompt_tokens = 1000
+        instance.total_completion_tokens = 500
+        instance.request_count = 1
+        instance.estimated_cost_usd = 0.01
+        with contextlib.suppress(Exception):
+            instance.status()
+
+
+class TestLAIAutoMode:
+    """Tests for AutoMode with mocked services."""
+
+    def test_auto_mode_run_mocked(self):
+        instance = lai.LAI()
+        mock_run = MagicMock(return_value='auto result')
+        with patch.object(lai.AutoMode, 'run', mock_run):
+            result = instance.auto_mode_run('do something', max_iterations=1, max_turns=2)
+            assert result == 'auto result'
+
+
+class TestLaiReview:
+    """Tests for review command."""
+
+    def test_review_returns_string(self):
+        instance = lai.LAI()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('def foo():\n    return 1\n')
+                from argparse import Namespace
+                args = Namespace(path='test.py', focus='all', format='text')
+                lai.review_cmd(instance, args)  # prints to stdout, returns None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestFindUnused:
+    """Tests for find_unused_imports and find_unused_code."""
+
+    def test_find_unused_imports(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('import os\nx = 1\n')
+                result = reg.find_unused_imports('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+    def test_find_unused_code(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('def unused():\n    pass\nx = 1\n')
+                result = reg.find_unused_code('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestFindTodos:
+    """Tests for find_todos."""
+
+    def test_find_todos(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('# TODO: fix this\nx = 1\n')
+                result = reg.find_todos('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestCheckSecurity:
+    """Tests for check_security."""
+
+    def test_check_security(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('test.py', 'w') as f:
+                    f.write('password = "secret"\n')
+                result = reg.check_security('test.py')
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
+
+
+class TestFindDuplicates:
+    """Tests for find_duplicates."""
+
+    def test_find_duplicates(self):
+        reg = lai.ToolRegistry()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with open('a.py', 'w') as f:
+                    f.write('x = 1\n')
+                with open('b.py', 'w') as f:
+                    f.write('x = 1\n')
+                result = reg.find_duplicates(tmpdir)
+                assert result is not None
+            finally:
+                os.chdir(old_cwd)
 
 
 if __name__ == '__main__':
