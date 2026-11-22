@@ -714,6 +714,96 @@ class TestOCR:
         assert 'guardado en' in captured.out
 
 
+class TestCommandFunctions:
+    """Tests for CLI command functions with mocked LAI instance."""
+
+    def test_get_lai_instance_singleton(self):
+        instance1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
+        instance2 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
+        assert instance1 is instance2
+
+    def test_get_lai_instance_different_model(self):
+        instance1 = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1')
+        instance2 = lai.get_lai_instance(model='llama3', base_url='http://localhost:8080/v1')
+        assert instance1 is not instance2
+
+    def test_get_lai_instance_lang_change(self):
+        instance = lai.get_lai_instance(model='qwen3-8b', base_url='http://localhost:8080/v1', lang='en')
+        assert instance.lang == 'en'
+
+    def test_chat_cmd_no_prompt(self, capsys):
+        args = argparse.Namespace(
+            model='qwen3-8b', base_url='http://localhost:8080/v1', lang='es',
+            stream=True, thinking=True, temp=0.7, max_tokens=4096,
+            interactive=False, no_stream=False, no_thinking=False, prompt=[]
+        )
+        lai.chat_cmd(args)
+        captured = capsys.readouterr()
+        assert 'No prompt provided' in captured.out
+
+    def test_status_cmd(self, capsys):
+        lai.status_cmd(lai.LAI(), argparse.Namespace())
+        captured = capsys.readouterr()
+        assert 'Services status' in captured.out or 'llama.cpp' in captured.out
+
+    def test_version_cmd(self, capsys):
+        lai.version_cmd()
+        captured = capsys.readouterr()
+        assert len(captured.out) > 0
+
+    def test_models_cmd(self, capsys, monkeypatch):
+        def fake_models(self):
+            print('qwen3-8b')
+        monkeypatch.setattr(lai.LAI, 'models', fake_models)
+        lai.models_cmd(lai.LAI(), argparse.Namespace())
+        captured = capsys.readouterr()
+        assert 'qwen3-8b' in captured.out
+
+    def test_tools_cmd(self, capsys, monkeypatch):
+        def fake_tools_list(self):
+            print('read_file')
+        monkeypatch.setattr(lai.LAI, 'tools_list', fake_tools_list)
+        lai.tools_cmd(lai.LAI(), argparse.Namespace())
+        captured = capsys.readouterr()
+        assert 'read_file' in captured.out
+
+    def test_generate_cmd_no_prompt(self, capsys):
+        args = argparse.Namespace(
+            prompt=[], model='qwen3-8b', base_url='http://localhost:8080/v1',
+            stream=True, thinking=True, temp=0.7, max_tokens=2048
+        )
+        lai.generate_cmd(args)
+        captured = capsys.readouterr()
+        assert 'No prompt provided' in captured.out
+
+    def test_run_cmd(self, capsys, monkeypatch, tmp_path):
+        script = tmp_path / 'script.py'
+        script.write_text('print("hola")\n')
+        def fake_run_script(self, path):
+            return f'Output of {path}'
+        monkeypatch.setattr(lai.LAI, 'run_script', fake_run_script)
+        lai.run_cmd(lai.LAI(), argparse.Namespace(script=str(script)))
+        captured = capsys.readouterr()
+        assert 'Output of' in captured.out
+
+    def test_think_cmd(self, capsys, monkeypatch):
+        def fake_think(self, problem):
+            return f'Thinking about: {problem}'
+        monkeypatch.setattr(lai.LAI, 'think', fake_think)
+        lai.think_cmd(lai.LAI(), argparse.Namespace(problem='¿Cómo funciona la recursión?'))
+        captured = capsys.readouterr()
+        assert 'Thinking about' in captured.out
+
+    def test_code_cmd(self, capsys, monkeypatch, tmp_path):
+        outfile = tmp_path / 'generated.py'
+        def fake_code(self, description, filename, auto=False, yolo=False, max_iterations=3):
+            with open(filename, 'w') as f:
+                f.write('# generated code\n')
+        monkeypatch.setattr(lai.LAI, 'code', fake_code)
+        lai.code_cmd(lai.LAI(), argparse.Namespace(description='test', filename=str(outfile), auto=False, yolo=False, max_iterations=3))
+        assert outfile.exists()
+
+
 if __name__ == '__main__':
     import pytest as _pytest
 
