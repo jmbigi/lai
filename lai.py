@@ -2791,6 +2791,28 @@ Examples:
     )
     rag_parser.set_defaults(func=lambda a: rag_cmd(a))
 
+    # ---------------------------------------------------------------
+    # interactive – terminal interactivo continuo (sesión tipo REPL)
+    # ---------------------------------------------------------------
+    interactive_parser = subparsers.add_parser(
+        'interactive', help='Terminal interactivo continuo (sesión chat con historial)'
+    )
+    interactive_parser.add_argument(
+        '--no-stream', action='store_true', help='Desactivar streaming de respuesta'
+    )
+    interactive_parser.add_argument(
+        '--thinking', action='store_true', help='Activar modo thinking (deepseek)'
+    )
+    interactive_parser.add_argument(
+        '--no-thinking', action='store_true', help='Desactivar modo thinking'
+    )
+    interactive_parser.add_argument(
+        '--temp', type=float, default=0.7, help='Temperatura del modelo (default: 0.7)'
+    )
+    interactive_parser.add_argument(
+        '--max-tokens', type=int, default=4096, help='Máximo de tokens (default: 4096)'
+    )
+
     args = parser.parse_args()
 
     if not hasattr(args, 'func') or args.command is None:
@@ -2830,6 +2852,11 @@ Examples:
         lai.thinking = True
     if getattr(args, 'no_thinking', False):
         lai.thinking = False
+
+    # Comando interactivo: terminal continuo (no usa args.func)
+    if args.command == 'interactive':
+        interactive_cmd(lai, args)
+        return
 
     # Auto-start services (skip for mcp and system-one which don't need lai services)
     if args.command not in ('mcp', 'system-one') and not args.quiet:
@@ -2920,6 +2947,162 @@ def rag_cmd(args):
             print(f'    File: {r["metadata"]["file"]}')
         text = r['text']
         print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
+
+
+def interactive_cmd(lai: Any, args: Any) -> None:
+    """Terminal interactivo continuo (sesión tipo REPL con historial)."""
+
+    import asyncio
+
+    print('╔═══════════════════════════════════════════════╗')
+    print('║      lai - Terminal Interactivo              ║')
+    print('║      Local AI Code Assistant                 ║')
+    print('╚═══════════════════════════════════════════════╝')
+    print()
+    print('Comandos especiales:')
+    print('  /exit, /quit    - Salir')
+    print('  /help           - Mostrar esta ayuda')
+    print('  /clear          - Limpiar historial')
+    print('  /history        - Ver historial de conversación')
+    print('  /rag <query>    - Búsqueda semántica local (RAG)')
+    print('  /index          - Indexar directorio actual en RAG')
+    print('  /model          - Mostrar modelo actual')
+    print('  /temp <n>       - Cambiar temperatura (0.0-2.0)')
+    print('  /stream         - Alternar streaming on/off')
+    print()
+    print('Escribe tu consulta o un comando. Ctrl+C para salir.')
+    print()
+
+    history: list[dict[str, str]] = []
+    stream_enabled = not getattr(args, 'no_stream', False)
+    thinking_enabled = getattr(args, 'thinking', False)
+    if getattr(args, 'no_thinking', False):
+        thinking_enabled = False
+
+    while True:
+        try:
+            user_input = input('lai> ').strip()
+        except (EOFError, KeyboardInterrupt):
+            print('\n¡Hasta luego!')
+            break
+
+        if not user_input:
+            continue
+
+        # Comandos especiales
+        if user_input.startswith('/'):
+            parts = user_input.split(None, 1)
+            cmd = parts[0].lower()
+            arg = parts[1] if len(parts) > 1 else ''
+
+            if cmd in ('/exit', '/quit'):
+                print('¡Hasta luego!')
+                break
+
+            if cmd == '/help':
+                print('Comandos disponibles: /exit, /quit, /help, /clear, /history, /rag, /index, /model, /temp, /stream')
+                continue
+
+            if cmd == '/clear':
+                history.clear()
+                print('Historial limpiado.')
+                continue
+
+            if cmd == '/history':
+                if not history:
+                    print('Historial vacío.')
+                else:
+                    for i, entry in enumerate(history, 1):
+                        role = entry['role']
+                        text = entry['content'][:100]
+                        print(f'  {i}. [{role}] {text}{"..." if len(entry["content"]) > 100 else ""}')
+                continue
+
+            if cmd == '/rag':
+                if not arg:
+                    print('Uso: /rag <consulta>')
+                    continue
+                rag = get_rag()
+                results = rag.search(arg, top_k=5)
+                if not results:
+                    print('No se encontraron resultados en RAG.')
+                else:
+                    print(f'RAG results for: {arg}')
+                    for i, r in enumerate(results, 1):
+                        print(f'\n  [{i}] {r["id"]} (score: {r["score"]:.3f})')
+                        if r['metadata'].get('file'):
+                            print(f'      File: {r["metadata"]["file"]}')
+                        print(f'      {r["text"][:300]}{"..." if len(r["text"]) > 300 else ""}')
+                continue
+
+            if cmd == '/index':
+                rag = get_rag()
+                try:
+                    count = rag.add_directory(
+                        'interactive', '.', extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml')
+                    )
+                    print(f'Indexados {count} documentos en colección "interactive".')
+                except Exception as e:
+                    print(f'Error indexando: {e}')
+                continue
+
+            if cmd == '/model':
+                print(f'Modelo actual: {lai.model}')
+                print(f'Base URL: {lai.base_url}')
+                continue
+
+            if cmd == '/temp':
+                if not arg:
+                    print(f'Temperatura actual: {lai.temp}')
+                    continue
+                try:
+                    lai.temp = float(arg)
+                    print(f'Temperatura establecida a {lai.temp}')
+                except ValueError:
+                    print('Temperatura inválida. Usa un número entre 0.0 y 2.0.')
+                continue
+
+            if cmd == '/stream':
+                stream_enabled = not stream_enabled
+                print(f'Streaming: {"activado" if stream_enabled else "desactivado"}')
+                continue
+
+            print(f'Comando desconocido: {cmd}. Escribe /help para ver comandos.')
+            continue
+
+        # Consulta normal al modelo
+        history.append({'role': 'user', 'content': user_input})
+
+        # Construir prompt con historial reciente (últimos 6 turnos)
+        recent = history[-12:]
+        prompt_parts = []
+        for entry in recent:
+            role = entry['role']
+            content = entry['content']
+            if role == 'user':
+                prompt_parts.append(f'Usuario: {content}')
+            else:
+                prompt_parts.append(f'Asistente: {content}')
+        full_prompt = '\n'.join(prompt_parts)
+
+        print('Asistente: ', end='', flush=True)
+
+        try:
+            response = asyncio.run(
+                lai._chat(
+                    prompt=full_prompt,
+                    stream=stream_enabled,
+                    thinking=thinking_enabled,
+                    temp=lai.temp,
+                    max_tokens=lai.max_tokens,
+                )
+            )
+            if not stream_enabled:
+                print(response)
+            history.append({'role': 'assistant', 'content': response})
+        except Exception as e:
+            print(f'Error: {e}')
+            history.pop()  # quitar el user entry si falló
 
 
 if __name__ == '__main__':
