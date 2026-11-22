@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 from urllib.parse import urlparse
+from lai_automode import AutoMode
 
 import httpx
 
@@ -2001,133 +2002,6 @@ class ThinkingManager:
 # ============================================================================
 # AUTO MODE
 # ============================================================================
-
-
-class AutoMode:
-    """Native tool-calling agent loop with turn budget and cost tracking."""
-
-    def __init__(
-        self,
-        goal: str,
-        tools: 'ToolRegistry',
-        lai_instance: 'LAI',
-        max_iterations: int = 10,
-        max_turns: int = 20,
-        track_cost: bool = True,
-    ):
-        self.goal = goal
-        self.tools = tools
-        self.lai = lai_instance
-        self.max_iterations = max_iterations
-        self.max_turns = max_turns
-        self.track_cost = track_cost
-        self.iteration = 0
-        self.turns_used = 0
-        self.total_prompt_tokens = 0
-        self.total_completion_tokens = 0
-        self.messages: List[Dict] = [
-            {
-                'role': 'system',
-                'content': (
-                    '/no_think\n'
-                    "You are a coding agent working in the user's project. "
-                    'Inspect files before editing. Use write_file with complete file '
-                    'content. Python files are syntax-checked automatically. '
-                    'After completing the task, reply without calling any tool.'
-                ),
-            },
-            {'role': 'user', 'content': goal},
-        ]
-
-    def run(self) -> str:
-        if not is_local_url(self.lai.base_url):
-            return 'Error: AutoMode requires a local model endpoint (Rule 4).'
-
-        schema = self.tools.get_tools_schema()
-        transcript: List[str] = []
-        for iteration in range(1, self.max_iterations + 1):
-            self.iteration = iteration
-            response = self.lai.chat_messages(
-                self.messages,
-                tools=schema,
-                tool_choice='auto',
-                stream=False,
-                thinking=False,
-                temp=0.1,
-                max_tokens=2048,
-            )
-            if response.get('error'):
-                transcript.append(f'Iteration {iteration}: error: {response["error"]}')
-                break
-
-            # Track token usage if available
-            usage = response.get('usage')
-            if self.track_cost and usage:
-                self.total_prompt_tokens += usage.get('prompt_tokens', 0)
-                self.total_completion_tokens += usage.get('completion_tokens', 0)
-
-            content = response.get('content') or ''
-            tool_calls = response.get('tool_calls') or []
-            assistant: Dict = {'role': 'assistant', 'content': content}
-            if tool_calls:
-                assistant['tool_calls'] = tool_calls
-            self.messages.append(assistant)
-
-            if content:
-                transcript.append(f'\n--- Iteration {iteration} ---\n{content}')
-            if not tool_calls:
-                break
-
-            for call in tool_calls:
-                self.turns_used += 1
-                if self.turns_used >= self.max_turns:
-                    transcript.append(f'Max turns ({self.max_turns}) reached. Stopping.')
-                    return '\n'.join(transcript)
-
-                function = call.get('function') or {}
-                name = function.get('name', '')
-                raw_args = function.get('arguments', '{}')
-                try:
-                    arguments = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                except json.JSONDecodeError:
-                    arguments = {}
-                if not isinstance(arguments, dict):
-                    arguments = {}
-
-                func = self.tools.tools.get(name)
-                if func is None:
-                    result = f'Unknown tool: {name}'
-                else:
-                    try:
-                        result = func(**arguments)
-                    except TypeError as exc:
-                        result = f'Invalid arguments for {name}: {exc}'
-                    except Exception as exc:
-                        result = f'Tool {name} failed: {exc}'
-
-                if not isinstance(result, str):
-                    result = json.dumps(result, ensure_ascii=False)
-                result = result[:6000]
-                self.messages.append(
-                    {
-                        'role': 'tool',
-                        'tool_call_id': call.get('id') or f'call_{iteration}',
-                        'name': name,
-                        'content': result,
-                    }
-                )
-                transcript.append(f'[{name}] {result[:1200]}')
-        else:
-            transcript.append('Max iterations reached without a final answer.')
-
-        # Cost summary
-        if self.track_cost and (self.total_prompt_tokens or self.total_completion_tokens):
-            # Rough estimate: Qwen3-8B local = $0, but track for cloud comparison
-            transcript.append('\n--- Cost Summary ---')
-            transcript.append(f'Prompt tokens: {self.total_prompt_tokens}')
-            transcript.append(f'Completion tokens: {self.total_completion_tokens}')
-            transcript.append(f'Turns used: {self.turns_used}/{self.max_turns}')
-        return '\n'.join(transcript)
 
 
 # ============================================================================

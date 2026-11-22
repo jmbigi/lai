@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lai  # noqa: E402
+from lai_automode import AutoMode
 
 
 class TestLAIInit:
@@ -206,7 +207,7 @@ class TestAutoModeBasics:
     def test_auto_mode_run_mocked(self):
         instance = lai.LAI()
         mock_run = MagicMock(return_value='mocked result')
-        with patch.object(lai.AutoMode, 'run', mock_run):
+        with patch.object(AutoMode, 'run', mock_run):
             result = instance.auto_mode_run('do something', max_iterations=1, max_turns=2)
             assert result == 'mocked result'
 
@@ -431,7 +432,7 @@ class TestLAIAutoMode:
     def test_auto_mode_run_mocked(self):
         instance = lai.LAI()
         mock_run = MagicMock(return_value='auto result')
-        with patch.object(lai.AutoMode, 'run', mock_run):
+        with patch.object(AutoMode, 'run', mock_run):
             result = instance.auto_mode_run('do something', max_iterations=1, max_turns=2)
             assert result == 'auto result'
 
