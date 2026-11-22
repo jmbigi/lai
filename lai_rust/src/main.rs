@@ -6,12 +6,12 @@ mod commands;
 mod llm;
 mod services;
 mod safety;
-// mod tools;        // Has issues with quote crate
-// mod automode;     // Has borrow checker issues
-// mod agents;       // Has duplicate imports
-// mod session;      // OK
-// mod thinking;     // OK
-// mod config;       // OK
+mod tools;
+mod automode;
+mod agents;
+mod session;
+mod thinking;
+mod config;
 
 use crate::commands::*;
 use clap::Parser;
@@ -801,7 +801,7 @@ async fn main() {
             println!("Goto: not yet ported to Rust.");
         }
         Some(Commands::Repomap { path, max_chars }) => {
-            cmd_repomap(&path, max_chars as usize);
+            cmd_repomap(&path, max_chars as usize).await;
         }
         Some(Commands::Interactive {
             no_stream,

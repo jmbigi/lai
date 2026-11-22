@@ -5,8 +5,11 @@
 
 use crate::llm::{LlmClient, Message};
 use crate::services::Services;
+use crate::tools::ToolRegistry;
 use quote::quote;
 use serde_json::json;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -1059,9 +1062,18 @@ pub fn cmd_doctor(fix: bool) {
 // Repomap
 // ============================================================================
 
-// TODO: Fix syn/quote imports and borrow checker issues
-pub fn cmd_repomap(_path: &str, _max_chars: usize) {
-    println!("Repomap: temporarily disabled (syn/quote issues)");
+pub async fn cmd_repomap(path: &str, max_chars: usize) {
+    let tools = crate::tools::ToolRegistry::new();
+    let result = tools.call_tool("repo_map", {
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), serde_json::Value::String(path.to_string()));
+        args.insert("max_chars".to_string(), serde_json::Value::Number(serde_json::Number::from(max_chars)));
+        args
+    }).await;
+    match result {
+        Ok(output) => println!("{}", output),
+        Err(e) => eprintln!("Error: {}", e),
+    }
 }
 
 // ============================================================================

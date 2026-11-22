@@ -315,7 +315,10 @@ fn is_local_url(url: &str) -> bool {
     }
 
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return ip.is_loopback() || ip.is_private();
+        match ip {
+            std::net::IpAddr::V4(v4) => return v4.is_loopback() || v4.is_private(),
+            std::net::IpAddr::V6(v6) => return v6.is_loopback() || v6.is_unicast_link_local(),
+        }
     }
 
     false

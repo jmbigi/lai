@@ -177,62 +177,79 @@ REGLAS DE ORO:
                 break;
             }
 
-            {
-                let step = &mut self.plan[i];
-                step.status = "in_progress".into();
-                self.log(&format!("\n--- Paso {}: {} ---", step.id, step.description));
-                self.log(&format!("Criterios de aceptación: {}", step.criteria.join("; ")));
+            // Get step data before mutable borrow
+            let (step_id, step_desc, step_criteria) = {
+                let step = &self.plan[i];
+                (step.id.clone(), step.description.clone(), step.criteria.clone())
+            };
 
-                // 2a. Execute with ReAct loop
-                let step_result = self.execute_step_react(step).await?;
+            self.log(&format!("\n--- Paso {}: {} ---", step_id, step_desc));
+            self.log(&format!("Criterios de aceptación: {}", step_criteria.join("; ")));
 
-                // 2b. Reflection: separate critic evaluates
-                let mut best_result = step_result.clone();
-                let mut best_score = -1.0;
+            // Update step status
+            self.plan[i].status = "in_progress".into();
 
-                if self.reflective {
-                    for round_num in 1..=self.max_reflection_rounds {
-                        self.log(&format!("\n[Reflection] Ronda {} de crítica", round_num));
-                        let critique = self.critique_step(step, &step_result).await?;
+            // Create temporary step for execution
+            let temp_step = PlanStep {
+                id: step_id.clone(),
+                description: step_desc.clone(),
+                criteria: step_criteria.clone(),
+                status: "in_progress".into(),
+                result: None,
+                score: None,
+                feedback: None,
+            };
 
-                        step.score = Some(critique.score);
-                        step.feedback = Some(critique.feedback.clone());
+            // 2a. Execute with ReAct loop
+            let step_result = self.execute_step_react(&temp_step).await?;
 
-                        if critique.approved {
-                            self.log(&format!("[Reflection] APROBADO (puntuación {})", critique.score));
-                            best_result = step_result.clone();
-                            best_score = critique.score;
-                            break;
-                        }
+            // 2b. Reflection: separate critic evaluates
+            let mut best_result = step_result.clone();
+            let mut best_score = -1.0;
 
-                        self.log(&format!(
-                            "[Reflection] RECHAZADO/PARCIAL (puntuación {}): {}",
-                            critique.score,
-                            critique.feedback.chars().take(200).collect::<String>()
-                        ));
+            if self.reflective {
+                for round_num in 1..=self.max_reflection_rounds {
+                    self.log(&format!("\n[Reflection] Ronda {} de crítica", round_num));
+                    let critique = self.critique_step(&temp_step, &step_result).await?;
 
-                        if critique.score > best_score {
-                            best_score = critique.score;
-                            best_result = step_result.clone();
-                        }
+                    // Update step with critique results
+                    self.plan[i].score = Some(critique.score);
+                    self.plan[i].feedback = Some(critique.feedback.clone());
 
-                        // 2c. Revise: re-execute with critic feedback
-                        self.log("[Reflection] Re-ejecutando con feedback del crítico...");
-                        let revised = self.revise_step(step, &step_result, &critique.feedback).await?;
-                        if !revised.is_empty() {
-                            // Update step_result for next iteration
-                        }
+                    if critique.approved {
+                        self.log(&format!("[Reflection] APROBADO (puntuación {})", critique.score));
+                        best_result = step_result.clone();
+                        best_score = critique.score;
+                        break;
+                    }
+
+                    self.log(&format!(
+                        "[Reflection] RECHAZADO/PARCIAL (puntuación {}): {}",
+                        critique.score,
+                        critique.feedback.chars().take(200).collect::<String>()
+                    ));
+
+                    if critique.score > best_score {
+                        best_score = critique.score;
+                        best_result = step_result.clone();
+                    }
+
+                    // 2c. Revise: re-execute with critic feedback
+                    self.log("[Reflection] Re-ejecutando con feedback del crítico...");
+                    let revised = self.revise_step(&temp_step, &step_result, &critique.feedback).await?;
+                    if !revised.is_empty() {
+                        // Update step_result for next iteration would need re-structuring
                     }
                 }
-
-                // 2d. Best-version fallback
-                if best_score > 0.0 {
-                    self.best_outputs.insert(step.id.clone(), (best_score, best_result.clone()));
-                }
-                step.result = Some(best_result);
-                step.status = "done".into();
-                self.log(&format!("[Paso {}] Completado.", step.id));
             }
+
+            // 2d. Best-version fallback
+            if best_score > 0.0 {
+                self.best_outputs.insert(step_id.clone(), (best_score, best_result.clone()));
+            }
+            self.plan[i].result = Some(best_result);
+            self.plan[i].status = "done".into();
+            self.log(&format!("[Paso {}] Completado.", step_id));
         }
 
         // Phase 3: Integrate results
@@ -250,13 +267,16 @@ REGLAS DE ORO:
     }
 
     fn log_plan(&mut self) {
-        for step in &self.plan {
-            self.log(&format!(
+        let lines: Vec<String> = self.plan.iter().map(|step| {
+            format!(
                 "  {}. {}{}",
                 step.id,
                 step.description,
                 if !step.criteria.is_empty() { format!(" | Criterios: {}", step.criteria.join("; ")) } else { String::new() }
-            ));
+            )
+        }).collect();
+        for line in lines {
+            self.log(&line);
         }
     }
 
@@ -467,7 +487,7 @@ FEEDBACK: <feedback concreto y accionable>
     }
 
     async fn revise_step(&mut self, step: &PlanStep, previous_output: &str, feedback: &str) -> Result<String> {
-        let messages = vec![
+        let mut messages = vec![
             Message { role: "system".into(), content: Self::EXECUTOR_PROMPT.into() },
             Message {
                 role: "user".into(),

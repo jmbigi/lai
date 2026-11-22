@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::Mutex;
-use crate::llm::{ChatResult, LlmClient, Message};
+use crate::llm::{ChatResult, LlmClient, Message, ToolCall};
 use crate::tools::ToolRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,7 +23,7 @@ pub struct AgentConfig {
 pub struct AgentResult {
     pub agent: String,
     pub output: String,
-    pub tool_calls: Vec<Value>,
+    pub tool_calls: Vec<ToolCall>,
     pub score: Option<f64>,
 }
 
@@ -175,11 +174,14 @@ FEEDBACK: <feedback concreto>"#
             Message { role: "user".into(), content: prompt },
         ];
 
-        let response = self.llm.chat_messages(messages, None, false, false).await?;
+        let response = self.llm.chat_messages(messages, None, false, false).await;
+        if let Some(err) = response.error {
+            return Err(anyhow::anyhow!("Critic error: {}", err));
+        }
         Ok(AgentResult {
             agent: "critic".into(),
-            output: response.content.unwrap_or_default(),
-            tool_calls: response.tool_calls.unwrap_or_default(),
+            output: response.content,
+            tool_calls: response.tool_calls,
             score: None,
         })
     }
@@ -189,7 +191,7 @@ FEEDBACK: <feedback concreto>"#
         let mut results = Vec::new();
 
         for file in files {
-            let content = std::fs::read_to_string(file).unwrap_or_default();
+            let content = std::fs::read_to_string(file).unwrap_or_else(|_| String::new());
             let lines: Vec<&str> = content.lines().collect();
 
             for chunk_start in (0..lines.len()).step_by(120) {
@@ -223,12 +225,21 @@ Código:
                     Message { role: "user".into(), content: prompt },
                 ];
 
-                let response = self.llm.chat_messages(messages, None, false, false).await?;
-                if !response.content.as_deref().unwrap_or("").starts_with("Error:") {
+                let response = self.llm.chat_messages(messages, None, false, false).await;
+                if let Some(err) = &response.error {
+                    if !err.starts_with("Error:") {
+                        results.push(AgentResult {
+                            agent: "reviewer".into(),
+                            output: response.content,
+                            tool_calls: response.tool_calls,
+                            score: None,
+                        });
+                    }
+                } else {
                     results.push(AgentResult {
                         agent: "reviewer".into(),
-                        output: response.content.unwrap_or_default(),
-                        tool_calls: response.tool_calls.unwrap_or_default(),
+                        output: response.content.clone(),
+                        tool_calls: response.tool_calls.clone(),
                         score: None,
                     });
                 }
@@ -246,11 +257,14 @@ Código:
             Message { role: "user".into(), content: format!("Meta: {}", goal) },
         ];
 
-        let response = self.llm.chat_messages(messages, None, false, false).await?;
+        let response = self.llm.chat_messages(messages, None, false, false).await;
+        if let Some(err) = response.error {
+            return Err(anyhow::anyhow!("Planner error: {}", err));
+        }
         Ok(AgentResult {
             agent: "planner".into(),
-            output: response.content.unwrap_or_default(),
-            tool_calls: response.tool_calls.unwrap_or_default(),
+            output: response.content,
+            tool_calls: response.tool_calls,
             score: None,
         })
     }
@@ -271,11 +285,15 @@ Código:
         ];
 
         let tools_schema = self.tools.get_tools_schema();
-        let response = self.llm.chat_messages(messages, Some(serde_json::to_value(&tools_schema)?), false, false).await?;
+        let tools_value: Vec<Value> = tools_schema.iter().map(|t| serde_json::to_value(t).unwrap()).collect();
+        let response = self.llm.chat_messages(messages, Some(tools_value), false, false).await;
+        if let Some(err) = response.error {
+            return Err(anyhow::anyhow!("Executor error: {}", err));
+        }
         Ok(AgentResult {
             agent: "executor".into(),
-            output: response.content.unwrap_or_default(),
-            tool_calls: response.tool_calls.unwrap_or_default(),
+            output: response.content,
+            tool_calls: response.tool_calls,
             score: None,
         })
     }
@@ -305,11 +323,14 @@ Requisitos:
             Message { role: "user".into(), content: prompt },
         ];
 
-        let response = self.llm.chat_messages(messages, None, false, false).await?;
+        let response = self.llm.chat_messages(messages, None, false, false).await;
+        if let Some(err) = response.error {
+            return Err(anyhow::anyhow!("Coder error: {}", err));
+        }
         Ok(AgentResult {
             agent: "coder".into(),
-            output: response.content.unwrap_or_default(),
-            tool_calls: response.tool_calls.unwrap_or_default(),
+            output: response.content,
+            tool_calls: response.tool_calls,
             score: None,
         })
     }
@@ -327,11 +348,14 @@ Requisitos:
             Message { role: "user".into(), content: prompt },
         ];
 
-        let response = self.llm.chat_messages(messages, None, false, false).await?;
+        let response = self.llm.chat_messages(messages, None, false, false).await;
+        if let Some(err) = response.error {
+            return Err(anyhow::anyhow!("Architect error: {}", err));
+        }
         Ok(AgentResult {
             agent: "architect".into(),
-            output: response.content.unwrap_or_default(),
-            tool_calls: response.tool_calls.unwrap_or_default(),
+            output: response.content,
+            tool_calls: response.tool_calls,
             score: None,
         })
     }
