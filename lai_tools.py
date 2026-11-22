@@ -84,6 +84,83 @@ class ToolRegistry:
             'ocr_screenshot': self.ocr_screenshot,
         }
 
+        # Aprobación humana para herramientas sensibles (Cline-style)
+        self.require_approval = False
+        self._sensitive_tools = {
+            'write_file', 'run_command', 'apply_patch', 'run_python',
+            'fix_imports', 'fix_syntax', 'fix_formatting', 'fix_types',
+            'auto_fix', 'fix_missing_init', 'fix_circular_imports',
+            'fix_relative_imports', 'normalize_imports',
+        }
+        # Envolver herramientas sensibles con verificación de aprobación
+        for name in self._sensitive_tools:
+            if name in self.tools:
+                orig = self.tools[name]
+                self.tools[name] = self._make_approval_wrapper(name, orig)
+
+    def _make_approval_wrapper(self, tool_name: str, orig_func):
+        """Crea un wrapper que pide aprobación antes de ejecutar una herramienta sensible."""
+
+        def wrapper(*args, **kwargs):
+            if not self.require_approval:
+                return orig_func(*args, **kwargs)
+            # Construir una descripción legible de la acción
+            description = self._tool_description(tool_name, args, kwargs)
+            if not self._request_approval(tool_name, description):
+                return f'[RECHAZADO por el usuario] {tool_name}: {description}'
+            return orig_func(*args, **kwargs)
+
+        return wrapper
+
+    def _tool_description(self, tool_name: str, args: tuple, kwargs: dict) -> str:
+        """Construye una descripción legible de la acción para aprobación."""
+        if tool_name == 'write_file':
+            path = args[0] if args else kwargs.get('path', '?')
+            content_preview = (args[1] if len(args) > 1 else kwargs.get('content', ''))[:80]
+            return f"Escribir archivo '{path}' ({len(str(content_preview))} chars)"
+        if tool_name == 'run_command':
+            cmd = args[0] if args else kwargs.get('command', '?')
+            return f"Ejecutar comando: {cmd[:100]}"
+        if tool_name == 'apply_patch':
+            return "Aplicar parche de modificaciones al código"
+        if tool_name == 'run_python':
+            code = args[0] if args else kwargs.get('code', '?')
+            return f"Ejecutar código Python: {str(code)[:100]}"
+        if tool_name.startswith('fix_'):
+            target = args[0] if args else kwargs.get('path', kwargs.get('file', '?'))
+            return f"Aplicar {tool_name} a '{target}'"
+        return f"{tool_name}({', '.join(str(a)[:50] for a in args[:3])})"
+
+    def _request_approval(self, tool_name: str, description: str) -> bool:
+        """Pide al usuario aprobación para ejecutar una herramienta sensible.
+        
+        Devuelve True si el usuario aprueba, False si lo rechaza.
+        """
+        print(f'\n╔════════════════════════════════════════════════╗')
+        print(f'║  APROBACIÓN REQUERIDA                         ║')
+        print(f'╠════════════════════════════════════════════════╣')
+        print(f'║  Herramienta: {tool_name:<40}║')
+        print(f'║  Acción:      {description:<40}║')
+        print(f'╚════════════════════════════════════════════════╝')
+        try:
+            resp = input('¿Aprobar? [s/N]: ').strip().lower()
+            return resp in ('s', 'si', 'sí', 'y', 'yes')
+        except (EOFError, KeyboardInterrupt):
+            print('\nOperación cancelada.')
+            return False
+
+    def enable_approval(self) -> None:
+        """Activa la aprobación humana para herramientas sensibles."""
+        self.require_approval = True
+
+    def disable_approval(self) -> None:
+        """Desactiva la aprobación humana (modo automático)."""
+        self.require_approval = False
+
+    def is_approval_enabled(self) -> bool:
+        """Devuelve True si la aprobación humana está activada."""
+        return self.require_approval
+
     def read_file(self, path: str) -> str:
         try:
             with open(path, 'r') as f:
