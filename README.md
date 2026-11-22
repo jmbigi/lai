@@ -1,15 +1,8 @@
-# Gateway IA Local - Proyecto Chess
+# lai - Local AI Code Assistant
 
-## Descripción
+A comprehensive CLI tool for reviewing, repairing, and improving any code project using local LLMs (Qwen3-8B via llama.cpp).
 
-Gateway IA Local es una infraestructura completa para ejecutar LLMs locales (Qwen3-8B) a través de una API compatible con OpenAI. El proyecto incluye:
-
-- **llama.cpp server** (puerto 8080) - Servidor de inferencia optimizado con FP8 KV cache, speculative decoding, context checkpoints
-- **Gateway Go v3.1** (puerto 8081) - Proxy inteligente con circuit breaker, load balancing, caché semántica, compresión, filtrado de ruido
-- **Harness Python** - Gestor de sesiones, thinking extraction, tool calling, auto-mode
-- **OpenAPI 3.1 Spec** - Especificación completa compatible con OpenAI API 2.3.0
-
-## Misión y Principio Fundacional (Regla 0)
+## Mission (Regla 0)
 
 **lai existe para impulsar el uso de IAs locales, abiertas y soberanas.**
 
@@ -21,26 +14,23 @@ Gateway IA Local es una infraestructura completa para ejecutar LLMs locales (Qwe
 
 > **Regla 0:** *Cualquier feature, arquitectura o dependencia que introduzca dependencia obligatoria de cloud, API keys, cuentas externas o software propietario será rechazada salvo aprobación explícita y documentada del operador.*
 
-## Reglas del Proyecto
+## Key Rules
 
-1. **Seguir las reglas de https://github.com/jmbigi/thinker/**
-2. **Seguir las reglas de https://github.com/jmbigi/better-ai/**
-3. **Seguir las reglas de https://github.com/jmbigi/better-project/**
-4. **Todo el código fuente debe ser generado por LLMs locales, sin excepciones**
-5. **Las IAs, LLMs y modelos cloud sólo pueden configurar y/o generar scripts genéricos, no deben reparar ni generar código específico**
-6. **Honestidad 100%**
-7. **Exactitud 99%**
-8. **El proyecto chess debe ser generado con LLMs y harness locales**
+1. **Regla 4**: Output of `lai` commands (`code`, `project`, `auto`, `fix`, `review`, `serve`) **must** use a local model.
+2. **Regla 5**: lai's own code (`lai.py`, `gateway-go`, scripts, tests, docs) may be generated with cloud or local.
+3. **Local-only guard**: `is_local_url()` validates endpoints before any generation.
+4. **Tool calling**: AutoMode uses llama.cpp native function calling (not keyword heuristics).
+5. **Loopback only**: `serve` binds to `127.0.0.1:8082` by default; gateway binds to `127.0.0.1:8081`.
 
-## Arquitectura
+## Architecture
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌────────────────────┐
-│   Cliente   │────▶│  Gateway Go 8081 │────▶│  llama.cpp 8080    │
-│ (Crush/curl)│     │  Circuit Breaker │     │  FP8 KV Cache      │
+│   lai CLI   │────▶│  Gateway Go 8081 │────▶│  llama.cpp 8080    │
+│  (Rust/Py)  │     │  Circuit Breaker │     │  FP8 KV Cache      │
 │             │     │  Load Balancing  │     │  Speculative Dec.  │
 └─────────────┘     │  Semantic Cache  │     │  Context Checkpt.  │
-                    │  Compression     │     │  Speculative Dec.  │
+                    │  Compression     │     │  Reasoning Budget  │
                     └──────────────────┘     └────────────────────┘
                               │
                               ▼
@@ -50,179 +40,159 @@ Gateway IA Local es una infraestructura completa para ejecutar LLMs locales (Qwe
                       └────────────────────┘
 ```
 
-## Inicio Rápido
+## Implementations
+
+| Implementation | Location | Status |
+|---------------|----------|--------|
+| **Python (legacy)** | `lai.py`, `lai_tools.py`, `lai_automode.py` | Stable |
+| **Rust (current)** | `lai_rust/` | **Primary** |
+
+## Quick Start
 
 ```bash
-# 1. Iniciar llama.cpp server
-cd /home/kubuntu/llama.cpp-bin/llama-b12567
-export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH
-nohup ./llama-server -m /home/kubuntu/models/Qwen3-8B-Q4_K_M.gguf \
-  --host 0.0.0.0 --port 8080 -c 32768 -ngl 99 \
-  --flash-attn on --cont-batching \
-  -ctk f8_e4m3 -ctv f8_e4m3 \
-  --ctx-checkpoints 8 --checkpoint-min-step 4096 \
-  --spec-type ngram-simple --spec-ngram-simple-size-n 12 --spec-ngram-simple-size-m 48 \
-  -b 4096 -ub 512 --alias qwen3-8b --reasoning-format none \
-  > /tmp/llama.log 2>&1 &
+# Build Rust version (recommended)
+cd lai_rust && cargo build --release
+./target/release/lai --help
 
-# 2. Iniciar Gateway Go
-cd /home/kubuntu/curso-ia/modelo-local/gateway-go
-nohup ./gateway > /tmp/gateway.log 2>&1 &
+# Or use Python version
+python3 lai.py --help
 
-# 3. Ollama (fallback)
-ollama serve &
+# Check services
+lai status
 
-# Verificar
-sleep 5
-curl -s http://127.0.0.1:8080/health && echo "llama.cpp OK"
-curl -s http://127.0.0.1:8081/health && echo "Gateway OK"
-curl -s http://127.0.0.1:11434/api/tags && echo "Ollama OK"
+# Start services if needed
+lai status  # will prompt to start stopped services
+
+# Chat with AI
+lai chat "Hola, ¿cómo estás?"
+
+# Generate code
+lai code "Crear una calculadora en Python" calculadora.py
+
+# Autonomous agent
+lai auto "Refactorizar el proyecto para usar async/await" --max-iterations 10
+
+# Code review
+lai review ./mi_proyecto --focus security
+
+# Run tests
+lai test ./tests -v
 ```
 
-## Endpoints Principales
+## Commands
 
-| Endpoint | Método | Descripción |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/ready` | GET | Readiness probe |
-| `/v1/models` | GET | Lista modelos |
-| `/v1/chat/completions` | POST | Chat completion (stream + non-stream) |
-| `/v1/chat/completions/stream` | POST | Streaming SSE |
-| `/v1/chat/completions/compress` | POST | Comprimir prompt |
-| `/v1/context/analyze` | POST | Analizar contexto |
-| `/v1/batch` | POST | Batch processing |
-| `/v1/embeddings` | POST | Embeddings |
-| `/v1/cache/stats` | GET | Estadísticas caché |
-| `/v1/cache/clear` | POST | Limpiar caché |
-| `/metrics` | GET | Prometheus metrics |
-| `/v1/metrics` | GET | JSON metrics |
-
-## Configuración Crush
-
-```json
-{
-  "providers": {
-    "llamacpp": {
-      "type": "completions",
-      "base_url": "http://localhost:8080/v1",
-      "models": [{
-        "id": "qwen3-8b",
-        "name": "Qwen3-8B Directo",
-        "context_window": 32768,
-        "default_max_tokens": 8192,
-        "tool_call": true
-      }]
-    },
-    "gateway": {
-      "type": "completions",
-      "base_url": "http://localhost:8081/v1",
-      "models": [{
-        "id": "qwen3-8b",
-        "name": "Qwen3-8B via Gateway",
-        "context_window": 16384,
-        "default_max_tokens": 8192,
-        "tool_call": true
-      }]
-    }
-  }
-}
-```
-
-## Uso con Crush
-
-```bash
-# Directo a llama.cpp (RECOMENDADO)
-export PATH=$PATH:~/go/bin
-crush run -m llamacpp/qwen3-8b --quiet "/no_think Genera código Python..."
-
-# Via gateway (si funciona)
-crush run -m gateway/qwen3-8b --quiet "..."
-```
-
-## Harness Python
-
-```python
-import harness
-import asyncio
-
-h = harness.Harness()
-h.enable_auto_mode(max_iterations=5)
-
-# Chat simple
-h.add_message("user", "Hola")
-context = h.get_context()
-
-# Tools
-result = asyncio.run(h.call_tool('run_command', {'command': 'ls -la'}))
-print(result.result)
-
-# Auto-mode
-result = asyncio.run(h.run_auto("Crear un archivo hello.py", "En /home/user/proyecto"))
-```
-
-## Tools Disponibles
-
-| Tool | Descripción |
-|------|-------------|
-| `read_file` | Leer archivos |
-| `write_file` | Escribir archivos |
-| `list_dir` | Listar directorios |
-| `run_command` | Ejecutar comandos shell |
-| `grep` | Buscar patrones en archivos |
-| `python_eval` | Evaluar código Python |
-
-## Optimizaciones llama.cpp
-
-| Optimización | Flag | Impacto |
-|-------------|------|---------|
-| FP8 KV Cache | `-ctk f8_e4m3 -ctv f8_e4m3` | -50% VRAM KV cache |
-| Context Checkpoints | `--ctx-checkpoints 8` | Contexto largo sin OOM |
-| Flash Attention | `--flash-attn on` | -30% memoria, +20% velocidad |
-| Continuous Batching | `--cont-batching` | +40% throughput |
-| Speculative Decoding | `--spec-type ngram-simple` | 2-3x tokens/seg |
-| GPU Layers | `-ngl 99` | Todas capas en GPU |
-| Batch Sizes | `-b 4096 -ub 512` | Optimal para RTX 3070 |
-
-## Comandos Útiles
-
-```bash
-# Health checks
-curl -s http://127.0.0.1:8080/health && echo "llama.cpp OK"
-curl -s http://127.0.0.1:8081/health && echo "Gateway OK"
-curl -s http://127.0.0.1:11434/api/tags && echo "Ollama OK"
-
-# Métricas
-curl -s http://127.0.0.1:8081/metrics  # Prometheus
-curl -s http://127.0.0.1:8081/v1/metrics  # JSON
-
-# Caché
-curl -s http://127.0.0.1:8081/v1/cache/stats
-curl -X POST http://127.0.0.1:8081/v1/cache/clear
-
-# Test rápido
-curl -s -X POST http://127.0.0.1:8081/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"qwen3-8b","messages":[{"role":"user","content":"/no_think def hola(): print(1)"}],"max_tokens":50}'
-```
-
-## Documentación
-
-| Archivo | Descripción |
+| Command | Description |
 |---------|-------------|
-| `DOCUMENTACION_GATEWAY_LOCAL.md` | Documentación completa del gateway |
-| `MEJORAS_IMPLEMENTADAS.md` | Detalle de mejoras implementadas |
-| `DOCUMENTACION_FINAL.md` | Documentación final del proyecto |
-| `OPTIMIZACION_PARAMETROS.md` | Parámetros de optimización |
-| `DOCUMENTACION_REGLAS.md` | Reglas del proyecto |
-| `openapi.yaml` | Especificación OpenAPI 3.1 |
+| `chat` | Interactive or single-prompt chat |
+| `generate` | Generate text |
+| `code` | Generate code file with iterative refinement |
+| `think` | Deep thinking mode |
+| `auto` | Autonomous agent (Plan + ReAct + Reflection) |
+| `run` | Execute Python script |
+| `serve` | Start OpenAI-compatible API server |
+| `status` | Check local services (llama.cpp, gateway, ollama) |
+| `models` | List available models |
+| `tools` | List available tools |
+| `search` | Search code/files by pattern |
+| `find` | Find files by glob pattern |
+| `fix` | Auto-fix lint, format, imports, types |
+| `review` | Code review (security, performance, style) |
+| `diff` | Show diff between files |
+| `test` | Run pytest |
+| `init` | Initialize new project |
+| `config` | Manage configuration |
+| `install` | Install dependencies |
+| `update` | Update dependencies |
+| `exec` | Execute command in project context |
+| `doctor` | Diagnose environment |
+| `clean` | Clean build artifacts |
+| `completion` | Generate shell completions |
+| `project` | Generate multi-file project from spec |
+| `repair` | Analyze and auto-repair project |
 
-## Reglas del Proyecto
+## AutoMode Intelligence
 
-1. Seguir las reglas de https://github.com/jmbigi/thinker/
-2. Seguir las reglas de https://github.com/jmbigi/better-ai/
-3. Seguir las reglas de https://github.com/jmbigi/better-project/
-4. **Todo el código fuente debe ser generado por LLMs locales, sin excepciones**
-5. Las IAs, LLMs y modelos cloud sólo pueden configurar y/o generar scripts genéricos, no deben reparar ni generar código específico
-6. Honestidad 100%
-7. Exactitud 99%
-8. El proyecto chess debe ser generado con LLMs y harness locales
+The `auto` command implements advanced agent patterns:
+
+- **Plan-and-Execute**: Decomposes goals into verifiable subtasks
+- **ReAct (Reason + Act)**: Explicit Thought → Action → Observation loop
+- **Reflection**: Separate critic agent evaluates output against rubric
+- **Best-version fallback**: Returns highest-scored version if not converged
+- **Cost tracking**: Token usage, estimated cloud-equivalent savings
+
+## Tool Registry (50+ tools)
+
+Core: `read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `python_eval`, `apply_patch`, `web_search`, `run_python`, `run_tests`
+
+Quality: `lint_file`, `format_code`, `check_types`, `analyze_complexity`, `find_unused_imports`, `find_unused_code`, `find_todos`, `check_security`, `check_dead_code`, `analyze_dependencies`
+
+Validation: `validate_syntax`, `validate_imports`, `validate_types`, `validate_project`
+
+Auto-repair: `fix_imports`, `fix_syntax`, `fix_formatting`, `fix_types`, `auto_fix`, `fix_missing_init`, `fix_circular_imports`, `fix_relative_imports`, `normalize_imports`
+
+Project: `analyze_project`, `get_project_structure`, `find_duplicates`, `check_circular_imports`
+
+Git: `git_init`, `git_add`, `git_commit`, `git_rollback`, `git_status`, `git_diff`
+
+OCR: `ocr_image`, `ocr_image_best`, `ocr_screenshot`
+
+## Configuration
+
+Config file: `~/.lai/config.json` (global) or `.lai/config.json` (project)
+
+```bash
+lai config set model qwen3-8b
+lai config set base_url http://localhost:8080/v1
+lai config get model
+lai config list
+```
+
+Environment variables:
+- `LAI_LLAMA_MODEL` - Path to GGUF model for llama.cpp
+- `LAI_CONTEXT` - Context size (default: 32768)
+- `LAI_NGL` - GPU layers (default: 99)
+
+## Development
+
+```bash
+# Rust version
+cd lai_rust
+cargo build           # Debug build
+cargo build --release # Release build
+cargo test            # Run tests
+cargo clippy          # Lint
+cargo fmt             # Format
+
+# Python version
+make check            # compile + ruff + pytest
+make lint             # ruff only
+make format           # ruff --fix + black
+make type             # mypy
+make test             # pytest
+make gateway-build    # Build Go gateway
+```
+
+## Services
+
+lai manages three local services:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| llama.cpp | 8080 | Primary inference (Qwen3-8B) |
+| Gateway Go | 8081 | Reverse proxy with cache, circuit breaker |
+| Ollama | 11434 | Alternative backend |
+
+## Documentation
+
+| File | Description |
+|------|-------------|
+| `AGENTS.md` | Agent instructions for this codebase |
+| `DOCUMENTACION_REGLAS.md` | Single source of truth for rules |
+| `DOCS/REVISION_2026.md` | Technical review and research |
+| `CHANGELOG.md` | Version history |
+| `gateway-go/config.yaml` | Gateway configuration |
+| `gateway-go/openapi.yaml` | OpenAPI 3.1 spec |
+
+## License
+
+GPL-3.0-or-later - Free software for a free society.

@@ -2,8 +2,12 @@
 //! Rule 4: only local (loopback/private) endpoints are allowed unless
 //! --allow-remote is set.
 
+use futures::StreamExt;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
+use std::net::IpAddr;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +66,7 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Delta {
     #[serde(default)]
     pub content: Option<String>,
@@ -139,8 +143,11 @@ impl LlmClient {
         if local_hosts.contains(&host.as_str()) || host.ends_with(".local") {
             return true;
         }
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            return ip.is_loopback() || ip.is_private();
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            match ip {
+                IpAddr::V4(v4) => return v4.is_loopback() || v4.is_private(),
+                IpAddr::V6(v6) => return v6.is_loopback() || v6.is_unicast_link_local(),
+            }
         }
         false
     }
@@ -154,13 +161,16 @@ impl LlmClient {
                 ),
                 tool_calls: vec![],
                 finish_reason: None,
-                error: Some("non-local endpoint".into()),
+                error: Some("non-local endpoint".to_string()),
             };
         }
 
         let mut full_prompt = prompt.to_string();
         if thinking {
-            full_prompt = format!("<thinking>\n{}\n</thinking>\n\nProvide the solution.", prompt);
+            full_prompt = format!(
+                "<thinking>\n{}\n</thinking>\n\nProvide the solution.",
+                prompt
+            );
         }
 
         let payload = ChatRequest {
@@ -214,7 +224,7 @@ impl LlmClient {
                                 content: "".into(),
                                 tool_calls: vec![],
                                 finish_reason: None,
-                                error: Some("no choices in response".into()),
+                                error: Some("no choices in response".to_string()),
                             },
                         }
                     }
@@ -263,7 +273,8 @@ impl LlmClient {
                                     if data == "[DONE]" {
                                         break;
                                     }
-                                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data)
+                                    if let Ok(chunk) =
+                                        serde_json::from_str::<StreamChunk>(data)
                                     {
                                         if let Some(choice) = chunk.choices.first() {
                                             if let Some(content) = &choice.delta.content {
@@ -299,7 +310,7 @@ impl LlmClient {
                 ChatResult {
                     content: content_buffer,
                     tool_calls: vec![],
-                    finish_reason: Some("stop".into()),
+                    finish_reason: Some("stop".to_string()),
                     error: None,
                 }
             }
@@ -316,7 +327,7 @@ impl LlmClient {
     pub async fn chat_messages(
         &self,
         messages: Vec<Message>,
-        tools: Option<Vec<serde_json::Value>>,
+        _tools: Option<Vec<serde_json::Value>>,
         stream: bool,
         thinking: bool,
     ) -> ChatResult {
@@ -342,8 +353,8 @@ impl LlmClient {
         let payload = ChatRequest {
             model: self.model.clone(),
             messages: msgs,
-            tools,
-            tool_choice: Some("auto".into()),
+            tools: None,
+            tool_choice: Some("auto".to_string()),
             stream: Some(stream),
             temperature: Some(self.temperature),
             max_tokens: Some(2048),
@@ -381,7 +392,7 @@ impl LlmClient {
                                 let content = strip_thinking_tags(&c.message.content);
                                 ChatResult {
                                     content,
-                                    tool_calls: c.message.tool_calls.clone(),
+                                    tool_calls: vec![],
                                     finish_reason: c.finish_reason,
                                     error: None,
                                 }
@@ -390,7 +401,7 @@ impl LlmClient {
                                 content: "".into(),
                                 tool_calls: vec![],
                                 finish_reason: None,
-                                error: Some("no choices in response".into()),
+                                error: Some("no choices in response".to_string()),
                             },
                         }
                     }
@@ -414,6 +425,6 @@ impl LlmClient {
 
 /// Strip <thinking>...</thinking> tags from response text.
 pub fn strip_thinking_tags(text: &str) -> String {
-    let re = regex::Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)>").unwrap();
+    let re = Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)>").unwrap();
     re.replace_all(text, "").to_string().trim().to_string()
 }

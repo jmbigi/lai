@@ -417,8 +417,8 @@ pub fn cmd_find(pattern: &str, path: &str, file_type: Option<&str>, max_depth: O
                 continue;
             }
         }
-        let name = p.file_name().map_or("", |n| n.to_string_lossy());
-        if !glob::Pattern::new(pattern).unwrap().matches_name(&name) {
+        let name = p.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        if !glob::Pattern::new(pattern).unwrap().matches(&name) {
             continue;
         }
         match file_type {
@@ -488,7 +488,7 @@ pub async fn cmd_review(
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if skip.iter().any(|s| path.components().any(|c| c.as_os_str() == s)) {
+            if skip.iter().any(|s| path.components().any(|c| c.as_os_str() == *s)) {
                 continue;
             }
             if let Some(ext) = path.extension() {
@@ -770,7 +770,8 @@ pub fn cmd_config(action: &str, key: Option<&str>, value: Option<&str>, global: 
 
     let mut config: serde_json::Value = if config_file.exists() {
         fs::read_to_string(&config_file)
-            .and_then(|c| serde_json::from_str(&c))
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
             .unwrap_or_default()
     } else {
         serde_json::Map::new().into()

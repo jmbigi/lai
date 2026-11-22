@@ -38,7 +38,7 @@ from lai_agents import get_orchestrator  # noqa: E402
 from lai_automode import AutoMode  # noqa: E402
 from lai_tools import ToolRegistry  # noqa: E402
 from rag_local import get_rag  # noqa: E402
-from deguro import Deguro, DiscoveredModel, quick_discover  # noqa: E402
+from deguro import DiscoveredModel  # noqa: E402
 
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -3713,7 +3713,7 @@ def deguro_cmd(args: Any) -> None:
     # Fase 2a: Comparación directa de respuestas (prompt)
     # ------------------------------------------------------------------
     if prompt:
-        print(f"\n>>> Fase 2a: Comparando respuestas para el prompt:")
+        print("\n>>> Fase 2a: Comparando respuestas para el prompt:")
         print(f"    \"{prompt[:80]}{'...' if len(prompt) > 80 else ''}\"")
         print()
 
@@ -3759,7 +3759,7 @@ def deguro_cmd(args: Any) -> None:
     # Fase 2b: Benchmarking entre agentes (tarea + críticos separados)
     # ------------------------------------------------------------------
     if tarea:
-        print(f"\n>>> Fase 2b: Benchmarking entre agentes para la tarea:")
+        print("\n>>> Fase 2b: Benchmarking entre agentes para la tarea:")
         print(f"    \"{tarea[:80]}{'...' if len(tarea) > 80 else ''}\"")
         if criterios:
             print(f"    Criterios: {'; '.join(criterios)}")
@@ -3786,7 +3786,6 @@ def deguro_cmd(args: Any) -> None:
             lai_instance.model = _extraer_modelo_de_endpoint(m.endpoint)
 
             herramientas = lai_instance.tools
-            schema = herramientas.get_tools_schema()
 
             mejor_resultado: str | None = None
             mejor_puntuacion = -1.0
