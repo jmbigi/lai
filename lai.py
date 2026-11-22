@@ -30,6 +30,7 @@ from lai_tools import ToolRegistry
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
 from rag_local import get_rag  # noqa: E402
+from lai_agents import get_orchestrator, MultiAgentOrchestrator  # noqa: E402
 
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
 
@@ -2833,6 +2834,28 @@ Examples:
     rag_parser.set_defaults(func=lambda a: rag_cmd(a))
 
     # ---------------------------------------------------------------
+    # agents – sub-agentes especializados (multi-agente)
+    # ---------------------------------------------------------------
+    agents_parser = subparsers.add_parser(
+        'agents', help='Sub-agentes especializados (multi-agente)'
+    )
+    agents_parser.add_argument(
+        'action',
+        choices=['list', 'run', 'pipeline', 'collaborative'],
+        help='Acción: listar, ejecutar agente, pipeline o colaborativo',
+    )
+    agents_parser.add_argument(
+        '--agent', '-a', default='code', help='Nombre del sub-agente (default: code)'
+    )
+    agents_parser.add_argument(
+        '--task', '-t', default='', help='Tarea para el sub-agente'
+    )
+    agents_parser.add_argument(
+        '--goal', '-g', default='', help='Meta para flujo colaborativo'
+    )
+    agents_parser.set_defaults()
+
+    # ---------------------------------------------------------------
     # interactive – terminal interactivo continuo (sesión tipo REPL)
     # ---------------------------------------------------------------
     interactive_parser = subparsers.add_parser(
@@ -2901,6 +2924,11 @@ Examples:
     # Comando interactivo: terminal continuo (no usa args.func)
     if args.command == 'interactive':
         interactive_cmd(lai, args)
+        return
+
+    # Comando agents: sub-agentes especializados (no usa args.func)
+    if args.command == 'agents':
+        agents_cmd(lai, args)
         return
 
     # Auto-start services (skip for mcp and system-one which don't need lai services)
@@ -2992,6 +3020,63 @@ def rag_cmd(args):
             print(f'    File: {r["metadata"]["file"]}')
         text = r['text']
         print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
+
+
+def agents_cmd(lai: Any, args: Any) -> None:
+    """Gestiona sub-agentes especializados (multi-agente)."""
+
+    orchestrator = get_orchestrator(
+        tools=lai.tools,
+        model=lai.model,
+        base_url=lai.base_url,
+        api_key=getattr(lai, 'api_key', None),
+        allow_remote=getattr(lai, 'allow_remote', False),
+    )
+
+    if args.action == 'list':
+        print('Sub-agentes disponibles:')
+        for name in orchestrator.list_agents():
+            print(f'  - {name}')
+        return
+
+    if args.action == 'run':
+        if not args.task:
+            print('Error: se requiere --task para la acción "run"')
+            return
+        result = orchestrator.run_agent(args.agent, args.task)
+        print(f'\n═══ {result.agent_name.upper()} ═══')
+        print(result.output)
+        if not result.success:
+            print(f'\n[Resultado: fallido tras {result.iterations} iteración(es)]')
+        return
+
+    if args.action == 'pipeline':
+        if not args.task:
+            print('Error: se requiere --task para la acción "pipeline"')
+            return
+        # Interpretar --task como "agente1:tarea1,agente2:tarea2,..."
+        tasks = []
+        for part in args.task.split(','):
+            if ':' in part:
+                agent_name, task_desc = part.split(':', 1)
+                tasks.append({'agent': agent_name.strip(), 'task': task_desc.strip()})
+            else:
+                tasks.append({'agent': args.agent, 'task': part.strip()})
+        results = orchestrator.run_pipeline(tasks)
+        for result in results:
+            print(f'\n═══ {result.agent_name.upper()} ═══')
+            print(result.output)
+        return
+
+    if args.action == 'collaborative':
+        if not args.goal:
+            print('Error: se requiere --goal para la acción "collaborative"')
+            return
+        output = orchestrator.run_collaborative(args.goal)
+        print(output)
+        return
+
+    print(f'Acción desconocida: {args.action}')
 
 
 def interactive_cmd(lai: Any, args: Any) -> None:
