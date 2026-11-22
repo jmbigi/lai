@@ -819,7 +819,7 @@ class TestCommandFunctions:
     def test_code_cmd(self, monkeypatch, tmp_path):
         outfile = tmp_path / 'generated.py'
 
-        def fake_code(self, description, filename, auto=False, yolo=False, max_iterations=3):
+        def fake_code(self, description, filename, auto=False, yolo=False, max_iterations=3, corpus=None):
             with open(filename, 'w') as f:
                 f.write('# generated code\n')
 

@@ -28,6 +28,9 @@ import httpx
 from lai_automode import AutoMode
 from lai_tools import ToolRegistry
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
+from rag_local import get_rag  # noqa: E402
+
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
 
 
@@ -816,6 +819,7 @@ class LAI:
         auto: bool = False,
         yolo: bool = False,
         max_iterations: int = 3,
+        corpus: str | None = None,
     ):
         """Generate high-quality code using the local LLM with iterative refinement."""
 
@@ -918,7 +922,16 @@ if __name__ == "__main__":
     main()
 ```"""
 
-        prompt = f"""{base_prompt}
+        corpus_section = ''
+        if corpus:
+            corpus_section = f"""
+
+# CORPUS DE CONTEXTO (referencia)
+{corpus}
+
+"""
+
+        prompt = f"""{base_prompt}{corpus_section}
 
 Task: {description}
 
@@ -1581,12 +1594,20 @@ def generate_cmd(args):
 
 
 def code_cmd(lai: LAI, args):
+    rag = get_rag()
+    try:
+        rag.add_directory('codegen', os.path.dirname(args.filename) or '.', extensions=('.py',))
+    except Exception:
+        pass
+    ctx = rag.search(args.description, collection='codegen', top_k=5)
+    corpus = '\n'.join([f'[REF {i}] {r["text"][:300]}' for i, r in enumerate(ctx)])
     lai.code(
         args.description,
         args.filename,
         auto=args.auto,
         yolo=args.yolo,
         max_iterations=getattr(args, 'max_iterations', 3),
+        corpus=corpus if corpus else None,
     )
 
 
@@ -1668,6 +1689,17 @@ def review_cmd(lai: LAI, args):
 
     Files are chunked with line numbers so the model can cite exact locations.
     """
+    rag = get_rag()
+    try:
+        target = args.path
+        if os.path.isdir(target):
+            rag.add_directory(
+                'review', target, extensions=('.py', '.js', '.ts', '.go', '.rs', '.md')
+            )
+        elif os.path.isfile(target):
+            rag.add_file('review', target)
+    except Exception:
+        pass
     path = args.path
     if not os.path.exists(path):
         print(f'Error: path not found: {path}')
@@ -2747,6 +2779,18 @@ Examples:
     so_parser.add_argument('--json', action='store_true', help='JSON output')
     so_parser.set_defaults(func=lambda a: system_one_cmd(get_lai_instance(), a))
 
+    # RAG semantic search command
+    rag_parser = subparsers.add_parser(
+        'rag', help='Semantic search with local RAG (sentence-transformers + numpy)'
+    )
+    rag_parser.add_argument('query', help='Search query')
+    rag_parser.add_argument('--collection', '-c', help='Collection name to search')
+    rag_parser.add_argument('--top-k', type=int, default=5, help='Number of results')
+    rag_parser.add_argument(
+        '--index', action='store_true', help='Index current directory before searching'
+    )
+    rag_parser.set_defaults(func=lambda a: rag_cmd(a))
+
     args = parser.parse_args()
 
     if not hasattr(args, 'func') or args.command is None:
@@ -2851,6 +2895,31 @@ def system_one_cmd(lai_instance: Any, args: Any) -> None:
                 print(f'{qid} [{atype}]: {value} (confianza: {confidence})')
             else:
                 print(f'{qid}: {answer}')
+
+
+def rag_cmd(args):
+    """Semantic search with local RAG."""
+    rag = get_rag()
+    if args.index:
+        count = rag.add_directory(
+            'default', '.', extensions=('.py', '.md', '.txt', '.json', '.yaml', '.yml')
+        )
+        print(f'Indexed {count} documents.')
+
+    results = rag.search(args.query, collection=args.collection, top_k=args.top_k)
+    if not results:
+        print('No results found.')
+        return
+
+    print(f'RAG results for: {args.query}')
+    print('=' * 60)
+    for i, r in enumerate(results, 1):
+        print(f'\n[{i}] {r["id"]} (score: {r["score"]:.3f})')
+        print(f'    Collection: {r["collection"]}')
+        if r['metadata'].get('file'):
+            print(f'    File: {r["metadata"]["file"]}')
+        text = r['text']
+        print(f'    {text[:400]}{"..." if len(text) > 400 else ""}')
 
 
 if __name__ == '__main__':
