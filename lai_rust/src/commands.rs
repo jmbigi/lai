@@ -4,10 +4,10 @@ use crate::llm::LlmClient;
 use crate::services::Services;
 
 pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_remote: bool) {
-    let client = LlmClient::new(base_url, model, false);
+    let client = LlmClient::new(base_url.to_string(), model.to_string());
     let prompt_str = prompt.join(" ");
-    match client.chat(&prompt_str, false, false).await {
-        Ok(content) => println!("{}", content),
+    match client.chat(&prompt_str).await {
+        Ok(resp) => println!("{}", resp),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
@@ -20,7 +20,7 @@ pub async fn cmd_code(
     base_url: &str,
     _allow_remote: bool,
 ) {
-    let client = LlmClient::new(base_url, model, false);
+    let client = LlmClient::new(base_url.to_string(), model.to_string());
     let max_iterations: i32 = 3;
 
     let base_prompt = format!(
@@ -36,7 +36,7 @@ pub async fn cmd_code(
     for iteration in 0..max_iterations {
         println!("Iteration {} of {}", iteration + 1, max_iterations);
 
-        match client.chat(&prompt, false, false).await {
+        match client.chat(&prompt).await {
             Ok(raw) => {
                 code = extract_code(&raw);
                 match validate_code(&code) {
@@ -82,8 +82,8 @@ pub async fn cmd_code(
 pub async fn cmd_status() {
     println!("lai - Local AI Code Assistant");
     println!("Services: checking...");
-    let mut services = Services::new();
-    services.check_all().await;
+    let mut services = services::Services::new();
+    services.check_all();
     for (name, svc) in services.list() {
         println!("  {}: {} (Port {})", name, if svc.is_running() { "Running" } else { "Stopped" }, svc.port);
     }

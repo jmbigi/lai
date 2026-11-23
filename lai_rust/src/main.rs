@@ -1,14 +1,8 @@
 //! lai - Local AI Code Assistant
+
 mod commands;
-mod context;
 mod llm;
-mod policy;
-mod quality;
-mod repomap;
-mod security;
 mod services;
-mod telemetry;
-mod tools;
 
 use clap::Parser;
 

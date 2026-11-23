@@ -1,120 +1,28 @@
-//! context.rs - Context Engineering: selección y presupuesto de contexto.
-//! Compone el contexto de cada paso del plan priorizando la evidencia
-//! reciente de ejecución/verificación sobre inferencias almacenadas.
-
-use crate::repomap::{build_repo_map, RepoMap};
-use anyhow::Result;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-
-/// Contexto de trabajo de una tarea.
-#[derive(Debug, Clone, Default)]
-pub struct Context {
-    /// Archivos incluidos en el contexto (rutas relativas).
-    pub files: Vec<String>,
-    /// Hallazgos del INSPECT (notas estructurales).
-    pub notes: Vec<String>,
-    /// Presupuesto de tokens del contexto.
-    pub budget_tokens: usize,
-}
-
-#[derive(Debug)]
-struct ContextInner {
-    working_dir: PathBuf,
-    state: RwLock<Context>,
-    repo_map: RwLock<Option<RepoMap>>,
-}
-
-/// Motor de contexto. `Clone` para que `ExecutionContext` pueda clonarlo.
-#[derive(Debug, Clone)]
-pub struct ContextEngine {
-    inner: Arc<ContextInner>,
-}
-
+use crate::repomap::RepoMap;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum ContextPriority { Critical = 0, High = 1, Medium = 2, Low = 3 }
+impl ContextPriority { pub fn rank(self) -> u8 { match self { ContextPriority::Critical => 0, ContextPriority::High => 1, ContextPriority::Medium => 2, ContextPriority::Low => 3 } } }
+#[derive(Debug, Clone)] pub struct ContextItem { pub id: String, pub priority: ContextPriority, pub content: String, pub source: String, pub token_estimate: u32, pub relevance_score: f32, pub metadata: HashMap<String, Value> }
+#[derive(Debug, Clone)] pub struct TaskContext { pub task_id: String, pub objective: String, pub items: Vec<ContextItem>, pub total_tokens: u32, pub token_budget: u32, pub files_referenced: Vec<String>, pub symbols_referenced: Vec<String>, pub generated_at: String }
+pub struct ContextEngine { working_dir: PathBuf, repo_map: Option<RepoMap>, loaded_files: HashMap<String, String>, default_token_budget: u32, response_reserve: u32 }
 impl ContextEngine {
-    pub fn new(working_dir: PathBuf) -> Result<Self> {
-        Ok(Self {
-            inner: Arc::new(ContextInner {
-                working_dir,
-                state: RwLock::new(Context::default()),
-                repo_map: RwLock::new(None),
-            }),
-        })
+    pub fn new(working_dir: PathBuf) -> Result<Self, std::io::Error> { Ok(Self { working_dir, repo_map: None, loaded_files: HashMap::new(), default_token_budget: 8000, response_reserve: 2000 }) }
+    pub fn load_repo_map(&mut self, root: &std::path::Path) { self.repo_map = Some(RepoMap::build(root)); }
+    pub fn build_context(&mut self, objective: &str, token_budget: u32) -> TaskContext {
+        let mut items = Vec::new(); let mut total_tokens = 0;
+        items.push(ContextItem { id: "objective".into(), priority: ContextPriority::Critical, content: objective.to_string(), source: "user_request".into(), token_estimate: objective.len() as u32 / 4, relevance_score: 1.0, metadata: HashMap::new() });
+        total_tokens += objective.len() as u32 / 4;
+        if let Some(ref repo_map) = self.repo_map { let map_text = repo_map.to_text(4000); if total_tokens + map_text.len() as u32 / 4 <= token_budget { items.push(ContextItem { id: "repo_map".into(), priority: ContextPriority::High, content: map_text.clone(), source: "repo_map".into(), token_estimate: map_text.len() as u32 / 4, relevance_score: 0.9, metadata: HashMap::new() }); total_tokens += map_text.len() as u32 / 4; } }
+        TaskContext { task_id: format!("task-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()), objective: objective.to_string(), items, total_tokens, token_budget, files_referenced: Vec::new(), symbols_referenced: Vec::new(), generated_at: chrono::Utc::now().to_rfc3339() }
     }
-
-    /// Construye (o actualiza) el RepoMap del directorio indicado.
-    pub async fn build_repo_map(&self, dir: &Path) -> Result<RepoMap> {
-        let map = build_repo_map(dir)?;
-        let mut guard = self.inner.repo_map.write().unwrap();
-        *guard = Some(map.clone());
-        Ok(map)
+    pub fn truncate_to_budget(&mut self, context: &mut TaskContext) {
+        context.items.sort_by(|a, b| a.priority.rank().cmp(&b.priority.rank()).then_with(|| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal)));
+        let mut kept = Vec::new(); let mut used = 0;
+        for item in context.items.drain(..) { if used + item.token_estimate <= context.token_budget { used += item.token_estimate; kept.push(item); } }
+        context.items = kept; context.total_tokens = used;
     }
-
-    /// Añade archivos relevantes al contexto de trabajo (deduplicados).
-    pub async fn add_files(&self, files: &[String]) -> Result<()> {
-        let mut st = self.inner.state.write().unwrap();
-        for f in files {
-            if !st.files.contains(f) {
-                st.files.push(f.clone());
-            }
-        }
-        Ok(())
-    }
-
-    /// Añade una nota de inspección.
-    pub async fn add_note(&self, note: String) -> Result<()> {
-        let mut st = self.inner.state.write().unwrap();
-        st.notes.push(note);
-        Ok(())
-    }
-
-    /// Resumen compacto del contexto para prompts de planificación.
-    pub fn summary(&self) -> String {
-        let st = self.inner.state.read().unwrap();
-        let map_guard = self.inner.repo_map.read().unwrap();
-        let mut out = String::new();
-        if let Some(map) = map_guard.as_ref() {
-            out.push_str(&map.summary());
-        } else {
-            out.push_str("RepoMap: (no indexado)");
-        }
-        out.push_str(&format!("\nContexto de trabajo: {} archivos", st.files.len()));
-        if !st.files.is_empty() {
-            out.push_str(&format!("\nArchivos: {}", st.files.join(", ")));
-        }
-        if !st.notes.is_empty() {
-            out.push_str(&format!("\nNotas: {}", st.notes.join(" | ")));
-        }
-        out
-    }
-
-    /// Snapshot serializable del contexto (para checkpoints).
-    pub async fn snapshot(&self) -> Result<serde_json::Value> {
-        let st = self.inner.state.read().unwrap();
-        Ok(serde_json::json!({
-            "files": st.files,
-            "notes": st.notes,
-            "budget_tokens": st.budget_tokens,
-            "working_dir": self.inner.working_dir.to_string_lossy(),
-        }))
-    }
+    pub fn estimate_tokens(text: &str) -> u32 { (text.len() / 4) as u32 }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_add_files_dedup() {
-        let engine = ContextEngine::new(std::env::current_dir().unwrap()).unwrap();
-        engine.add_files(&["a.py".to_string(), "a.py".to_string(), "b.py".to_string()]).await.unwrap();
-        let st = engine.inner.state.read().unwrap();
-        assert_eq!(st.files.len(), 2);
-    }
-
-    #[test]
-    fn test_summary_without_map() {
-        let engine = ContextEngine::new(std::env::current_dir().unwrap()).unwrap();
-        assert!(engine.summary().contains("no indexado"));
-    }
-}
+impl Default for ContextEngine { fn default() -> Self { Self::new(std::env::current_dir().unwrap_or_default()).unwrap() } }
