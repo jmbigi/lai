@@ -151,7 +151,8 @@ pub fn parse_contracts_from_spec(spec_md: &str) -> Vec<ContractSpec> {
     for block in spec_md.split("```") {
         let trimmed = block.trim();
         let Some(rest) = trimmed.strip_prefix("json") else { continue };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(rest.trim()) else { continue };
+        let rest = rest.trim().strip_prefix("contracts").unwrap_or(rest).trim();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(rest) else { continue };
         let Some(arr) = value.get("contracts").and_then(|v| v.as_array()) else { continue };
         for item in arr {
             let target = item

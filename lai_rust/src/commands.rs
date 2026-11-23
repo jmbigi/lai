@@ -1704,7 +1704,7 @@ pub fn cmd_cpg(workspace: &str, taint: bool, slice: Option<&str>) {
         let ids: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
         let root_id = ids
             .iter()
-            .find(|id| id.ends_with(&format!("::{}", sym)) || *id == sym)
+            .find(|id| *id == sym || id.ends_with(&format!(":{sym}")))
             .cloned()
             .unwrap_or_else(|| {
                 eprintln!("Símbolo '{}' no encontrado. IDs válidos: {:?}", sym, ids.iter().take(5).collect::<Vec<_>>());
