@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
+use crate::policy::{PolicyConfig, PolicyEngine, PolicyDecision, Operation, Permission};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -27,12 +28,14 @@ pub struct ToolRegistry {
     pub tools: HashMap<String, ToolFunc>,
     pub require_approval: bool,
     pub sensitive_tools: Vec<String>,
+    pub policy_engine: Arc<PolicyEngine>,
 }
 
 type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>> + Send + Sync>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
+        let policy_engine = Arc::new(PolicyEngine::new(PolicyConfig::default()));
         let mut registry = Self {
             tools: HashMap::new(),
             require_approval: false,
@@ -55,6 +58,7 @@ impl ToolRegistry {
                 "git_commit".into(),
                 "git_rollback".into(),
             ],
+            policy_engine,
         };
 
         registry.register_core_tools();
@@ -806,6 +810,15 @@ impl ToolRegistry {
     }
 
     pub async fn call_tool(&self, name: &str, args: HashMap<String, Value>) -> Result<String> {
+        // PolicyEngine intercepts ALL tool calls before execution (Rule 8).
+        let decision = self.policy_engine.check_tool(name, &args);
+        if !decision.allowed {
+            return Err(anyhow::anyhow!(
+                "PolicyEngine blocked tool '{}': {}",
+                name,
+                decision.reason
+            ));
+        }
         if let Some(func) = self.tools.get(name) {
             func(args).await
         } else {
