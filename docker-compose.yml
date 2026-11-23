@@ -1,0 +1,539 @@
+version: '3.8'
+
+services:
+  # ========================================================================
+  # llama.cpp server - Local LLM inference
+  # ========================================================================
+  llama-cpp:
+    image: ghcr.io/ggerganov/llama.cpp:full
+    container_name: lai-llama-cpp
+    command: >
+      -m /models/qwen3-8b-q4_k_m.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 32768
+      --n-gpu-layers 99
+      --batch-size 512
+      --ubatch-size 512
+      --parallel 4
+      --cont-batching
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+      - ./llama-cache:/cache
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Gateway - MCP/API Gateway
+  # ========================================================================
+  gateway:
+    build:
+      context: ./lai_rust/gateway-go
+      dockerfile: Dockerfile
+    container_name: lai-gateway
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./lai_rust/gateway-go/config.yaml:/app/config.yaml:ro
+    environment:
+      - GATEWAY_CONFIG=/app/config.yaml
+      - LLAMA_CPP_URL=http://llama-cpp:8080
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      llama-cpp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Ollama - Alternative local LLM server
+  # ========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Langfuse - Observability
+  # ========================================================================
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: lai-langfuse
+    ports:
+      - "3000:3000"
+    volumes:
+      - langfuse-data:/data
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-changeme}
+      - SALT=${LANGFUSE_SALT:-changeme}
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY:-changeme}
+      - S3_ACCESS_KEY_ID=${LANGFUSE_S3_ACCESS_KEY:-minio}
+      - S3_SECRET_ACCESS_KEY=${LANGFUSE_S3_SECRET_KEY:-minio123}
+      - S3_ENDPOINT=http://minio:9000
+      - S3_BUCKET_NAME=langfuse
+      - S3_REGION=us-east-1
+      - REDIS_URL=redis://langfuse-redis:6379
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: lai-langfuse-db
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=langfuse
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lai-network
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: lai-langfuse-redis
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lai-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: lai-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=minio123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Mem0 + Graphiti - Memory layer
+  # ========================================================================
+  mem0:
+    build:
+      context: ./mem0
+      dockerfile: Dockerfile
+    container_name: lai-mem0
+    ports:
+      - "8000:8000"
+    volumes:
+      - mem0-data:/app/data
+    environment:
+      - MEM0_API_KEY=${MEM0_API_KEY:-dev-key}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLAMA_CPP_URL=http://llama-cpp:8080
+    depends_on:
+      llama-cpp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  graphiti:
+    build:
+      context: ./graphiti
+      dockerfile: Dockerfile
+    container_name: lai-graphiti
+    ports:
+      - "8001:8000"
+    volumes:
+      - graphiti-data:/app/data
+    environment:
+      - GRAPHITI_API_KEY=${GRAPHITI_API_KEY:-dev-key}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=graphiti123
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLAMA_CPP_URL=http://llama-cpp:8080
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      llama-cpp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: lai-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-import:/var/lib/neo4j/import
+    environment:
+      - NEO4J_AUTH=neo4j/graphiti123
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_memory_pagecache_size=512M
+      - NEO4J_dbms_memory_heap_max_size=1G
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "graphiti123", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Joern - Code Property Graph Analysis
+  # ========================================================================
+  joern:
+    build:
+      context: ./joern
+      dockerfile: Dockerfile
+    container_name: lai-joern
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./projects:/workspace:ro
+      - joern-cache:/joern/cache
+    environment:
+      - JOERN_HEAP=4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # codebadger - Vulnerability Scanner (MCP wrapper for Joern)
+  # ========================================================================
+  codebadger:
+    build:
+      context: ./codebadger
+      dockerfile: Dockerfile
+    container_name: lai-codebadger
+    ports:
+      - "8083:8080"
+    volumes:
+      - ./projects:/workspace:ro
+    environment:
+      - JOERN_URL=http://joern:8080
+      - CODEBADGER_API_KEY=${CODEBADGER_API_KEY:-dev-key}
+    depends_on:
+      joern:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # MCP Hangar - Tool Registry & Security
+  # ========================================================================
+  mcp-hangar:
+    build:
+      context: ./mcp-hangar
+      dockerfile: Dockerfile
+    container_name: lai-mcp-hangar
+    ports:
+      - "8084:8080"
+    volumes:
+      - mcp-hangar-data:/app/data
+      - ./mcp-servers:/mcp-servers:ro
+    environment:
+      - MCP_HANGAR_API_KEY=${MCP_HANGAR_API_KEY:-dev-key}
+      - DIGEST_PINNING_ENABLED=true
+      - AUDIT_LOG_ENABLED=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Dafny - Formal Verification
+  # ========================================================================
+  dafny:
+    build:
+      context: ./dafny
+      dockerfile: Dockerfile
+    container_name: lai-dafny
+    volumes:
+      - ./projects:/workspace
+      - ./verification:/verification
+    environment:
+      - DAFNY_VERSION=4.0.0
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # TLA+ / TLC - Model Checking
+  # ========================================================================
+  tla:
+    build:
+      context: ./tla
+      dockerfile: Dockerfile
+    container_name: lai-tla
+    volumes:
+      - ./projects:/workspace
+      - ./verification:/verification
+    environment:
+      - JAVA_OPTS=-Xmx4g
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Neural Network Verification (α,β-CROWN, Marabou, ERAN)
+  # ========================================================================
+  alpha-beta-crown:
+    build:
+      context: ./alpha-beta-crown
+      dockerfile: Dockerfile
+    container_name: lai-alpha-beta-crown
+    volumes:
+      - ./models:/models:ro
+      - ./verification:/verification
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - PYTHONPATH=/alpha-beta-crown
+    networks:
+      - lai-network
+
+  marabou:
+    build:
+      context: ./marabou
+      dockerfile: Dockerfile
+    container_name: lai-marabou
+    volumes:
+      - ./models:/models:ro
+      - ./verification:/verification
+    networks:
+      - lai-network
+
+  eran:
+    build:
+      context: ./eran
+      dockerfile: Dockerfile
+    container_name: lai-eran
+    volumes:
+      - ./models:/models:ro
+      - ./verification:/verification
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - PYTHONPATH=/eran
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # Prometheus + Grafana - Metrics
+  # ========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: lai-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - lai-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: lai-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - lai-network
+
+  # ========================================================================
+  # lai CLI - Development container
+  # ========================================================================
+  lai-dev:
+    build:
+      context: ./lai_rust
+      dockerfile: Dockerfile.dev
+    container_name: lai-dev
+    volumes:
+      - ./:/workspace
+      - ~/.cargo/registry:/root/.cargo/registry
+      - ~/.cargo/git:/root/.cargo/git
+      - cargo-target:/workspace/lai_rust/target
+    environment:
+      - RUST_LOG=debug
+      - LAI_MODEL=qwen3-8b
+      - LAI_BASE_URL=http://gateway:8081/v1
+      - LAI_ALLOW_REMOTE=false
+    working_dir: /workspace
+    depends_on:
+      - gateway
+      - llama-cpp
+    stdin_open: true
+    tty: true
+    networks:
+      - lai-network
+
+volumes:
+  ollama-data:
+  langfuse-data:
+  langfuse-db-data:
+  langfuse-redis-data:
+  minio-data:
+  mem0-data:
+  graphiti-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  joern-cache:
+  mcp-hangar-data:
+  prometheus-data:
+  grafana-data:
+  cargo-target:
+
+networks:
+  lai-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

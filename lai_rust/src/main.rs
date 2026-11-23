@@ -2,12 +2,14 @@
 //! v5.0 Architecture: Deterministic engineering, controlled autonomy, supply-chain security, bounded verifiability, measured efficiency.
 
 mod baseline;
+mod benchmark;
 mod change_engine;
 mod commands;
 mod context;
 mod diagnostic_engine;
 mod llm;
 mod memory_store;
+mod orchestration;
 mod planner;
 mod policy;
 mod quality;
@@ -16,12 +18,14 @@ mod repomap;
 mod services;
 mod telemetry;
 mod tools;
+mod verification;
 mod verification_engine;
 
 // Re-export command enums from their modules
 pub use baseline::BaselineCommands;
 pub use memory_store::{CheckpointCommands, MemoryCommands};
 pub use planner::PlanCommands;
+pub use benchmark::{standard_benchmarks, BenchCommands};
 
 use clap::Parser;
 
@@ -122,6 +126,11 @@ enum Commands {
     },
     /// Show telemetry/metrics
     Metrics,
+    /// Run capability benchmarks
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommands,
+    },
 }
 
 #[tokio::main]
@@ -174,6 +183,9 @@ async fn main() {
         }
         Some(Commands::Metrics) => {
             commands::cmd_metrics().await;
+        }
+        Some(Commands::Bench { command }) => {
+            commands::cmd_bench(command).await;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);

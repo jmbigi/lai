@@ -26,5 +26,5 @@ pub use framework::{
     SuccessCriteria, OutputFormat, TestCaseResult, IterationResult,
     BenchmarkResult, AggregateMetrics, BenchmarkComparison, ComparisonRecommendation,
     BenchmarkRunner, BenchmarkError, BenchmarkSuite, SuiteResult,
-    standard_benchmarks,
+    standard_benchmarks, BenchCommands,
 };

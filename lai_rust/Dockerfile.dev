@@ -1,0 +1,31 @@
+FROM rust:1.78-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    clang \
+    llvm \
+    lld \
+    curl \
+    git \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install cargo tools
+RUN cargo install cargo-watch cargo-audit cargo-outdated
+
+# Set up workspace
+WORKDIR /workspace
+
+# Cache dependencies
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs && cargo build --release 2>/dev/null || true && rm -rf src
+
+# Copy source
+COPY . .
+
+# Default command
+CMD ["cargo", "watch", "-x", "run --"]

@@ -14,6 +14,40 @@ use uuid::Uuid;
 
 use crate::benchmark::contracts::{CapabilityAdapter, ExecutionRequest, ExecutionResult, ExecutionBudget, ExecutionContext, SecurityContext, ResultStatus, ResourceRequirements};
 
+/// CLI commands for benchmark
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum BenchCommands {
+    /// Run all standard benchmarks
+    All {
+        #[arg(long, help = "Output file for results")]
+        output: Option<String>,
+        #[arg(long, help = "Output format (json, csv, markdown, html, prometheus)")]
+        format: Option<String>,
+        #[arg(long, help = "Iterations per test case")]
+        iterations: Option<usize>,
+    },
+    /// Run specific benchmark by capability ID
+    Run {
+        #[arg(help = "Capability ID (e.g., lai.retrieval.hybrid)")]
+        capability: String,
+        #[arg(long, help = "Output file for results")]
+        output: Option<String>,
+        #[arg(long, help = "Output format")]
+        format: Option<String>,
+        #[arg(long, help = "Iterations per test case")]
+        iterations: Option<usize>,
+    },
+    /// List available benchmarks
+    List,
+    /// Compare against baseline
+    Compare {
+        #[arg(help = "Capability ID")]
+        capability: String,
+        #[arg(help = "Baseline file path")]
+        baseline: String,
+    },
+}
+
 /// Benchmark configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
@@ -685,7 +719,7 @@ impl BenchmarkRunner {
         Ok(())
     }
 
-    fn export_csv(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
+    pub fn export_csv(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut csv = String::new();
         csv.push_str("test_id,status,latency_ms,cpu_time_ms,memory_mb,tokens,success\n");
         
@@ -700,7 +734,7 @@ impl BenchmarkRunner {
         Ok(csv)
     }
 
-    fn export_markdown(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
+    pub fn export_markdown(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut md = String::new();
         md.push_str(&format!("# Benchmark Results: {}\n\n", result.benchmark_name));
         md.push_str(&format!("**Capability**: {} v{}  \n", result.capability_id, result.capability_version));
@@ -745,7 +779,7 @@ impl BenchmarkRunner {
         Ok(md)
     }
 
-    fn export_html(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
+    pub fn export_html(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let markdown = self.export_markdown(result)?;
         // Simple HTML conversion
         let html = markdown
@@ -757,7 +791,7 @@ impl BenchmarkRunner {
         Ok(format!("<html><body>{}</body></html>", html))
     }
 
-    fn export_prometheus(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
+    pub fn export_prometheus(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut prom = String::new();
         let m = &result.aggregate_metrics;
         

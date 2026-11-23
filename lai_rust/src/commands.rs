@@ -1,5 +1,7 @@
 //! commands.rs - CLI command implementations with quality cycles
 
+use crate::benchmark::framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat};
+use crate::benchmark::standard_benchmarks;
 use crate::llm::{LlmClient, Message, ToolCall};
 use crate::services::Services;
 use crate::tools::ToolRegistry;
@@ -549,6 +551,17 @@ fn strip_think_tags(content: &str) -> String {
         .replace_all(&r, "")
         .to_string();
     
+    // Aggressively collapse multiple consecutive newlines at start
+    r = regex::Regex::new(r"^\n+")
+        .unwrap()
+        .replace_all(&r, "")
+        .to_string();
+    // Collapse multiple consecutive newlines anywhere to max 2
+    r = regex::Regex::new(r"\n{3,}")
+        .unwrap()
+        .replace_all(&r, "\n\n")
+        .to_string();
+    
     r.trim().to_string()
 }
 
@@ -700,4 +713,218 @@ pub async fn cmd_plan(command: crate::planner::PlanCommands) {
 pub async fn cmd_metrics() {
     println!("📈 Metrics");
     println!("   (Telemetry/metrics functionality to be implemented)");
+}
+
+pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
+    use crate::benchmark::framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat};
+    use crate::benchmark::standard_benchmarks;
+    use std::sync::Arc;
+
+    match command {
+        crate::benchmark::BenchCommands::All { output, format, iterations } => {
+            println!("🏃 Running all standard benchmarks...");
+            
+            let benchmarks = standard_benchmarks::all_benchmarks();
+            let mut all_results = Vec::new();
+            
+            for mut config in benchmarks {
+                if let Some(iters) = iterations {
+                    config.iterations = iters;
+                }
+                if let Some(ref fmt) = format {
+                    config.output_format = match fmt.as_str() {
+                        "json" => OutputFormat::Json,
+                        "csv" => OutputFormat::Csv,
+                        "markdown" => OutputFormat::Markdown,
+                        "html" => OutputFormat::Html,
+                        "prometheus" => OutputFormat::Prometheus,
+                        _ => OutputFormat::Json,
+                    };
+                }
+                if let Some(ref out) = output {
+                    config.output_path = Some(out.into());
+                }
+                
+                // Use a mock adapter for now - real adapters would be registered
+                let adapter = Arc::new(MockBenchmarkAdapter::new(config.capability_id.clone()));
+                let runner = BenchmarkRunner::new(config, adapter);
+                
+                match runner.run().await {
+                    Ok(result) => {
+                        println!("✅ {} - Success: {} - Details: {}", 
+                            result.benchmark_name, result.success, result.success_details);
+                        all_results.push(result);
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Benchmark failed: {}", e);
+                    }
+                }
+            }
+            
+            println!("\n📊 All benchmarks completed. {} run.", all_results.len());
+        }
+        crate::benchmark::BenchCommands::Run { capability, output, format, iterations } => {
+            println!("🏃 Running benchmark for capability: {}", capability);
+            
+            let benchmarks = standard_benchmarks::all_benchmarks();
+            if let Some(config) = benchmarks.into_iter().find(|b| b.capability_id == capability) {
+                let mut config = config;
+                if let Some(iters) = iterations {
+                    config.iterations = iters;
+                }
+                if let Some(ref fmt) = format {
+                    config.output_format = match fmt.as_str() {
+                        "json" => OutputFormat::Json,
+                        "csv" => OutputFormat::Csv,
+                        "markdown" => OutputFormat::Markdown,
+                        "html" => OutputFormat::Html,
+                        "prometheus" => OutputFormat::Prometheus,
+                        _ => OutputFormat::Json,
+                    };
+                }
+                if let Some(ref out) = output {
+                    config.output_path = Some(out.into());
+                }
+                
+                let adapter = Arc::new(MockBenchmarkAdapter::new(config.capability_id.clone()));
+                let runner = BenchmarkRunner::new(config, adapter);
+                
+                match runner.run().await {
+                    Ok(result) => {
+                        println!("✅ {} - Success: {} - Details: {}", 
+                            result.benchmark_name, result.success, result.success_details);
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Benchmark failed: {}", e);
+                    }
+                }
+            } else {
+                eprintln!("❌ Unknown capability: {}. Use 'lai bench list' to see available.", capability);
+            }
+        }
+        crate::benchmark::BenchCommands::List => {
+            println!("📋 Available benchmarks:");
+            for b in standard_benchmarks::all_benchmarks() {
+                println!("  - {} ({})", b.capability_id, b.name);
+                println!("    {}", b.description);
+            }
+        }
+        crate::benchmark::BenchCommands::Compare { capability, baseline } => {
+            println!("📊 Comparing {} against baseline: {}", capability, baseline);
+            println!("   (Baseline comparison functionality to be implemented)");
+        }
+    }
+}
+
+// Mock adapter for benchmark testing - replace with real adapters when available
+use async_trait::async_trait;
+use crate::benchmark::contracts::*;
+use std::time::SystemTime;
+
+struct MockBenchmarkAdapter {
+    capability_id: String,
+}
+
+impl MockBenchmarkAdapter {
+    fn new(capability_id: String) -> Self {
+        Self { capability_id }
+    }
+}
+
+#[async_trait]
+impl CapabilityAdapter for MockBenchmarkAdapter {
+    fn capability_id(&self) -> String { self.capability_id.clone() }
+    fn capability_name(&self) -> String { "Mock Adapter".to_string() }
+    fn adapter_version(&self) -> String { "1.0.0".to_string() }
+    fn tool_version(&self) -> String { "1.0.0".to_string() }
+    fn definition_hash(&self) -> String { "mock_hash".to_string() }
+    
+    async fn health_check(&self) -> HealthCheckResult {
+        HealthCheckResult {
+            healthy: true,
+            tool_version: "1.0.0".to_string(),
+            definition_hash: "mock_hash".to_string(),
+            checks: vec![],
+            timestamp: SystemTime::now(),
+        }
+    }
+    
+    async fn preflight(&self, request: &ExecutionRequest) -> Result<PreflightResult, ContractError> {
+        Ok(PreflightResult {
+            allowed: true,
+            reason: None,
+            warnings: vec![],
+            estimated_resources: ResourceEstimate {
+                estimated_cpu_seconds: 1.0,
+                estimated_memory_mb: 100,
+                estimated_network_mb: 0,
+                estimated_tokens: 100,
+            },
+            required_permissions: vec![],
+        })
+    }
+    
+    async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, ContractError> {
+        // Simulate work
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        let execution_id = request.execution_id.clone();
+        let capability_id = request.capability_id.clone();
+        
+        Ok(ExecutionResult {
+            execution_id: execution_id.clone(),
+            capability_id: capability_id.clone(),
+            status: ResultStatus::Passed,
+            output: serde_json::json!({}),
+            evidence: vec![],
+            metrics: ExecutionMetrics::new(
+                execution_id.clone(),
+                capability_id.clone(),
+                "1.0.0".to_string(),
+                "mock_hash".to_string(),
+            ),
+            security_audit: SecurityAudit {
+                execution_id,
+                integrity_verified: true,
+                definition_hash_match: true,
+                executable_hash_match: true,
+                permissions_checked: true,
+                sandbox_active: true,
+                network_policy_enforced: true,
+                arguments_validated: true,
+                result_validated: true,
+                audit_entries: vec![],
+            },
+            started_at: SystemTime::now(),
+            completed_at: SystemTime::now(),
+        })
+    }
+    
+    async fn validate(&self, _result: &ExecutionResult) -> ValidationResult {
+        ValidationResult {
+            valid: true,
+            score: 1.0,
+            issues: vec![],
+            recommendations: vec![],
+        }
+    }
+    
+    async fn get_metrics(&self, _execution_id: &str) -> Option<ExecutionMetrics> {
+        None
+    }
+    
+    fn supported_features(&self) -> AdapterFeatures {
+        AdapterFeatures::default()
+    }
+    
+    fn resource_requirements(&self) -> ResourceRequirements {
+        ResourceRequirements {
+            min_cpu_cores: 1.0,
+            min_memory_mb: 100,
+            min_disk_mb: 10,
+            requires_gpu: false,
+            requires_network: false,
+            requires_sandbox: true,
+        }
+    }
 }

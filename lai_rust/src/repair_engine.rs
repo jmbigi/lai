@@ -583,6 +583,9 @@ pub struct RepairStats {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use crate::change_engine::ChangeEngineConfig;
+    use crate::verification_engine::VerificationConfig;
+    use crate::diagnostic_engine::DiagnosticConfig;
 
     #[tokio::test]
     async fn test_repair_engine_basic() {
@@ -593,7 +596,7 @@ mod tests {
         let change_engine = Arc::new(ChangeEngine::new(temp_dir.path().to_path_buf(), change_config).unwrap());
         
         let verify_config = VerificationConfig::default();
-        let verification_engine = Arc::new(VerificationEngine::new(temp_dir.path().to_path_buf(), verify_config).unwrap());
+        let verification_engine = Arc::new(VerificationEngine::new(temp_dir.path()).with_config(verify_config));
         
         let diag_config = DiagnosticConfig::default();
         let diagnostic_engine = Arc::new(DiagnosticEngine::new(temp_dir.path().to_path_buf(), DiagnosticConfig::default()).unwrap());

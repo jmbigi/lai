@@ -643,14 +643,15 @@ impl LangGraphAdapter {
         drop(state);
         
         // Restore state
-        *self.state.write().await = checkpoint.state_snapshot;
+        let restored_state = checkpoint.state_snapshot.clone();
+        *self.state.write().await = restored_state.clone();
         
         // Continue execution from checkpoint node
         let node_id = checkpoint.node_id;
         let next_node = self.find_next_node(&node_id).unwrap_or(node_id);
         
         // Execute from next node
-        self.execute(Some(checkpoint.state_snapshot)).await
+        self.execute(Some(restored_state)).await
     }
 
     /// Get execution history
