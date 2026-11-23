@@ -7,7 +7,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
     let client = LlmClient::new(base_url.to_string(), model.to_string());
     let prompt_str = prompt.join(" ");
     match client.chat(&prompt_str).await {
-        Ok(resp) => println!("{}", resp),
+        Ok(content) => println!("{}", content),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
@@ -82,9 +82,11 @@ pub async fn cmd_code(
 pub async fn cmd_status() {
     println!("lai - Local AI Code Assistant");
     println!("Services: checking...");
-    let mut services = services::Services::new();
+    let mut services = Services::new();
     services.check_all().await;
-    services.print_status();
+    for (name, svc) in services.list() {
+        println!("  {}: {} (Port {})", name, if svc.is_running() { "Running" } else { "Stopped" }, svc.port);
+    }
 }
 
 fn extract_code(response: &str) -> String {

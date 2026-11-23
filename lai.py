@@ -44,6 +44,107 @@ from deguro import DiscoveredModel  # noqa: E402
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
+def analyze_project_context(project_path: str = None) -> str:
+    """Analyze the project and return context including README, AGENTS.md, structure, etc."""
+    if project_path is None:
+        project_path = os.getcwd()
+    
+    project_path = os.path.abspath(project_path)
+    context_parts = []
+    
+    context_parts.append(f"=== PROJECT CONTEXT: {os.path.basename(project_path)} ===")
+    context_parts.append(f"Path: {project_path}")
+    context_parts.append("")
+    
+    # Read README files
+    readme_files = ["README.md", "README.txt", "README.rst", "readme.md", "readme.txt"]
+    for readme in readme_files:
+        readme_path = os.path.join(project_path, readme)
+        if os.path.exists(readme_path):
+            try:
+                with open(readme_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()[:5000]  # Limit to 5000 chars
+                context_parts.append(f"=== {readme} ===")
+                context_parts.append(content)
+                context_parts.append("")
+                break  # Only read the first README found
+            except Exception:
+                pass
+    
+    # Read AGENTS.md if exists
+    agents_path = os.path.join(project_path, "AGENTS.md")
+    if os.path.exists(agents_path):
+        try:
+            with open(agents_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()[:5000]
+            context_parts.append("=== AGENTS.md ===")
+            context_parts.append(content)
+            context_parts.append("")
+        except Exception:
+            pass
+    
+    # Read CLAUDE.md if exists (for Claude Code compatibility)
+    claude_path = os.path.join(project_path, "CLAUDE.md")
+    if os.path.exists(claude_path):
+        try:
+            with open(claude_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()[:5000]
+            context_parts.append("=== CLAUDE.md ===")
+            context_parts.append(content)
+            context_parts.append("")
+        except Exception:
+            pass
+    
+    # Get project structure (key files)
+    key_files = [
+        "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+        "Cargo.toml", "go.mod", "package.json", "pom.xml",
+        "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+        "Makefile", "makefile",
+        ".gitignore", ".env.example",
+    ]
+    
+    context_parts.append("=== KEY PROJECT FILES ===")
+    for kf in key_files:
+        kf_path = os.path.join(project_path, kf)
+        if os.path.exists(kf_path):
+            try:
+                with open(kf_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()[:2000]
+                context_parts.append(f"--- {kf} ---")
+                context_parts.append(content)
+                context_parts.append("")
+            except Exception:
+                pass
+    
+    # Get directory structure (top level)
+    context_parts.append("=== PROJECT STRUCTURE (top level) ===")
+    try:
+        entries = sorted(os.listdir(project_path))
+        for entry in entries:
+            if entry.startswith("."):
+                continue
+            full = os.path.join(project_path, entry)
+            if os.path.isdir(full):
+                # Count Python files in directory
+                py_count = 0
+                for root, dirs, files in os.walk(full):
+                    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git", "venv", "env", ".venv")]
+                    for f in files:
+                        if f.endswith(".py"):
+                            py_count += 1
+                context_parts.append(f"📁 {entry}/ ({py_count} .py files)")
+            else:
+                context_parts.append(f"📄 {entry}")
+    except Exception:
+        context_parts.append("Could not read directory structure")
+    
+    context_parts.append("")
+    context_parts.append("=== END PROJECT CONTEXT ===")
+    
+    return "\n".join(context_parts)
+
+
 def get_version() -> str:
     """Read version from pyproject.toml (single source of truth)."""
     try:
@@ -656,6 +757,9 @@ class LAI:
         try:
             # Prepare messages with history
             messages = self._ensure_system_prompt(self.conversation_history.copy())
+            
+            # Get tool schemas for native tool calling
+            tool_schemas = self.tools.get_tools_schema()
 
             if stream:
                 # Streaming: print chunks as they arrive
@@ -664,7 +768,7 @@ class LAI:
 
                 for chunk in self.chat_messages(
                     messages=messages,
-                    tools=None,
+                    tools=tool_schemas,
                     tool_choice="auto",
                     stream=True,
                     thinking=thinking,
@@ -692,24 +796,78 @@ class LAI:
                 response = "".join(content_buffer)
                 thinking_full = "".join(thinking_buffer)
             else:
-                # Non-streaming
-                result = self.chat_messages(
-                    messages=messages,
-                    tools=None,
-                    tool_choice="auto",
-                    stream=False,
-                    thinking=thinking,
-                    temp=temp,
-                    max_tokens=max_tokens,
-                )
+                # Non-streaming with tool calling loop
+                max_tool_rounds = 5
+                for _ in range(max_tool_rounds):
+                    result = self.chat_messages(
+                        messages=messages,
+                        tools=tool_schemas,
+                        tool_choice="auto",
+                        stream=False,
+                        thinking=thinking,
+                        temp=temp,
+                        max_tokens=max_tokens,
+                    )
 
-                if isinstance(result, dict) and result.get("error"):
-                    return f'Error: {result["error"]}'
+                    if isinstance(result, dict) and result.get("error"):
+                        return f'Error: {result["error"]}'
 
-                response = result.get("content", "")
-                thinking_full = result.get("reasoning_content", "")
+                    response = result.get("content", "")
+                    thinking_full = result.get("reasoning_content", "")
+                    tool_calls = result.get("tool_calls", [])
 
-            # Add assistant response to history
+                    # Add assistant message to history
+                    assistant_msg = {"role": "assistant", "content": response}
+                    if tool_calls:
+                        assistant_msg["tool_calls"] = tool_calls
+                    messages.append(assistant_msg)
+
+                    if not tool_calls:
+                        # No more tool calls, we're done
+                        break
+
+                    # Execute tool calls
+                    for call in tool_calls:
+                        function = call.get("function", {})
+                        name = function.get("name", "")
+                        raw_args = function.get("arguments", "{}")
+                        try:
+                            import json
+                            arguments = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        except json.JSONDecodeError:
+                            arguments = {}
+                        if not isinstance(arguments, dict):
+                            arguments = {}
+
+                        # Execute tool
+                        tool_result = ""
+                        try:
+                            tool_func = self.tools.tools.get(name)
+                            if tool_func:
+                                import inspect
+                                if inspect.iscoroutinefunction(tool_func):
+                                    import asyncio
+                                    tool_result = asyncio.run(tool_func(**arguments))
+                                else:
+                                    tool_result = tool_func(**arguments)
+                            else:
+                                tool_result = f"Herramienta desconocida: {name}"
+                        except Exception as e:
+                            tool_result = f"Error ejecutando {name}: {e}"
+
+                        # Add tool result to messages
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": call.get("id", f"call_{len(messages)}"),
+                            "name": name,
+                            "content": str(tool_result)[:8000],
+                        })
+
+                # Final response is the last assistant message content
+                # (already in messages, but we need the content)
+                response = response or ""
+
+            # Add final assistant response to history (without tool_calls for history)
             self.conversation_history.append({"role": "assistant", "content": response})
             self._trim_history()
 
@@ -775,8 +933,21 @@ class LAI:
                     "Eres Lai, un asistente de código local que usa modelos de IA abiertos ejecutados localmente. "
                     "Responde SIEMPRE en español. Eres experto en programación, revisión de código, depuración y "
                     "arquitectura de software. Sé conciso, práctico y directo. Cuando el usuario te pida escribir o "
-                    "modificar código, proporciona bloques de código completos y funcionales. Usa las herramientas "
-                    "disponibles cuando sea necesario para leer, escribir o analizar archivos del proyecto."
+                    "modificar código, proporciona bloques de código completos y funcionales. "
+                    "\n\n"
+                    "TIENES ACCESO A HERRAMIENTAS. DEBES USARLAS CUANDO EL USUARIO PIDA ANÁLISIS, EXPLORACIÓN, "
+                    "LECTURA DE ARCHIVOS, BÚSQUEDA DE CÓDIGO, EJECUCIÓN DE COMANDOS, O CUALQUIER TAREA QUE REQUIERA "
+                    "ACCESO AL SISTEMA DE ARCHIVOS. NO RESPONDAS SIN USAR HERRAMIENTAS SI LA TAREA LO REQUIERE.\n\n"
+                    "IMPORTANTE - USO DE HERRAMIENTAS PARA ANÁLISIS DE PROYECTO:\n"
+                    "Cuando el usuario pida 'analizar el proyecto', 'analizar proyecto', 'qué hace este proyecto', "
+                    "'explorar el código', 'revisar el proyecto' o similar, DEBES usar las herramientas disponibles:\n"
+                    "1. Primero usa 'repo_map' para obtener una visión general de la estructura de código (clases, funciones)\n"
+                    "2. Usa 'list_dir' para ver la estructura de directorios\n"
+                    "3. Usa 'read_file' para leer archivos clave (README.md, main.py, etc.)\n"
+                    "4. Usa 'grep' para buscar patrones específicos si es necesario\n"
+                    "\n"
+                    "NO respondas con plantillas genéricas pidiendo información. USA LAS HERRAMIENTAS para explorar "
+                    "el proyecto real y dar un análisis basado en el código real."
                 ),
             }
         return {
@@ -785,7 +956,18 @@ class LAI:
                 "You are Lai, a local code assistant using open local AI models. "
                 "Always reply in English. You are an expert in programming, code review, debugging, and software "
                 "architecture. Be concise, practical, and direct. When asked to write or modify code, provide "
-                "complete, working code blocks. Use available tools when needed to read, write, or analyze project files."
+                "complete, working code blocks. "
+                "\n\n"
+                "IMPORTANT - TOOL USAGE FOR PROJECT ANALYSIS:\n"
+                "When the user asks to 'analyze the project', 'analyze project', 'what does this project do', "
+                "'explore the code', 'review the project' or similar, YOU MUST use the available tools:\n"
+                "1. First use 'repo_map' to get an overview of the code structure (classes, functions)\n"
+                "2. Use 'list_dir' to see the directory structure\n"
+                "3. Use 'read_file' to read key files (README.md, main.py, etc.)\n"
+                "4. Use 'grep' to search for specific patterns if needed\n"
+                "\n"
+                "Do NOT respond with generic templates asking for information. USE THE TOOLS to explore "
+                "the actual project and provide analysis based on real code."
             ),
         }
 
@@ -1653,8 +1835,17 @@ def chat_cmd(args):
     max_tokens = args.max_tokens or 4096
 
     if args.interactive:
+        # Auto-analyze project context on startup
+        project_context = analyze_project_context()
         print("Interactive mode - type 'exit' or 'quit' to quit")
         print("Type 'clear' to clear conversation history")
+        print("Type 'context' to show project context")
+        print("Type 'analyze' to re-analyze project")
+        print(f"\n📁 Project context loaded ({len(project_context)} chars)")
+        
+        # Inject project context into system prompt
+        lai.conversation_history.insert(0, {"role": "system", "content": project_context})
+        
         while True:
             try:
                 prompt = input("You: ")
@@ -1662,7 +1853,19 @@ def chat_cmd(args):
                     break
                 if prompt.lower() == "clear":
                     lai.conversation_history.clear()
-                    print("Conversation history cleared.")
+                    # Re-add project context
+                    lai.conversation_history.insert(0, {"role": "system", "content": project_context})
+                    print("Conversation history cleared (project context preserved).")
+                    continue
+                if prompt.lower() == "context":
+                    print(project_context[:3000] + ("..." if len(project_context) > 3000 else ""))
+                    continue
+                if prompt.lower() in ("analyze", "analizar", "analizar proyecto", "analyze project"):
+                    print("🔍 Re-analyzing project...")
+                    project_context = analyze_project_context()
+                    # Update system prompt with fresh context
+                    lai.conversation_history[0] = {"role": "system", "content": project_context}
+                    print(f"✅ Project context updated ({len(project_context)} chars)")
                     continue
                 response = lai.chat(
                     prompt, stream=stream, thinking=thinking, temp=temp, max_tokens=max_tokens
@@ -1717,9 +1920,22 @@ def code_cmd(lai: LAI, args):
 
 
 def auto_cmd(lai: LAI, args):
+    # Analyze project context before running auto mode
+    project_context = analyze_project_context(args.path if hasattr(args, 'path') and args.path else None)
     print(f"Auto mode: {args.goal}")
+    print(f"📁 Project context loaded ({len(project_context)} chars)")
+    
+    # Inject project context into the goal
+    enhanced_goal = f"""{args.goal}
+
+=== PROJECT CONTEXT ===
+{project_context}
+=== END PROJECT CONTEXT ===
+
+Use the project context above to understand the codebase before making changes."""
+    
     result = lai.auto_mode_run(
-        args.goal,
+        enhanced_goal,
         max_iterations=args.max_iterations,
         max_turns=getattr(args, "max_turns", 20),
         track_cost=not getattr(args, "no_cost", False),
