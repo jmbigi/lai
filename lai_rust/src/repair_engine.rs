@@ -7,6 +7,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
+use crate::change_engine::ChangeEngine;
+use crate::verification_engine::VerificationEngine;
+use crate::diagnostic_engine::{DiagnosticEngine, Diagnosis, DiagnosticContext, FailureCategory, Severity};
 
 /// Estrategia de reparación
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +142,7 @@ impl RepairEngine {
             verification_engine,
             diagnostic_engine,
             repair_history: Arc::new(RwLock::new(Vec::new())),
-        }
+        })
     }
 
     /// Reparar basado en diagnóstico
@@ -158,8 +162,8 @@ impl RepairEngine {
         
         // Verificar después de reparar si está configurado
         if self.config.verify_after_repair && result.success {
-            let verification = self.verification_engine.verify(&context.target_path).await?;
-            if !verification.overall_passed {
+            let verification = self.verification_engine.verify("repair-verify", None, crate::planner::VerificationScope::default()).await.map_err(anyhow::Error::msg)?;
+            if !matches!(verification.overall_verdict, crate::verification_engine::VerificationVerdict::Success | crate::verification_engine::VerificationVerdict::SuccessWithDeclaredGaps) {
                 // Rollback si la verificación falla
                 self.rollback_last_changes()?;
                 return Ok(RepairResult {
@@ -315,12 +319,13 @@ impl RepairEngine {
 
             match result {
                 Ok(changes) => {
+                    let changes_clone = changes.clone();
                     applied_changes.extend(changes);
                     // Verificar postcondición
                     if let Some(post) = &action.postcondition {
                         if !self.check_postcondition(post).await? {
                             // Rollback
-                            self.rollback_changes(&changes).await?;
+                            self.rollback_changes(&changes_clone).await?;
                             return Ok(RepairResult {
                                 action_id: action.id.clone(),
                                 success: false,
@@ -397,13 +402,11 @@ impl RepairEngine {
     }
 
     async fn run_auto_fix_tools(&self, action: &RepairAction) -> Result<Vec<FileChange>> {
-        let mut applied = Vec::new();
+        let mut applied: Vec<FileChange> = Vec::new();
         
         // Ejecutar herramientas de auto-fix según el lenguaje
         let target = &action.target_file;
         let ext = target.extension().and_then(|e| e.to_str()).unwrap_or("");
-        
-        let mut applied = Vec::new();
         
         match ext.as_ref() {
             "py" => {

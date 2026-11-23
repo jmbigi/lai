@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 /// Categoría de fallo
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -383,15 +384,46 @@ impl DiagnosticEngine {
             FailureCategory::Unknown => Some("Review error message and context for clues".to_string()),
         }
     }
+}
 
-    /// Contexto para diagnóstico
-    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-    pub struct DiagnosticContext {
-        pub related_files: Vec<String>,
-        pub related_symbols: Vec<String>,
-        pub recent_changes: Vec<String>,
-        pub test_results: Option<String>,
+/// Standalone function for diagnosing errors from commands
+pub async fn diagnose_error(
+    error_message: &str,
+    working_dir: &Path,
+    context: Option<&str>,
+) -> Diagnosis {
+    let config = DiagnosticConfig::default();
+    let engine = DiagnosticEngine::new(working_dir.to_path_buf(), config).unwrap();
+    
+    let mut diag_context = DiagnosticContext::default();
+    if let Some(ctx) = context {
+        diag_context.related_files.push(ctx.to_string());
     }
+    
+    let result = engine.diagnose(error_message, diag_context).await.unwrap();
+    
+    // Return the first (highest confidence) diagnosis
+    result.diagnoses.into_iter().next().unwrap_or(Diagnosis {
+        id: uuid::Uuid::new_v4().to_string(),
+        category: FailureCategory::Unknown,
+        severity: Severity::Info,
+        message: error_message.to_string(),
+        location: None,
+        root_cause: None,
+        suggested_fix: None,
+        confidence: 0.0,
+        related_symbols: Vec::new(),
+        stack_trace: None,
+    })
+}
+
+/// Contexto para diagnóstico
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticContext {
+    pub related_files: Vec<String>,
+    pub related_symbols: Vec<String>,
+    pub recent_changes: Vec<String>,
+    pub test_results: Option<String>,
 }
 
 #[cfg(test)]

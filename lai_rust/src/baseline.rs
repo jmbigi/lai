@@ -1,492 +1,823 @@
-//! Baseline - Tracking de línea base para detección de regresiones.
-//! Implementa captura, comparación y alerta de regresiones en métricas de calidad.
+//! baseline.rs - Baseline tracking with regression detection (v5.0)
+//! Principles: Measurable quality gates, regression alerts, SQLite persistence
 
-use anyhow::{Context, Result};
+use crate::telemetry::{record_policy_decision, task_span, end_task_span};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-use chrono::{DateTime, Utc};
+use std::time::{Duration, Instant};
+use uuid::Uuid;
 
-/// Métricas de calidad para baseline
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct QualityMetrics {
-    pub syntax_score: f64,
-    pub format_score: f64,
-    pub lint_score: f64,
-    pub type_score: f64,
-    pub test_score: f64,
-    pub security_score: f64,
-    pub performance_score: f64,
-    pub overall_score: f64,
-    pub total_files: usize,
-    pub total_symbols: usize,
-    pub total_lines: usize,
-    pub test_count: usize,
-    pub test_passed: usize,
-    pub test_failed: usize,
+#[derive(clap::Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum BaselineCommands {
+    /// List all baselines
+    List,
+    /// Show baseline details
+    Show {
+        #[arg(help = "Baseline ID")]
+        id: String,
+    },
+    /// Compare against baseline
+    Compare {
+        #[arg(help = "Baseline ID")]
+        id: String,
+        #[arg(help = "File or directory to compare")]
+        path: String,
+    },
+    /// Create new baseline
+    Create {
+        #[arg(help = "Name for baseline")]
+        name: String,
+        #[arg(help = "Path to baseline")]
+        path: String,
+    },
 }
 
-/// Snapshot de baseline con timestamp
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineSnapshot {
-    pub id: String,
-    pub timestamp: DateTime<Utc>,
-    pub commit_hash: Option<String>,
-    pub branch: Option<String>,
-    pub metrics: QualityMetrics,
-    pub verification_report: Option<String>, // JSON serialized
-    pub metadata: HashMap<String, String>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum BaselineMetric {
+    TestPassRate,
+    TestCount,
+    Coverage,
+    CompileTime,
+    BinarySize,
+    LintWarnings,
+    TypeErrors,
+    SecurityFindings,
+    PerformanceScore,
+    Custom(String),
 }
 
-/// Configuración del baseline tracker
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineConfig {
-    pub storage_dir: PathBuf,
-    pub max_snapshots: usize,
-    pub regression_threshold: f64, // % de caída para alertar
-    pub auto_capture_on_verify: bool,
-    pub retention_days: u32,
-}
+impl BaselineMetric {
+    pub fn as_str(&self) -> String {
+        match self {
+            BaselineMetric::TestPassRate => "test_pass_rate".to_string(),
+            BaselineMetric::TestCount => "test_count".to_string(),
+            BaselineMetric::Coverage => "coverage".to_string(),
+            BaselineMetric::CompileTime => "compile_time".to_string(),
+            BaselineMetric::BinarySize => "binary_size".to_string(),
+            BaselineMetric::LintWarnings => "lint_warnings".to_string(),
+            BaselineMetric::TypeErrors => "type_errors".to_string(),
+            BaselineMetric::SecurityFindings => "security_findings".to_string(),
+            BaselineMetric::PerformanceScore => "performance_score".to_string(),
+            BaselineMetric::Custom(s) => format!("custom_{}", s),
+        }
+    }
 
-impl Default for BaselineConfig {
-    fn default() -> Self {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        Self {
-            storage_dir: home.join(".lai").join("baselines"),
-            max_snapshots: 100,
-            regression_threshold: 5.0, // 5% caída
-            auto_capture_on_verify: true,
-            retention_days: 90,
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "test_pass_rate" => BaselineMetric::TestPassRate,
+            "test_count" => BaselineMetric::TestCount,
+            "coverage" => BaselineMetric::Coverage,
+            "compile_time" => BaselineMetric::CompileTime,
+            "binary_size" => BaselineMetric::BinarySize,
+            "lint_warnings" => BaselineMetric::LintWarnings,
+            "type_errors" => BaselineMetric::TypeErrors,
+            "security_findings" => BaselineMetric::SecurityFindings,
+            "performance_score" => BaselineMetric::PerformanceScore,
+            s if s.starts_with("custom_") => BaselineMetric::Custom(s[7..].to_string()),
+            _ => BaselineMetric::Custom(s.to_string()),
         }
     }
 }
 
-/// Detección de regresión
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Baseline {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub project_path: String,
+    pub git_commit: String,
+    pub git_branch: String,
+    pub created_at: String,
+    pub metrics: HashMap<BaselineMetric, f64>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl Baseline {
+    pub fn new(name: &str, description: &str, project_path: &Path) -> Result<Self, String> {
+        let git_commit = get_git_commit(project_path)?;
+        let git_branch = get_git_branch(project_path)?;
+
+        Ok(Self {
+            id: Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            project_path: project_path.display().to_string(),
+            git_commit,
+            git_branch,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            metrics: HashMap::new(),
+            metadata: HashMap::new(),
+        })
+    }
+
+    pub fn add_metric(&mut self, metric: BaselineMetric, value: f64) {
+        self.metrics.insert(metric, value);
+    }
+
+    pub fn get_metric(&self, metric: &BaselineMetric) -> Option<f64> {
+        self.metrics.get(metric).copied()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionAlert {
+    pub id: String,
     pub baseline_id: String,
-    pub current_snapshot_id: String,
-    pub metric_name: String,
+    pub metric: BaselineMetric,
     pub baseline_value: f64,
     pub current_value: f64,
     pub delta: f64,
     pub delta_percent: f64,
     pub severity: RegressionSeverity,
-    pub timestamp: DateTime<Utc>,
+    pub detected_at: String,
+    pub acknowledged: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RegressionSeverity {
-    Minor,    // 5-10% caída
-    Moderate, // 10-25% caída
-    Major,    // 25-50% caída
-    Critical, // >50% caída
+    Info,      // < 1% change
+    Warning,   // 1-5% change
+    Critical,  // > 5% change
 }
 
 impl RegressionSeverity {
-    pub fn from_delta_percent(delta: f64) -> Self {
-        match delta.abs() {
-            d if d >= 50.0 => RegressionSeverity::Critical,
-            d if d >= 25.0 => RegressionSeverity::Major,
-            d if d >= 10.0 => RegressionSeverity::Moderate,
-            _ => RegressionSeverity::Minor,
+    pub fn from_delta_percent(percent: f64) -> Self {
+        let abs = percent.abs();
+        if abs > 5.0 {
+            RegressionSeverity::Critical
+        } else if abs > 1.0 {
+            RegressionSeverity::Warning
+        } else {
+            RegressionSeverity::Info
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RegressionSeverity::Info => "info",
+            RegressionSeverity::Warning => "warning",
+            RegressionSeverity::Critical => "critical",
         }
     }
 }
 
-/// Tracker de baseline para detección de regresiones
-pub struct BaselineTracker {
-    config: BaselineConfig,
-    snapshots: Arc<RwLock<HashMap<String, BaselineSnapshot>>>,
-    alerts: Arc<RwLock<Vec<RegressionAlert>>>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComparisonReport {
+    pub baseline_id: String,
+    pub baseline_name: String,
+    pub current_commit: String,
+    pub current_branch: String,
+    pub compared_at: String,
+    pub metrics_compared: usize,
+    pub regressions: Vec<RegressionAlert>,
+    pub improvements: Vec<RegressionAlert>,
+    pub unchanged: usize,
+    pub summary: String,
 }
 
-impl BaselineTracker {
-    pub fn new(config: BaselineConfig) -> Result<Self> {
-        fs::create_dir_all(&config.storage_dir)?;
-        
-        let tracker = Self {
-            config,
-            snapshots: Arc::new(RwLock::new(HashMap::new())),
-            alerts: Arc::new(RwLock::new(Vec::new())),
-        };
-        
-        tracker.load_snapshots()?;
-        tracker.load_alerts()?;
-        
-        Ok(tracker)
-    }
+pub struct BaselineStore {
+    conn: Connection,
+}
 
-    /// Capturar snapshot actual como baseline
-    pub fn capture_snapshot(
-        &self,
-        metrics: QualityMetrics,
-        verification_report: Option<String>,
-        commit_hash: Option<String>,
-        branch: Option<String>,
-    ) -> Result<String> {
-        let snapshot_id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now();
-        
-        let mut metadata = HashMap::new();
-        if let Some(commit) = commit_hash {
-            metadata.insert("commit".to_string(), commit);
-        }
-        if let Some(branch) = branch {
-            metadata.insert("branch".to_string(), branch);
+impl BaselineStore {
+    pub fn new(working_dir: &Path) -> Result<Self, String> {
+        let db_path = working_dir.join(".lai").join("baselines.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
-        let snapshot = BaselineSnapshot {
-            id: snapshot_id.clone(),
-            timestamp: now,
-            commit_hash,
-            branch,
-            metrics,
-            verification_report,
-            metadata,
-        };
-
-        // Guardar en memoria
-        self.snapshots.write().unwrap().insert(snapshot_id.clone(), snapshot.clone());
-        
-        // Persistir a disco
-        self.save_snapshot(&snapshot)?;
-        
-        // Limpiar snapshots antiguos
-        self.cleanup_old_snapshots()?;
-        
-        Ok(snapshot_id)
+        let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let store = Self { conn };
+        store.init_schema()?;
+        Ok(store)
     }
 
-    /// Capturar snapshot automáticamente desde reporte de verificación
-    pub fn capture_from_verification(&self, report: &crate::verification_engine::VerificationReport) -> Result<String> {
-        let metrics = QualityMetrics {
-            syntax_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Syntax)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            format_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Format)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            lint_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Lint)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            type_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Types)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            test_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::UnitTests)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            security_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Security)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            performance_score: report.results.iter()
-                .find(|r| r.level == crate::verification_engine::VerificationLevel::Performance)
-                .map(|r| r.score)
-                .unwrap_or(0.0),
-            overall_score: report.overall_score,
-            total_files: 0,
-            total_symbols: 0,
-            total_lines: 0,
-            test_count: 0,
-            test_passed: 0,
-            test_failed: 0,
-        };
+    fn init_schema(&self) -> Result<(), String> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS baselines (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                project_path TEXT NOT NULL,
+                git_commit TEXT NOT NULL,
+                git_branch TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metrics TEXT NOT NULL,  -- JSON: metric -> value
+                metadata TEXT NOT NULL  -- JSON
+            );
 
-        // Obtener commit hash actual
-        let commit_hash = self.get_current_commit_hash().ok();
-        let branch = self.get_current_branch().ok();
+            CREATE INDEX IF NOT EXISTS idx_baselines_name ON baselines(name);
+            CREATE INDEX IF NOT EXISTS idx_baselines_commit ON baselines(git_commit);
+            CREATE INDEX IF NOT EXISTS idx_baselines_created ON baselines(created_at);
 
-        self.capture_snapshot(metrics, Some(serde_json::to_string(report)?), commit_hash, branch)
+            CREATE TABLE IF NOT EXISTS regression_alerts (
+                id TEXT PRIMARY KEY,
+                baseline_id TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                baseline_value REAL NOT NULL,
+                current_value REAL NOT NULL,
+                delta REAL NOT NULL,
+                delta_percent REAL NOT NULL,
+                severity TEXT NOT NULL,
+                detected_at TEXT NOT NULL,
+                acknowledged INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (baseline_id) REFERENCES baselines(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_alerts_baseline ON regression_alerts(baseline_id);
+            CREATE INDEX IF NOT EXISTS idx_alerts_metric ON regression_alerts(metric);
+            CREATE INDEX IF NOT EXISTS idx_alerts_severity ON regression_alerts(severity);
+            "#,
+        ).map_err(|e| e.to_string())?;
+
+        Ok(())
     }
 
-    /// Comparar snapshot actual con baseline y detectar regresiones
-    pub fn detect_regressions(&self, current_metrics: &QualityMetrics, baseline_id: &str) -> Result<Vec<RegressionAlert>> {
-        let baseline = self.snapshots.read().unwrap().get(baseline_id).cloned()
-            .ok_or_else(|| anyhow::anyhow!("Baseline not found: {}", baseline_id))?;
+    pub fn create(&self, baseline: &Baseline) -> Result<(), String> {
+        let metrics_json = serde_json::to_string(&baseline.metrics).map_err(|e| e.to_string())?;
+        let metadata_json = serde_json::to_string(&baseline.metadata).map_err(|e| e.to_string())?;
 
-        let mut alerts = Vec::new();
-        let now = Utc::now();
+        self.conn.execute(
+            r#"
+            INSERT INTO baselines (id, name, description, project_path, git_commit, git_branch, created_at, metrics, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+            params![
+                baseline.id,
+                baseline.name,
+                baseline.description,
+                baseline.project_path,
+                baseline.git_commit,
+                baseline.git_branch,
+                baseline.created_at,
+                metrics_json,
+                metadata_json,
+            ],
+        ).map_err(|e| e.to_string())?;
 
-        // Comparar cada métrica
-        let metrics_to_compare = vec![
-            ("syntax_score", baseline.metrics.syntax_score, current_metrics.syntax_score),
-            ("format_score", baseline.metrics.format_score, current_metrics.format_score),
-            ("lint_score", baseline.metrics.lint_score, current_metrics.lint_score),
-            ("type_score", baseline.metrics.type_score, current_metrics.type_score),
-            ("test_score", baseline.metrics.test_score, current_metrics.test_score),
-            ("security_score", baseline.metrics.security_score, current_metrics.security_score),
-            ("performance_score", baseline.metrics.performance_score, current_metrics.performance_score),
-            ("overall_score", baseline.metrics.overall_score, current_metrics.overall_score),
-        ];
+        Ok(())
+    }
 
-        for (name, baseline_val, current_val) in metrics_to_compare {
-            let delta = current_val - baseline_val;
-            let delta_percent = if baseline_val != 0.0 {
-                ((current_val - baseline_val) / baseline_val) * 100.0
-            } else {
-                0.0
-            };
+    pub fn get(&self, id: &str) -> Result<Option<Baseline>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, project_path, git_commit, git_branch, created_at, metrics, metadata
+             FROM baselines WHERE id = ?"
+        ).map_err(|e| e.to_string())?;
 
-            // Solo alertar si hay regresión significativa
-            if delta_percent < -self.config.regression_threshold {
+        let baseline = stmt.query_row([id], |row| self.row_to_baseline(row)).optional().map_err(|e| e.to_string())?;
+        Ok(baseline)
+    }
+
+    pub fn get_by_name(&self, name: &str) -> Result<Option<Baseline>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, project_path, git_commit, git_branch, created_at, metrics, metadata
+             FROM baselines WHERE name = ? ORDER BY created_at DESC LIMIT 1"
+        ).map_err(|e| e.to_string())?;
+
+        let baseline = stmt.query_row([name], |row| self.row_to_baseline(row)).optional().map_err(|e| e.to_string())?;
+        Ok(baseline)
+    }
+
+    pub fn list(&self, limit: usize) -> Result<Vec<Baseline>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, project_path, git_commit, git_branch, created_at, metrics, metadata
+             FROM baselines ORDER BY created_at DESC LIMIT ?"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([limit], |row| self.row_to_baseline(row)).map_err(|e| e.to_string())?;
+
+        let mut baselines = Vec::new();
+        for row in rows {
+            baselines.push(row.map_err(|e| e.to_string())?);
+        }
+
+        Ok(baselines)
+    }
+
+    pub fn compare(&self, baseline_id: &str, current_metrics: &HashMap<BaselineMetric, f64>) -> Result<ComparisonReport, String> {
+        let baseline = self.get(baseline_id)?
+            .ok_or_else(|| format!("Baseline not found: {}", baseline_id))?;
+
+        let current_commit = get_git_commit(Path::new(&baseline.project_path))?;
+        let current_branch = get_git_branch(Path::new(&baseline.project_path))?;
+
+        let mut regressions = Vec::new();
+        let mut improvements = Vec::new();
+        let mut unchanged = 0;
+        let mut metrics_compared = 0;
+
+        for (metric, baseline_value) in &baseline.metrics {
+            if let Some(current_value) = current_metrics.get(metric) {
+                metrics_compared += 1;
+                let delta = current_value - baseline_value;
+                let delta_percent = if *baseline_value != 0.0 {
+                    (delta / baseline_value) * 100.0
+                } else {
+                    0.0
+                };
+
                 let severity = RegressionSeverity::from_delta_percent(delta_percent);
-                
+
                 let alert = RegressionAlert {
+                    id: Uuid::new_v4().to_string(),
                     baseline_id: baseline_id.to_string(),
-                    current_snapshot_id: Utc::now().to_rfc3339(), // placeholder
-                    metric_name: name.to_string(),
-                    baseline_value: baseline_val,
-                    current_value: current_val,
+                    metric: metric.clone(),
+                    baseline_value: *baseline_value,
+                    current_value: *current_value,
                     delta,
                     delta_percent,
-                    severity,
-                    timestamp: Utc::now(),
+                    severity: severity.clone(),
+                    detected_at: chrono::Utc::now().to_rfc3339(),
+                    acknowledged: false,
                 };
-                
-                alerts.push(alert);
+
+                // Determine if regression or improvement
+                // For most metrics: higher is better (pass rate, coverage, performance)
+                // For some: lower is better (compile time, binary size, warnings, errors)
+                let is_regression = match metric {
+                    BaselineMetric::TestPassRate | BaselineMetric::Coverage | BaselineMetric::PerformanceScore => delta < 0.0,
+                    BaselineMetric::TestCount => delta < 0.0,
+                    BaselineMetric::CompileTime | BaselineMetric::BinarySize | BaselineMetric::LintWarnings | BaselineMetric::TypeErrors | BaselineMetric::SecurityFindings => delta > 0.0,
+                    BaselineMetric::Custom(_) => delta < 0.0,  // Default: higher is better
+                };
+
+                if is_regression && delta_percent.abs() > 0.1 {
+                    self.store_alert(&alert)?;
+                    regressions.push(alert);
+                } else if !is_regression && delta_percent.abs() > 0.1 {
+                    improvements.push(alert);
+                } else {
+                    unchanged += 1;
+                }
             }
         }
 
-        // Guardar alertas
-        if !alerts.is_empty() {
-            self.alerts.write().unwrap().extend(alerts.clone());
-            self.save_alerts()?;
+        let summary = format!(
+            "Compared {} metrics: {} regressions, {} improvements, {} unchanged",
+            metrics_compared, regressions.len(), improvements.len(), unchanged
+        );
+
+        Ok(ComparisonReport {
+            baseline_id: baseline.id,
+            baseline_name: baseline.name,
+            current_commit,
+            current_branch,
+            compared_at: chrono::Utc::now().to_rfc3339(),
+            metrics_compared,
+            regressions,
+            improvements,
+            unchanged,
+            summary,
+        })
+    }
+
+    fn store_alert(&self, alert: &RegressionAlert) -> Result<(), String> {
+        self.conn.execute(
+            r#"
+            INSERT INTO regression_alerts (id, baseline_id, metric, baseline_value, current_value, delta, delta_percent, severity, detected_at, acknowledged)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            "#,
+            params![
+                alert.id,
+                alert.baseline_id,
+                alert.metric.as_str(),
+                alert.baseline_value,
+                alert.current_value,
+                alert.delta,
+                alert.delta_percent,
+                alert.severity.as_str(),
+                alert.detected_at,
+            ],
+        ).map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    pub fn list_alerts(&self, baseline_id: Option<&str>, severity: Option<RegressionSeverity>, limit: usize) -> Result<Vec<RegressionAlert>, String> {
+        let mut sql = String::from(
+            "SELECT id, baseline_id, metric, baseline_value, current_value, delta, delta_percent, severity, detected_at, acknowledged
+             FROM regression_alerts WHERE 1=1"
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(bid) = baseline_id {
+            sql.push_str(" AND baseline_id = ?");
+            params_vec.push(Box::new(bid.to_string()));
+        }
+
+        if let Some(sev) = severity {
+            sql.push_str(" AND severity = ?");
+            params_vec.push(Box::new(sev.as_str().to_string()));
+        }
+
+        sql.push_str(" ORDER BY detected_at DESC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(&params_refs[..], |row| self.row_to_alert(row)).map_err(|e| e.to_string())?;
+
+        let mut alerts = Vec::new();
+        for row in rows {
+            alerts.push(row.map_err(|e| e.to_string())?);
         }
 
         Ok(alerts)
     }
 
-    /// Obtener snapshot por ID
-    pub fn get_snapshot(&self, id: &str) -> Option<BaselineSnapshot> {
-        self.snapshots.read().unwrap().get(id).cloned()
-    }
+    pub fn acknowledge_alert(&self, alert_id: &str) -> Result<(), String> {
+        self.conn.execute(
+            "UPDATE regression_alerts SET acknowledged = 1 WHERE id = ?",
+            [alert_id],
+        ).map_err(|e| e.to_string())?;
 
-    /// Listar todos los snapshots
-    pub fn list_snapshots(&self) -> Vec<BaselineSnapshot> {
-        let mut snapshots: Vec<_> = self.snapshots.read().unwrap().values().cloned().collect();
-        snapshots.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        snapshots
-    }
-
-    /// Obtener alertas de regresión
-    pub fn get_alerts(&self, since: Option<DateTime<Utc>>) -> Vec<RegressionAlert> {
-        let alerts = self.alerts.read().unwrap();
-        if let Some(since) = since {
-            alerts.iter().filter(|a| a.timestamp > since).cloned().collect()
-        } else {
-            alerts.clone()
-        }
-    }
-
-    /// Obtener estadísticas de regresiones
-    pub fn get_regression_stats(&self) -> BaselineStats {
-        let alerts = self.alerts.read().unwrap();
-        let snapshots = self.snapshots.read().unwrap();
-        
-        let total_alerts = alerts.len();
-        let critical_alerts = alerts.iter().filter(|a| a.severity == RegressionSeverity::Critical).count();
-        let major_alerts = alerts.iter().filter(|a| a.severity == RegressionSeverity::Major).count();
-        let moderate_alerts = alerts.iter().filter(|a| a.severity == RegressionSeverity::Moderate).count();
-        let minor_alerts = alerts.iter().filter(|a| a.severity == RegressionSeverity::Minor).count();
-
-        BaselineStats {
-            total_snapshots: snapshots.len(),
-            total_alerts,
-            critical_alerts,
-            major_alerts,
-            moderate_alerts,
-            minor_alerts,
-            latest_snapshot: snapshots.values().max_by_key(|s| s.timestamp).cloned(),
-        }
-    }
-
-    // --- Persistencia ---
-
-    fn save_snapshot(&self, snapshot: &BaselineSnapshot) -> Result<()> {
-        let path = self.config.storage_dir.join(format!("{}.json", snapshot.id));
-        let content = serde_json::to_string_pretty(snapshot)?;
-        fs::write(path, content)?;
         Ok(())
     }
 
-    fn load_snapshots(&self) -> Result<()> {
-        if !self.config.storage_dir.exists() {
-            return Ok(());
+    fn row_to_baseline(&self, row: &Row) -> rusqlite::Result<Baseline> {
+        let metrics_json: String = row.get(7)?;
+        let metadata_json: String = row.get(8)?;
+
+        let metrics_map: HashMap<String, f64> = serde_json::from_str(&metrics_json).unwrap_or_default();
+        let mut metrics = HashMap::new();
+        for (k, v) in metrics_map {
+            metrics.insert(BaselineMetric::from_str(&k), v);
         }
 
-        let mut snapshots = self.snapshots.write().unwrap();
-        for entry in fs::read_dir(&self.config.storage_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                let content = fs::read_to_string(&path)?;
-                if let Ok(snapshot) = serde_json::from_str::<BaselineSnapshot>(&content) {
-                    snapshots.insert(snapshot.id.clone(), snapshot);
+        let metadata: HashMap<String, serde_json::Value> = serde_json::from_str(&metadata_json).unwrap_or_default();
+
+        Ok(Baseline {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            description: row.get(2)?,
+            project_path: row.get(3)?,
+            git_commit: row.get(4)?,
+            git_branch: row.get(5)?,
+            created_at: row.get(6)?,
+            metrics,
+            metadata,
+        })
+    }
+
+    fn row_to_alert(&self, row: &Row) -> rusqlite::Result<RegressionAlert> {
+        let metric_str: String = row.get(2)?;
+        let severity_str: String = row.get(7)?;
+
+        Ok(RegressionAlert {
+            id: row.get(0)?,
+            baseline_id: row.get(1)?,
+            metric: BaselineMetric::from_str(&metric_str),
+            baseline_value: row.get(3)?,
+            current_value: row.get(4)?,
+            delta: row.get(5)?,
+            delta_percent: row.get(6)?,
+            severity: match severity_str.as_str() {
+                "info" => RegressionSeverity::Info,
+                "warning" => RegressionSeverity::Warning,
+                "critical" => RegressionSeverity::Critical,
+                _ => RegressionSeverity::Info,
+            },
+            detected_at: row.get(8)?,
+            acknowledged: row.get(9)?,
+        })
+    }
+}
+
+pub async fn collect_current_metrics(project_path: &Path) -> Result<HashMap<BaselineMetric, f64>, String> {
+    let mut metrics = HashMap::new();
+
+    // Run tests and get pass rate
+    if let Ok((passed, total)) = run_tests(project_path).await {
+        if total > 0 {
+            metrics.insert(BaselineMetric::TestPassRate, passed as f64 / total as f64 * 100.0);
+            metrics.insert(BaselineMetric::TestCount, total as f64);
+        }
+    }
+
+    // Get coverage (if available)
+    if let Ok(coverage) = get_coverage(project_path).await {
+        metrics.insert(BaselineMetric::Coverage, coverage);
+    }
+
+    // Get lint warnings
+    if let Ok(warnings) = get_lint_warnings(project_path).await {
+        metrics.insert(BaselineMetric::LintWarnings, warnings as f64);
+    }
+
+    // Get type errors
+    if let Ok(errors) = get_type_errors(project_path).await {
+        metrics.insert(BaselineMetric::TypeErrors, errors as f64);
+    }
+
+    // Get security findings
+    if let Ok(findings) = get_security_findings(project_path).await {
+        metrics.insert(BaselineMetric::SecurityFindings, findings as f64);
+    }
+
+    // Get compile time
+    if let Ok(compile_time) = measure_compile_time(project_path).await {
+        metrics.insert(BaselineMetric::CompileTime, compile_time);
+    }
+
+    // Get binary size
+    if let Ok(size) = get_binary_size(project_path).await {
+        metrics.insert(BaselineMetric::BinarySize, size as f64);
+    }
+
+    Ok(metrics)
+}
+
+async fn run_tests(project_path: &Path) -> Result<(u32, u32), String> {
+    // Try cargo test for Rust
+    let cargo_toml = project_path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        let output = tokio::process::Command::new("cargo")
+            .arg("test")
+            .arg("--no-fail-fast")
+            .arg("--message-format=json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut passed = 0;
+        let mut total = 0;
+
+        for line in stdout.lines() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                if json["reason"] == "test" {
+                    total += 1;
+                    if json["status"] == "passed" {
+                        passed += 1;
+                    }
                 }
             }
         }
-        Ok(())
-    }
 
-    fn save_alerts(&self) -> Result<()> {
-        let path = self.config.storage_dir.join("alerts.json");
-        let alerts = self.alerts.read().unwrap();
-        let content = serde_json::to_string_pretty(&*alerts)?;
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    fn load_alerts(&self) -> Result<()> {
-        let path = self.config.storage_dir.join("alerts.json");
-        if !path.exists() {
-            return Ok(());
+        if total > 0 {
+            return Ok((passed, total));
         }
-        let content = fs::read_to_string(&path)?;
-        let alerts = serde_json::from_str(&content)?;
-        *self.alerts.write().unwrap() = alerts;
-        Ok(())
     }
 
-    fn cleanup_old_snapshots(&self) -> Result<()> {
-        let mut snapshots = self.snapshots.write().unwrap();
-        if snapshots.len() > self.config.max_snapshots {
-            let mut sorted: Vec<_> = snapshots.values().collect();
-            sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-            
-            let to_remove = sorted.len() - self.config.max_snapshots;
-            for snapshot in sorted.iter().take(to_remove) {
-                snapshots.remove(&snapshot.id);
-                // También borrar archivo
-                let path = self.config.storage_dir.join(format!("{}.json", snapshot.id));
-                let _ = fs::remove_file(path);
+    // Try pytest for Python
+    let pyproject = project_path.join("pyproject.toml");
+    if pyproject.exists() {
+        let output = tokio::process::Command::new("python3")
+            .arg("-m")
+            .arg("pytest")
+            .arg("--tb=no")
+            .arg("-q")
+            .arg("--json-report")
+            .arg("--json-report-file=/tmp/pytest_report.json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if let Ok(report) = std::fs::read_to_string("/tmp/pytest_report.json") {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&report) {
+                let passed = json["summary"]["passed"].as_u64().unwrap_or(0) as u32;
+                let total = json["summary"]["total"].as_u64().unwrap_or(0) as u32;
+                if total > 0 {
+                    return Ok((passed, total));
+                }
             }
         }
-        Ok(())
     }
 
-    fn cleanup_old_alerts(&self) -> Result<()> {
-        let mut alerts = self.alerts.write().unwrap();
-        let cutoff = Utc::now() - chrono::Duration::days(self.config.retention_days as i64);
-        alerts.retain(|a| a.timestamp > cutoff);
-        Ok(())
+    Ok((0, 0))
+}
+
+async fn get_coverage(project_path: &Path) -> Result<f64, String> {
+    // Try cargo llvm-cov for Rust
+    let cargo_toml = project_path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        let output = tokio::process::Command::new("cargo")
+            .arg("llvm-cov")
+            .arg("--summary-only")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains("Lines:") {
+                if let Some(percent_str) = line.split('%').next() {
+                    if let Some(num_str) = percent_str.split_whitespace().last() {
+                        return Ok(num_str.parse().unwrap_or(0.0));
+                    }
+                }
+            }
+        }
     }
 
-    fn get_current_commit_hash(&self) -> Result<String> {
-        let output = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&std::env::current_dir()?)
-            .output()?;
+    // Try coverage.py for Python
+    let pyproject = project_path.join("pyproject.toml");
+    if pyproject.exists() {
+        let output = tokio::process::Command::new("python3")
+            .arg("-m")
+            .arg("coverage")
+            .arg("report")
+            .arg("--format=total")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(val) = stdout.trim().parse::<f64>() {
+            return Ok(val);
+        }
+    }
+
+    Err("Coverage not available".to_string())
+}
+
+async fn get_lint_warnings(project_path: &Path) -> Result<u32, String> {
+    // Try cargo clippy for Rust
+    let cargo_toml = project_path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        let output = tokio::process::Command::new("cargo")
+            .arg("clippy")
+            .arg("--message-format=json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut warnings = 0;
+        for line in stdout.lines() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                if json["reason"] == "compiler-message" {
+                    if json["message"]["level"] == "warning" {
+                        warnings += 1;
+                    }
+                }
+            }
+        }
+        return Ok(warnings);
+    }
+
+    // Try ruff for Python
+    let pyproject = project_path.join("pyproject.toml");
+    if pyproject.exists() {
+        let output = tokio::process::Command::new("ruff")
+            .arg("check")
+            .arg("--output-format=json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            if let Some(arr) = json.as_array() {
+                return Ok(arr.len() as u32);
+            }
+        }
+    }
+
+    Ok(0)
+}
+
+async fn get_type_errors(project_path: &Path) -> Result<u32, String> {
+    // Try mypy for Python
+    let pyproject = project_path.join("pyproject.toml");
+    if pyproject.exists() {
+        let output = tokio::process::Command::new("mypy")
+            .arg("--strict")
+            .arg(".")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut errors = 0;
+        for line in stderr.lines() {
+            if line.contains("error:") {
+                errors += 1;
+            }
+        }
+        return Ok(errors);
+    }
+
+    // Rust type errors are caught by cargo build
+    Ok(0)
+}
+
+async fn get_security_findings(project_path: &Path) -> Result<u32, String> {
+    // Try cargo audit for Rust
+    let cargo_toml = project_path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        let output = tokio::process::Command::new("cargo")
+            .arg("audit")
+            .arg("--json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            if let Some(vulns) = json["vulnerabilities"].as_array() {
+                return Ok(vulns.len() as u32);
+            }
+        }
+    }
+
+    // Try bandit for Python
+    let pyproject = project_path.join("pyproject.toml");
+    if pyproject.exists() {
+        let output = tokio::process::Command::new("bandit")
+            .arg("-r")
+            .arg(".")
+            .arg("-f")
+            .arg("json")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            if let Some(results) = json["results"].as_array() {
+                return Ok(results.len() as u32);
+            }
+        }
+    }
+
+    Ok(0)
+}
+
+async fn measure_compile_time(project_path: &Path) -> Result<f64, String> {
+    let cargo_toml = project_path.join("Cargo.toml");
+    if cargo_toml.exists() {
+        let start = Instant::now();
+        let output = tokio::process::Command::new("cargo")
+            .arg("build")
+            .current_dir(project_path)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let elapsed = start.elapsed().as_secs_f64();
+        if output.status.success() {
+            return Ok(elapsed);
+        }
+    }
+    Err("Compile time measurement failed".to_string())
+}
+
+async fn get_binary_size(project_path: &Path) -> Result<u64, String> {
+    let target_dir = project_path.join("target").join("debug");
+    if let Ok(entries) = std::fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_file() && entry.file_name().to_string_lossy().contains("lai") {
+                    return Ok(metadata.len());
+                }
+            }
+        }
+    }
+    Ok(0)
+}
+
+fn get_git_commit(project_path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(project_path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-
-    fn get_current_branch(&self) -> Result<String> {
-        let output = Command::new("git")
-            .args(["branch", "--show-current"])
-            .current_dir(&std::env::current_dir()?)
-            .output()?;
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Ok("unknown".to_string())
     }
 }
 
-/// Estadísticas del baseline tracker
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineStats {
-    pub total_snapshots: usize,
-    pub total_alerts: usize,
-    pub critical_alerts: usize,
-    pub major_alerts: usize,
-    pub moderate_alerts: usize,
-    pub minor_alerts: usize,
-    pub latest_snapshot: Option<BaselineSnapshot>,
-}
+fn get_git_branch(project_path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .current_dir(project_path)
+        .output()
+        .map_err(|e| e.to_string())?;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_baseline_tracker_basic() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = BaselineConfig {
-            storage_dir: temp_dir.path().to_path_buf(),
-            max_snapshots: 10,
-            regression_threshold: 5.0,
-            auto_capture_on_verify: true,
-            retention_days: 90,
-        };
-        
-        let tracker = BaselineTracker::new(config).unwrap();
-        
-        let metrics = QualityMetrics {
-            overall_score: 90.0,
-            syntax_score: 100.0,
-            format_score: 100.0,
-            lint_score: 90.0,
-            type_score: 85.0,
-            test_score: 80.0,
-            security_score: 95.0,
-            performance_score: 85.0,
-            ..Default::default()
-        };
-
-        let id = tracker.capture_snapshot(metrics, None, None, None).unwrap();
-        let snapshot = tracker.get_snapshot(&id).unwrap();
-        assert_eq!(snapshot.metrics.overall_score, 90.0);
-    }
-
-    #[test]
-    fn test_regression_detection() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = BaselineConfig {
-            storage_dir: temp_dir.path().to_path_buf(),
-            max_snapshots: 10,
-            regression_threshold: 5.0,
-            auto_capture_on_verify: true,
-            retention_days: 90,
-        };
-        
-        let tracker = BaselineTracker::new(config).unwrap();
-        
-        // Baseline con score alto
-        let baseline_metrics = QualityMetrics {
-            overall_score: 90.0,
-            syntax_score: 100.0,
-            format_score: 100.0,
-            lint_score: 90.0,
-            type_score: 85.0,
-            test_score: 80.0,
-            security_score: 95.0,
-            performance_score: 85.0,
-            ..Default::default()
-        };
-        
-        let baseline_id = tracker.capture_snapshot(baseline_metrics, None, None, None).unwrap();
-        
-        // Current con regresión en overall_score
-        let current_metrics = QualityMetrics {
-            overall_score: 80.0, // 10% caída
-            syntax_score: 100.0,
-            format_score: 100.0,
-            lint_score: 90.0,
-            type_score: 85.0,
-            test_score: 80.0,
-            security_score: 95.0,
-            performance_score: 85.0,
-            ..Default::default()
-        };
-        
-        let alerts = tracker.detect_regressions(&current_metrics, &baseline_id).unwrap();
-        assert!(!alerts.is_empty());
-        assert_eq!(alerts[0].metric_name, "overall_score");
-        assert!(alerts[0].delta_percent < -5.0);
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Ok("unknown".to_string())
     }
 }

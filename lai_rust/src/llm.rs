@@ -7,10 +7,30 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: ToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +91,9 @@ impl LlmClient {
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt.to_string(),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
             }],
             tools: None,
             tool_choice: None,
@@ -104,5 +127,48 @@ impl LlmClient {
         })?;
 
         Ok(choice.message.content)
+    }
+
+    pub async fn chat_with_tools(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<serde_json::Value>>,
+        tool_choice: Option<String>,
+    ) -> Result<Message> {
+        let payload = ChatRequest {
+            model: self.model.clone(),
+            messages,
+            tools,
+            tool_choice,
+            stream: Some(false),
+            temperature: Some(0.7),
+            max_tokens: Some(4096),
+            top_p: Some(0.95),
+            top_k: Some(20),
+            chat_template_kwargs: Some(HashMap::from([(
+                "enable_thinking".into(),
+                serde_json::Value::Bool(false),
+            )])),
+        };
+
+        let resp = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {}: {}", status, text);
+        }
+
+        let data: ChatResponse = resp.json().await?;
+        let choice = data.choices.first().cloned().ok_or_else(|| {
+            anyhow::anyhow!("No choices in response")
+        })?;
+
+        Ok(choice.message)
     }
 }

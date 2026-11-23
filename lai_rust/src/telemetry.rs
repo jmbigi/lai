@@ -106,16 +106,16 @@ pub struct TelemetryEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TelemetryEventKind {
-    TaskStart { task_id: String, task_type: String, description: String },
-    TaskEnd { task_id: String, success: bool, duration_ms: u64, summary: String },
-    ToolCall { task_id: String, tool: String, definition_hash: Option<String>, policy_decision: bool, args: serde_json::Value, result: Option<serde_json::Value>, duration_ms: u64, success: bool, error: Option<String> },
-    LlmCall { task_id: String, model: String, prompt_tokens: Option<u64>, completion_tokens: Option<u64>, duration_ms: u64, success: bool, error: Option<String> },
-    Error { task_id: Option<String>, error_type: String, message: String, context: HashMap<String, serde_json::Value>, recoverable: bool },
-    Checkpoint { task_id: String, checkpoint_id: String, description: String, files: Vec<String>, state_snapshot: serde_json::Value },
-    PolicyDecision { task_id: String, tool: String, allowed: bool, reason: String, policy: String },
-    ContextChange { task_id: String, change_type: String, files_added: Vec<String>, files_removed: Vec<String>, token_delta: i64 },
-    RepairCycle { task_id: String, cycle: u32, phase: String, issues_found: u32, issues_fixed: u32, success: bool },
-    Verification { task_id: String, verifier: String, level: u32, passed: bool, details: String, artifacts: Vec<String> },
+    TaskStart { task_type: String, description: String },
+    TaskEnd { success: bool, duration_ms: u64, summary: String },
+    ToolCall { tool: String, definition_hash: Option<String>, policy_decision: bool, args: serde_json::Value, result: Option<serde_json::Value>, duration_ms: u64, success: bool, error: Option<String> },
+    LlmCall { model: String, prompt_tokens: Option<u64>, completion_tokens: Option<u64>, duration_ms: u64, success: bool, error: Option<String> },
+    Error { error_type: String, message: String, context: HashMap<String, serde_json::Value>, recoverable: bool },
+    Checkpoint { checkpoint_id: String, description: String, files: Vec<String>, state_snapshot: serde_json::Value },
+    PolicyDecision { tool: String, allowed: bool, reason: String, policy: String },
+    ContextChange { change_type: String, files_added: Vec<String>, files_removed: Vec<String>, token_delta: i64 },
+    RepairCycle { cycle: u32, phase: String, issues_found: u32, issues_fixed: u32, success: bool },
+    Verification { verifier: String, level: u32, passed: bool, details: String, artifacts: Vec<String> },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,14 +182,14 @@ pub fn record_verification(task_id: &str, verifier: &str, level: u32, passed: bo
 pub fn task_span(task_id: &str, task_type: &str, description: &str) {
     if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
         t.inc_requests();
-        let event = TelemetryEvent { timestamp: now(), session_id: t.session_id.clone(), task_id: Some(task_id.to_string()), kind: TelemetryEventKind::TaskStart { task_id: task_id.to_string(), task_type: task_type.to_string(), description: description.to_string() }, data: serde_json::json!({}) };
+        let event = TelemetryEvent { timestamp: now(), session_id: t.session_id.clone(), task_id: Some(task_id.to_string()), kind: TelemetryEventKind::TaskStart { task_type: task_type.to_string(), description: description.to_string() }, data: serde_json::json!({}) };
         t.record_event(event); *TELEMETRY.lock().unwrap() = Some(t);
     }
 }
 
 pub fn end_task_span(task_id: &str, success: bool, duration: Duration, summary: &str) {
     if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
-        let event = TelemetryEvent { timestamp: now(), session_id: t.session_id.clone(), task_id: Some(task_id.to_string()), kind: TelemetryEventKind::TaskEnd { task_id: task_id.to_string(), success, duration_ms: duration.as_millis() as u64, summary: summary.to_string() }, data: serde_json::json!({}) };
+        let event = TelemetryEvent { timestamp: now(), session_id: t.session_id.clone(), task_id: Some(task_id.to_string()), kind: TelemetryEventKind::TaskEnd { success, duration_ms: duration.as_millis() as u64, summary: summary.to_string() }, data: serde_json::json!({}) };
         t.record_event(event); *TELEMETRY.lock().unwrap() = Some(t);
     }
 }

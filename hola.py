@@ -1,2 +1,1 @@
-def hola():
-    print("OK")
+print("Hello, world!")

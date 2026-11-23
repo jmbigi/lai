@@ -7,6 +7,36 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
+/// Execution state for the FSM
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ExecutionState {
+    Idle,
+    Planning,
+    Authorizing,
+    Executing,
+    Verifying,
+    Diagnosing,
+    Repairing,
+    Checkpointing,
+    RollingBack,
+    Completed,
+    Failed,
+    Blocked,
+    Aborted,
+}
+
+/// Execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionResult {
+    pub success: bool,
+    pub final_state: ExecutionState,
+    pub completed_steps: Vec<String>,
+    pub failed_step: Option<String>,
+    pub error: Option<String>,
+    pub duration: Duration,
+}
 
 /// Tipo de operación de cambio
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,12 +268,12 @@ impl ChangeEngine {
     fn cleanup_old_checkpoints(&self) -> Result<()> {
         let mut checkpoints = self.checkpoints.write().unwrap();
         if checkpoints.len() > self.config.max_checkpoints {
-            let mut sorted: Vec<_> = checkpoints.values().collect();
-            sorted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+            let mut sorted: Vec<_> = checkpoints.iter().map(|(k, v)| (k.clone(), v.timestamp.clone())).collect();
+            sorted.sort_by(|a, b| a.1.cmp(&b.1));
             
             let to_remove = sorted.len() - self.config.max_checkpoints;
-            for checkpoint in sorted.iter().take(to_remove) {
-                checkpoints.remove(&checkpoint.id);
+            for (id, _) in sorted.iter().take(to_remove) {
+                checkpoints.remove(id);
             }
         }
         Ok(())
@@ -265,31 +295,31 @@ pub fn generate_diff(old: &str, new: &str, file_path: &Path) -> String {
     use difference::{Changeset, Difference};
     
     let changeset = Changeset::new(old, new, "\n");
-    let mut diff = String::new();
+    let mut output = String::new();
     
-    diff.push_str(&format!("--- a/{}\n", file_path.display()));
-    diff.push_str(&format!("+++ b/{}\n", file_path.display()));
+    output.push_str(&format!("--- a/{}\n", file_path.display()));
+    output.push_str(&format!("+++ b/{}\n", file_path.display()));
     
     for diff in changeset.diffs {
         match diff {
             Difference::Same(text) => {
                 for line in text.lines() {
-                    diff.push_str(&format!(" {}\n", line));
+                    output.push_str(&format!(" {}\n", line));
                 }
             }
             Difference::Add(text) => {
                 for line in text.lines() {
-                    diff.push_str(&format!("+{}\n", line));
+                    output.push_str(&format!("+{}\n", line));
                 }
             }
             Difference::Rem(text) => {
                 for line in text.lines() {
-                    diff.push_str(&format!("-{}\n", line));
+                    output.push_str(&format!("-{}\n", line));
                 }
             }
         }
-        diff
     }
+    output
 }
 
 #[cfg(test)]
