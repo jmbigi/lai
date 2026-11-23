@@ -66,6 +66,16 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
     Esta regla es subordinada a la Regla 0: ninguna acción de supervivencia o
     optimización puede introducir dependencia de cloud, API keys o cuentas externas.
 
+10. **Documentación obligatoria de cambios (Regla de trabajo en equipo).**
+    Antes de realizar cualquier cambio en el código, configuración, documentación o arquitectura:
+    - **Crear un documento de cambios propuestos** que describa qué se va a modificar, por qué, qué archivos afecta, y cuál es el resultado esperado.
+    - **Documentar el estado ANTES del cambio** (versión actual, comportamiento observado, tests relevantes).
+    - **Documentar el estado DESPUÉS del cambio** (nueva versión, comportamiento verificado, tests pasados, evidencia de corrección).
+    - Cada cambio individual debe tener su registro antes/después, no solo el resultado final.
+    - La documentación debe ser lo suficientemente clara para que otro miembro del equipo pueda entender, revisar y continuar el trabajo sin ambigüedades.
+    - Esto aplica a: código fuente, archivos de configuración, documentación, tests, scripts, y cualquier artefacto del repositorio.
+    - **No hacer cambios "silenciosos" ni batch de cambios sin documentación intermedia.**
+
 ---
 
 ## 2. Definiciones para evitar ambigüedades
@@ -106,6 +116,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | 7. Exactitud | ⚠️ En mejora | `DOCS/quality_comparison.md` contenía métricas de ejemplo presentadas como resultados; se convirtió en plantilla sin resultados inventados. |
 | 8. Chess con LLM local | ⚠️ Parcial | `chess/chess.py` fue generado con Qwen3-8B local, pero recibió correcciones manuales; ver `chess/README.md`. |
 | 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust con paridad de comandos: chat, generate, code, think, auto, run, serve, status, models, tools, search, find, fix, review, diff, test, init, config, install, update, exec, doctor, clean, completion, project, repair, ocr, mcp, system-one, deguro, rag, agents, complete, symbols, goto, repomap, interactive. Build release compila limpio. `lai.py` legado sin modificaciones salvo correcciones críticas. |
+| 10. Documentación obligatoria de cambios | 🆕 Nueva | Regla agregada 2026-11-23. Requiere documento de cambios propuestos, estado antes/después por cada cambio, y trazabilidad para trabajo en equipo. |
 
 ---
 
@@ -116,7 +127,7 @@ Cualquier cambio en estas reglas debe:
 1. Actualizar este archivo (`DOCUMENTACION_REGLAS.md`).
 2. Actualizar el resumen de `README.md` y `AGENTS.md`.
 3. Añadir una entrada en `CHANGELOG.md`.
-4. Mantener la numeración 1–8 y evitar duplicados.
+4. Mantener la numeración 1–10 y evitar duplicados.
 5. Verificarse con `make check` (incluye `scripts/check_docs.py`).
 
 ---

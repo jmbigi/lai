@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Regla 0 (Misión Fundacional):** lai existe para impulsar IAs locales, abiertas y soberanas. Open source first, sin dependencia de claves/API keys, sin dependencia de cuentas en la nube, software gratuito y de calidad, privacidad por diseño. Cualquier feature que introduzca dependencia obligatoria de cloud requiere aprobación explícita.
+- **Regla 10 (Documentación obligatoria de cambios):** Nueva regla que exige crear documento de cambios propuestos antes de modificar código, documentar estado ANTES y DESPUÉS de cada cambio individual, y mantener trazabilidad para favorecer el trabajo en equipo. Prohíbe cambios silenciosos o en batch sin documentación intermedia.
 
 ## [v0.0.2] - 2026-11-20
 
