@@ -1,0 +1,8 @@
+{
+  "id": "syntax-check-1",
+  "task_type": "bugfix",
+  "description": "Crea el archivo bench_fixture_ok.py con una función `add(a, b)` que devuelva la suma y verifica que compila sin errores de sintaxis.",
+  "acceptance_criteria": ["El archivo bench_fixture_ok.py existe", "La función add(a,b) devuelve a+b"],
+  "required_tests": ["python3 -m py_compile bench_fixture_ok.py"],
+  "verification_scope": ["syntax", "unit_tests"]
+}

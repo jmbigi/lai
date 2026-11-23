@@ -1,0 +1,8 @@
+{
+  "id": "python-repair-1",
+  "task_type": "feature",
+  "description": "Crea el archivo bench_fixture_calc.py con una función `mul(a, b)` que devuelva el producto de a y b.",
+  "acceptance_criteria": ["El archivo bench_fixture_calc.py existe", "La función mul(a,b) devuelve a*b"],
+  "required_tests": ["python3 -m py_compile bench_fixture_calc.py"],
+  "verification_scope": ["syntax", "unit_tests"]
+}

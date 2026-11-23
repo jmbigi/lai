@@ -12,6 +12,13 @@ mod telemetry;
 mod repomap;
 mod context;
 mod harness;
+mod integrity;
+mod sandbox;
+mod verifier;
+mod spec;
+mod memory;
+mod bench;
+mod mcp;
 
 use clap::Parser;
 
@@ -57,7 +64,18 @@ enum Commands {
         task: String,
         #[arg(long, help = "YOLO mode: auto-approve confirmations (Deny remains enforced)")]
         yolo: bool,
+        #[arg(long, help = "Require a verified sandbox for command execution (fail-closed)")]
+        sandbox: bool,
     },
+    /// Run the internal benchmark suite (lai bench)
+    Bench {
+        #[arg(long, default_value = "benchmarks/tasks", help = "Tasks directory (*.json)")]
+        tasks: String,
+        #[arg(long, default_value = ".benchmarks/results", help = "Output directory")]
+        out: String,
+    },
+    /// Start MCP server (stdio JSON-RPC) exposing lai tools
+    Mcp,
 }
 
 #[tokio::main]
@@ -98,8 +116,14 @@ async fn main() {
         Some(Commands::Status) => {
             commands::cmd_status().await;
         }
-        Some(Commands::Harness { task, yolo }) => {
-            commands::cmd_harness(&task, yolo, &cli.model, &cli.base_url, cli.allow_remote).await;
+        Some(Commands::Harness { task, yolo, sandbox }) => {
+            commands::cmd_harness(&task, yolo, sandbox, &cli.model, &cli.base_url, cli.allow_remote).await;
+        }
+        Some(Commands::Bench { tasks, out }) => {
+            commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote).await;
+        }
+        Some(Commands::Mcp) => {
+            commands::cmd_mcp().await;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);

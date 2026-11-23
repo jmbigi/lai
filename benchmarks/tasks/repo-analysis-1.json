@@ -1,0 +1,8 @@
+{
+  "id": "repo-analysis-1",
+  "task_type": "analysis",
+  "description": "Analiza el repositorio e indica qué lenguajes de programación predominan y cuántos archivos de cada uno hay. No modifiques ningún archivo.",
+  "acceptance_criteria": ["Se identifica el lenguaje predominante", "Se indican los lenguajes encontrados"],
+  "required_tests": [],
+  "verification_scope": ["lint"]
+}

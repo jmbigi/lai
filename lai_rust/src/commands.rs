@@ -1319,14 +1319,25 @@ complete -c lai -f -a "(__fish_lai_complete)"
 // Harness command - ExecutionLoop (deterministic runtime, Fase 0/1)
 // ============================================================================
 
-pub async fn cmd_harness(task: &str, yolo: bool, model: &str, base_url: &str, allow_remote: bool) {
+pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, model: &str, base_url: &str, allow_remote: bool) {
     use crate::harness::{ExecutionHarness, HarnessConfig};
 
-    let llm = crate::llm::LlmClient::new(base_url, model, allow_remote);
-    let mut config = HarnessConfig::default();
-    if yolo {
-        config.auto_approve = true;
+    // Sandbox preflight (v4.0): si se exige y no puede aplicarse, el
+    // PolicyEngine falla cerrado (ninguna ejecución sin aislamiento).
+    let st = crate::sandbox::preflight();
+    if sandbox {
+        if st.available {
+            println!("Sandbox: {} ({})", st.mechanism, st.detail);
+        } else {
+            eprintln!("Sandbox REQUERIDO pero no disponible: {}", st.detail);
+            eprintln!("El PolicyEngine denegará la ejecución de comandos (fail-closed).");
+        }
+    } else if !st.available {
+        println!("Sandbox: no disponible ({}) — comandos sin aislamiento (usa --sandbox para exigirlo)", st.detail);
     }
+
+    let llm = crate::llm::LlmClient::new(base_url, model, allow_remote);
+    let config = HarnessConfig::default().require_sandbox(sandbox);
 
     let mut harness = match ExecutionHarness::new(config, llm) {
         Ok(h) => h,
@@ -1342,6 +1353,7 @@ pub async fn cmd_harness(task: &str, yolo: bool, model: &str, base_url: &str, al
             println!("\n=== Execution Result ===");
             println!("Task:      {}", result.task_id);
             println!("Success:   {}", result.success);
+            println!("Verdict:   {}", result.verdict.label());
             println!("State:     {:?}", result.final_state);
             println!("Iterations: {}", result.iterations);
             println!("Tool turns: {}", result.total_tool_turns);
@@ -1361,5 +1373,44 @@ pub async fn cmd_harness(task: &str, yolo: bool, model: &str, base_url: &str, al
             eprintln!("Harness error: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+/// lai bench: ejecuta la suite interna y emite métricas versionadas.
+pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &str, allow_remote: bool) {
+    let dir = std::path::PathBuf::from(tasks_dir);
+    let tasks = match crate::bench::load_tasks(&dir) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("No se pudieron cargar las tareas de '{}': {}", tasks_dir, e);
+            std::process::exit(1);
+        }
+    };
+    if tasks.is_empty() {
+        eprintln!("Sin tareas en '{}'", tasks_dir);
+        std::process::exit(1);
+    }
+
+    let workdir = std::env::current_dir().unwrap_or_default();
+    let summary = crate::bench::run_bench(&tasks, model, base_url, allow_remote, workdir)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Benchmark error: {}", e);
+            std::process::exit(1);
+        });
+
+    crate::bench::print_summary(&summary);
+    match crate::bench::write_results(&summary, std::path::Path::new(out_dir)) {
+        Ok(path) => println!("Resultados: {}", path.display()),
+        Err(e) => eprintln!("No se pudieron guardar los resultados: {}", e),
+    }
+}
+
+/// lai mcp: servidor MCP mínimo (stdio JSON-RPC) sobre el ToolRegistry.
+pub async fn cmd_mcp() {
+    let registry = crate::tools::ToolRegistry::new();
+    if let Err(e) = crate::mcp::serve(registry).await {
+        eprintln!("MCP server error: {}", e);
+        std::process::exit(1);
     }
 }

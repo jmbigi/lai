@@ -29,6 +29,8 @@ pub struct ToolRegistry {
     pub require_approval: bool,
     pub sensitive_tools: Vec<String>,
     pub policy_engine: Arc<PolicyEngine>,
+    /// Integridad de definiciones (v4.0): hash fijado por herramienta.
+    pub integrity: crate::integrity::IntegrityRegistry,
 }
 
 type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>> + Send + Sync>;
@@ -59,6 +61,7 @@ impl ToolRegistry {
                 "git_rollback".into(),
             ],
             policy_engine,
+            integrity: crate::integrity::IntegrityRegistry::new(),
         };
 
         registry.register_core_tools();
@@ -69,7 +72,55 @@ impl ToolRegistry {
         registry.register_git_tools();
         registry.register_ocr_tools();
 
+        // v4.0: fijar (pin) el hash de la definición de cada herramienta.
+        registry.pin_definitions();
+
         registry
+    }
+
+    /// Fija (pin) las definiciones de todas las herramientas registradas.
+    fn pin_definitions(&mut self) {
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        let schemas = self.get_tools_schema();
+        for schema in &schemas {
+            let risk = if self.sensitive_tools.contains(&schema.name) { "high" } else { "low" };
+            let def = crate::integrity::ToolDefinition {
+                name: schema.name.clone(),
+                description: schema.description.clone(),
+                input_schema: schema.parameters.clone(),
+                output_schema: None,
+                risk_level: risk.to_string(),
+                permissions: vec![],
+                pinned_version: version.clone(),
+            };
+            self.integrity.pin(def);
+        }
+        // Herramientas sin entrada en get_tools_schema(): definición mínima.
+        let names: Vec<String> = self.tools.keys().cloned().collect();
+        for name in names {
+            if !self.integrity.is_pinned(&name) {
+                let def = crate::integrity::ToolDefinition {
+                    name,
+                    description: String::new(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: None,
+                    risk_level: "medium".to_string(),
+                    permissions: vec![],
+                    pinned_version: version.clone(),
+                };
+                self.integrity.pin(def);
+            }
+        }
+    }
+
+    /// Verifica la integridad de una herramienta (fail-closed).
+    pub fn check_integrity(&self, name: &str) -> Result<(), String> {
+        self.integrity.verify(name)
+    }
+
+    /// Revalida todas las definiciones fijadas.
+    pub fn verify_integrity_all(&self) -> Result<(), String> {
+        self.integrity.verify_all()
     }
 
     fn register_tool<F, Fut>(&mut self, name: &str, func: F)
@@ -810,6 +861,10 @@ impl ToolRegistry {
     }
 
     pub async fn call_tool(&self, name: &str, args: HashMap<String, Value>) -> Result<String> {
+        // Integridad de la definición ANTES de cualquier otra cosa (v4.0, fail-closed):
+        // una herramienta sin definición fijada o con hash alterado nunca se ejecuta.
+        self.check_integrity(name)
+            .map_err(|e| anyhow::anyhow!("ToolIntegrity blocked '{}': {}", name, e))?;
         // PolicyEngine intercepts ALL tool calls before execution (Rule 8).
         let decision = self.policy_engine.check_tool(name, &args);
         if !decision.allowed {

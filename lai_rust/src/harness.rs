@@ -78,19 +78,36 @@ pub struct PlanStep {
 /// Task specification (Spec-Driven Development)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSpec {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub task_type: String,
     pub objective: String,
+    #[serde(default)]
     pub current_state: String,
+    #[serde(default)]
     pub problem: Option<String>,
+    #[serde(default)]
     pub scope: Vec<String>,
+    #[serde(default)]
     pub constraints: Vec<String>,
+    #[serde(default)]
     pub affected_files: Vec<String>,
+    #[serde(default)]
     pub dependencies: Vec<String>,
+    #[serde(default)]
     pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
     pub required_tests: Vec<String>,
+    #[serde(default)]
     pub risks: Vec<String>,
+    /// Niveles de verificación EN ALCANCE (v4.0): lo no listado se reporta
+    /// como gap declarado (SUCCESS_WITH_DECLARED_GAPS).
+    #[serde(default)]
+    pub verification_scope: Vec<String>,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub updated_at: String,
 }
 
@@ -139,6 +156,8 @@ pub struct ExecutionResult {
     pub duration_ms: u64,
     pub files_modified: Vec<String>,
     pub verification_results: Vec<VerificationResult>,
+    /// Veredicto acotado del VerificationEngine (v4.0).
+    pub verdict: crate::verifier::Verdict,
     pub summary: String,
     pub error: Option<String>,
 }
@@ -161,7 +180,8 @@ pub struct HarnessConfig {
     pub enable_checkpoints: bool,
     pub checkpoint_interval: Duration,
     pub checkpoint_dir: PathBuf,
-    pub policy_engine: PolicyEngine,
+    /// Configuración del PolicyEngine (incluye require_sandbox).
+    pub policy: crate::policy::PolicyConfig,
     /// Modo YOLO: auto-aprobar. NUNCA convierte un Deny en ejecución.
     pub auto_approve: bool,
     pub working_dir: PathBuf,
@@ -182,10 +202,18 @@ impl Default for HarnessConfig {
             enable_checkpoints: true,
             checkpoint_interval: Duration::from_secs(60),
             checkpoint_dir,
-            policy_engine: PolicyEngine::default(),
+            policy: crate::policy::PolicyConfig::default(),
             auto_approve: false,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
+    }
+}
+
+impl HarnessConfig {
+    /// Exige sandbox verificado para ejecutar comandos/código (fail-closed).
+    pub fn require_sandbox(mut self, require: bool) -> Self {
+        self.policy.require_sandbox = require;
+        self
     }
 }
 
@@ -195,6 +223,7 @@ pub struct ExecutionHarness {
     llm: LlmClient,
     tools: ToolRegistry,
     context_engine: ContextEngine,
+    policy: PolicyEngine,
     // Recovery state
     recovery_mode: bool,
     recovered_context: Option<ExecutionContext>,
@@ -206,12 +235,16 @@ impl ExecutionHarness {
         fs::create_dir_all(&config.checkpoint_dir)?;
         let tools = ToolRegistry::new();
         let context_engine = ContextEngine::new(config.working_dir.clone())?;
+        let mut policy_config = config.policy.clone();
+        policy_config.workspace_root = config.working_dir.clone();
+        let policy = PolicyEngine::new(policy_config);
 
         Ok(Self {
             config,
             llm,
             tools,
             context_engine,
+            policy,
             recovery_mode: false,
             recovered_context: None,
         })
@@ -232,6 +265,16 @@ impl ExecutionHarness {
         let _enter = span.enter();
 
         info!("Starting task: {} ({})", task_id, description);
+
+        // Sandbox preflight (v4.0): detectar al arrancar si el aislamiento
+        // puede aplicarse. Con require_sandbox=true el PolicyEngine falla
+        // cerrado si el preflight falla (nunca ejecuta sin aislamiento).
+        let sandbox_status = crate::sandbox::preflight();
+        if sandbox_status.available {
+            info!("Sandbox: {} ({})", sandbox_status.mechanism, sandbox_status.detail);
+        } else {
+            warn!("Sandbox NO disponible: {}", sandbox_status.detail);
+        }
 
         // Check for recovery
         if self.recovery_mode {
@@ -294,6 +337,7 @@ impl ExecutionHarness {
     async fn run_execution_loop(&mut self, ctx: &mut ExecutionContext) -> Result<ExecutionResult> {
         let mut verification_results = Vec::new();
         let mut files_modified = Vec::new();
+        let mut verdict = crate::verifier::Verdict::Blocked("sin verificación ejecutada".to_string());
 
         while ctx.iteration < ctx.max_iterations {
             ctx.iteration += 1;
@@ -301,7 +345,7 @@ impl ExecutionHarness {
 
             // Check for timeout
             if ctx.start_time.elapsed() > Duration::from_secs(3600) {
-                return Ok(self.finalize_result(ctx, false, "Task timeout".to_string(), verification_results, files_modified));
+                return Ok(self.finalize_result(ctx, false, "Task timeout".to_string(), verification_results, files_modified, verdict));
             }
 
             // EDIT phase
@@ -316,17 +360,23 @@ impl ExecutionHarness {
                 self.create_checkpoint(ctx, &format!("edit-iter-{}", ctx.iteration), "After edit phase").await?;
             }
 
-            // VERIFY phase (solo archivos modificados + tests requeridos + criterios)
+            // VERIFY phase (veredicto acotado v4.0: SUCCESS / GAPS / PARTIAL / BLOCKED)
             ctx.state = ExecutionState::Verify;
-            let verify_results = self.verify_phase(ctx, &files_modified).await?;
+            let (v, verify_results) = self.verify_phase(ctx, &files_modified).await?;
+            verdict = v;
             verification_results.extend(verify_results.clone());
 
-            // Check if all verifications passed
-            let all_passed = verify_results.iter().all(|v| v.passed);
+            // Check if the verdict allows success (SUCCESS o SUCCESS_WITH_DECLARED_GAPS)
+            let all_passed = verdict.is_success();
             if all_passed {
-                info!("All verifications passed!");
+                info!("Verdict: {} - verifications passed!", verdict.label());
                 ctx.state = ExecutionState::Completed;
-                return Ok(self.finalize_result(ctx, true, "All verifications passed".to_string(), verification_results, files_modified));
+                return Ok(self.finalize_result(ctx, true, format!("{}", verdict.label()), verification_results, files_modified, verdict));
+            }
+
+            if matches!(verdict, crate::verifier::Verdict::Blocked(_)) {
+                warn!("Verdict BLOCKED: {}", verdict.label());
+                return Ok(self.finalize_result(ctx, false, verdict.label(), verification_results, files_modified, verdict));
             }
 
             // REPAIR phase
@@ -335,7 +385,7 @@ impl ExecutionHarness {
 
             if !repair_result.progress_made {
                 warn!("No progress in repair phase, stopping");
-                return Ok(self.finalize_result(ctx, false, "No progress in repair".to_string(), verification_results, files_modified));
+                return Ok(self.finalize_result(ctx, false, "No progress in repair".to_string(), verification_results, files_modified, verdict));
             }
 
             // Checkpoint after repair
@@ -345,39 +395,19 @@ impl ExecutionHarness {
         }
 
         // Max iterations reached
-        Ok(self.finalize_result(ctx, false, "Max iterations reached".to_string(), verification_results, files_modified))
+        Ok(self.finalize_result(ctx, false, "Max iterations reached".to_string(), verification_results, files_modified, verdict))
     }
 
     /// Phase 1: INTAKE - Create task specification from description
+    /// (Spec-Driven Development, v4.0 Mejora 4: validación estructural con
+    /// reintentos y SPEC.md persistido como contrato de aceptación).
     async fn intake_phase(&self, task_id: &str, description: &str, task_type: &str) -> Result<TaskSpec> {
-        let prompt = format!(
-            r#"You are lai, an autonomous software engineering agent. Analyze this task and create a structured specification.
-
-Task Type: {}
-Description: {}
-
-Generate a JSON specification with these fields:
-- objective: Clear, concise objective
-- current_state: What you know about the current state
-- problem: The problem to solve (if any)
-- scope: List of areas/files likely affected
-- constraints: Technical/business constraints
-- affected_files: Specific files likely to be modified
-- dependencies: External dependencies
-- acceptance_criteria: Measurable criteria for success
-- required_tests: Tests that should pass
-- risks: Potential risks and side effects
-
-Return ONLY valid JSON."#,
-            task_type, description
-        );
-
-        let result = timeout(self.config.llm_timeout, self.llm.chat(&prompt, false, true)).await?;
-        if let Some(err) = result.error {
-            return Err(anyhow::anyhow!("LLM error in intake: {}", err));
+        let mut spec = crate::spec::generate_spec(&self.llm, description, task_type).await?;
+        spec.id = task_id.to_string();
+        match crate::spec::save_spec(&spec, &self.config.working_dir) {
+            Ok(path) => debug!("SPEC guardada: {:?}", path),
+            Err(e) => warn!("No se pudo guardar SPEC.md: {}", e),
         }
-
-        let spec: TaskSpec = self.parse_json_response(&result.content, task_id, task_type, description)?;
         Ok(spec)
     }
 
@@ -464,15 +494,25 @@ Return ONLY valid JSON array."#,
 
             info!("Executing step: {} - {}", step.id, step.description);
 
-            // Policy check for tool execution.
+            // Integridad + Policy check para la ejecución de herramientas.
             // Deny es INCONDICIONAL: auto_approve nunca lo convierte en ejecución.
+            // Fail-closed (v4.0): una herramienta sin definition_hash verificado
+            // nunca se ejecuta.
             if let Some(tool_name) = &step.tool {
+                if let Err(reason) = self.tools.check_integrity(tool_name) {
+                    record_policy_decision(&ctx.task_id, tool_name, false, &reason, "ToolIntegrity");
+                    warn!("Integrity check failed: {}", reason);
+                    ctx.plan[ctx.current_step].error = Some(format!("Integrity denied: {}", reason));
+                    ctx.current_step += 1;
+                    continue;
+                }
+
                 let operation = Operation::ToolCall {
                     tool: tool_name.clone(),
                     args: step.arguments.clone().unwrap_or_default(),
                 };
 
-                let decision = self.config.policy_engine.check(&operation, &ctx.task_id);
+                let decision = self.policy.check(&operation, &ctx.task_id);
                 record_policy_decision(&ctx.task_id, tool_name, decision.allowed, &decision.reason, &decision.policy);
 
                 if !decision.allowed {
@@ -563,70 +603,25 @@ Return ONLY valid JSON array."#,
         }))
     }
 
-    /// VERIFY phase - Run verification checks on modified files and requirements
-    async fn verify_phase(&mut self, ctx: &mut ExecutionContext, files_modified: &[String]) -> Result<Vec<VerificationResult>> {
+    /// VERIFY phase - VerificationEngine independiente (v4.0, Mejora 5).
+    /// La verificación es EXTERNA al agente editor: sintaxis, tests requeridos
+    /// y regresión contra baseline, con veredicto ACOTADO:
+    /// SUCCESS / SUCCESS_WITH_DECLARED_GAPS / PARTIALLY_VERIFIED / BLOCKED.
+    async fn verify_phase(&mut self, ctx: &mut ExecutionContext, files_modified: &[String]) -> Result<(crate::verifier::Verdict, Vec<VerificationResult>)> {
         info!("Running verification for task: {}", ctx.task_id);
-        let mut results = Vec::new();
+        let verifier = crate::verifier::TestPipelineVerifier::new(self.config.working_dir.clone());
+        let (mut verdict, mut results, _gaps) = verifier.verify(&ctx.task_spec, files_modified).await?;
 
-        // 1. Syntax check on modified Python files only (no full-repo scans)
-        for path in files_modified {
-            if path.ends_with(".py") {
-                let file = crate::repomap::FileInfo {
-                    path: path.clone(),
-                    language: "python".to_string(),
-                    size_bytes: 0,
-                    symbols: vec![],
-                    imports: vec![],
-                };
-                results.push(self.verify_python_file(&file).await?);
-            }
-        }
-
-        // 2. Run tests if specified
-        for test_spec in &ctx.task_spec.required_tests {
-            results.push(self.run_test_spec(test_spec).await?);
-        }
-
-        // 3. Custom verifiers from acceptance criteria
+        // Criterios de aceptación (LLM, no determinista): se añaden como evidencia.
         for criteria in &ctx.task_spec.acceptance_criteria {
             results.push(self.verify_criteria(criteria).await?);
         }
 
-        Ok(results)
-    }
-
-    /// Verify a Python file
-    async fn verify_python_file(&self, file: &crate::repomap::FileInfo) -> Result<VerificationResult> {
-        let output = tokio::process::Command::new("python3")
-            .args(["-m", "py_compile", &file.path])
-            .output()
-            .await?;
-
-        Ok(VerificationResult {
-            verifier: "py_compile".to_string(),
-            passed: output.status.success(),
-            details: if output.status.success() {
-                "Syntax OK".to_string()
-            } else {
-                String::from_utf8_lossy(&output.stderr).to_string()
-            },
-            artifacts: vec![file.path.clone()],
-        })
-    }
-
-    /// Run a test specification
-    async fn run_test_spec(&self, spec: &str) -> Result<VerificationResult> {
-        let output = tokio::process::Command::new("bash")
-            .args(["-c", spec])
-            .output()
-            .await?;
-
-        Ok(VerificationResult {
-            verifier: "test".to_string(),
-            passed: output.status.success(),
-            details: String::from_utf8_lossy(&output.stdout).to_string(),
-            artifacts: vec![],
-        })
+        // Si algún criterio falla, el veredicto no puede ser SUCCESS.
+        if results.iter().any(|r| !r.passed) && verdict.is_success() {
+            verdict = crate::verifier::Verdict::PartiallyVerified;
+        }
+        Ok((verdict, results))
     }
 
     /// Verify acceptance criteria
@@ -721,6 +716,7 @@ Provide a concrete fix as a tool call or code change. Return JSON with:
         summary: String,
         verification_results: Vec<VerificationResult>,
         files_modified: Vec<String>,
+        verdict: crate::verifier::Verdict,
     ) -> ExecutionResult {
         ExecutionResult {
             task_id: ctx.task_id.clone(),
@@ -731,6 +727,7 @@ Provide a concrete fix as a tool call or code change. Return JSON with:
             duration_ms: ctx.start_time.elapsed().as_millis() as u64,
             files_modified,
             verification_results,
+            verdict,
             summary: summary.clone(),
             error: if success { None } else { Some(summary) },
         }

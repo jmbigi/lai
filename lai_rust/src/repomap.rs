@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -28,6 +29,9 @@ pub struct FileInfo {
     pub size_bytes: u64,
     pub symbols: Vec<SymbolInfo>,
     pub imports: Vec<String>,
+    /// Hash SHA-256 del contenido (para indexación incremental).
+    #[serde(default)]
+    pub hash: String,
 }
 
 /// Mapa estructural del repositorio.
@@ -101,6 +105,53 @@ impl RepoMap {
         }
         out
     }
+
+    /// Actualización incremental (v4.0, Fase 2): reescanea `root` y actualiza
+    /// solo los archivos cuyo hash cambió; elimina los borrados. No reconstruye
+    /// todo el grafo desde cero cuando nada cambió.
+    pub fn update(&mut self, root: &Path) -> Result<usize> {
+        let fresh = walk_files(root);
+        let fresh_by_path: std::collections::HashMap<&str, &FileInfo> =
+            fresh.iter().map(|f| (f.path.as_str(), f)).collect();
+
+        let mut changed = 0;
+        // Actualizar archivos existentes y detectar cambios.
+        for file in &mut self.files {
+            match fresh_by_path.get(file.path.as_str()) {
+                Some(new_file) => {
+                    if new_file.hash != file.hash {
+                        file.symbols = new_file.symbols.clone();
+                        file.imports = new_file.imports.clone();
+                        file.size_bytes = new_file.size_bytes;
+                        file.hash = new_file.hash.clone();
+                        changed += 1;
+                    }
+                }
+                None => {
+                    // Archivo eliminado: se marca para purga.
+                    file.symbols.clear();
+                    file.imports.clear();
+                    file.hash.clear();
+                    file.size_bytes = 0;
+                    changed += 1;
+                }
+            }
+        }
+        // Agregar archivos nuevos.
+        for new_file in &fresh {
+            if !self.files.iter().any(|f| f.path == new_file.path) {
+                self.files.push(new_file.clone());
+                changed += 1;
+            }
+        }
+        // Purga de eliminados (hash vacío tras la marca).
+        self.files.retain(|f| !f.hash.is_empty());
+
+        self.root = root.to_path_buf();
+        self.files.sort_by(|a, b| a.path.cmp(&b.path));
+        self.edges = build_edges(&self.files);
+        Ok(changed)
+    }
 }
 
 const SKIP_DIRS: &[&str] = &[
@@ -112,8 +163,48 @@ const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
 
 /// Construye el mapa estructural del repositorio en `root`.
 pub fn build_repo_map(root: &Path) -> Result<RepoMap> {
-    let mut files = Vec::new();
+    let files = walk_files(root);
+    let edges = build_edges(&files);
+    Ok(RepoMap { root: root.to_path_buf(), files, edges })
+}
 
+/// Hash SHA-256 del contenido de un archivo.
+pub fn file_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn parse_file_info(root: &Path, path: &Path) -> Option<FileInfo> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_SIZE {
+        return None;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let language = match ext {
+        "rs" => "rust",
+        "py" => "python",
+        _ => return None,
+    };
+    let code = std::fs::read_to_string(path).ok()?;
+    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let (symbols, imports) = match language {
+        "rust" => (parse_rust(&code), parse_imports(&code, &["use ", "extern crate "])),
+        _ => (parse_python(&code), parse_imports(&code, &["import ", "from "])),
+    };
+    Some(FileInfo {
+        path: rel,
+        language: language.to_string(),
+        size_bytes: meta.len(),
+        symbols,
+        imports,
+        hash: file_hash(&code),
+    })
+}
+
+/// Walk helper: file paths + parsed info for every indexable file.
+fn walk_files(root: &Path) -> Vec<FileInfo> {
+    let mut files = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -126,49 +217,12 @@ pub fn build_repo_map(root: &Path) -> Result<RepoMap> {
             Ok(e) => e,
             Err(_) => continue,
         };
-        if !entry.file_type().is_file() {
-            continue;
+        if let Some(info) = parse_file_info(root, entry.path()) {
+            files.push(info);
         }
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if meta.len() > MAX_FILE_SIZE {
-            continue;
-        }
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let language = match ext {
-            "rs" => "rust",
-            "py" => "python",
-            _ => continue,
-        };
-        let code = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let (symbols, imports) = match language {
-            "rust" => (parse_rust(&code), parse_imports(&code, &["use ", "extern crate "])),
-            _ => (parse_python(&code), parse_imports(&code, &["import ", "from "])),
-        };
-        files.push(FileInfo {
-            path: rel,
-            language: language.to_string(),
-            size_bytes: meta.len(),
-            symbols,
-            imports,
-        });
     }
-
     files.sort_by(|a, b| a.path.cmp(&b.path));
-
-    let edges = build_edges(&files);
-    Ok(RepoMap { root: root.to_path_buf(), files, edges })
+    files
 }
 
 fn build_edges(files: &[FileInfo]) -> Vec<(String, String)> {
@@ -352,8 +406,8 @@ mod tests {
         let map = RepoMap {
             root: PathBuf::from("."),
             files: vec![
-                FileInfo { path: "src/main.rs".into(), language: "rust".into(), size_bytes: 1, symbols: vec![], imports: vec![] },
-                FileInfo { path: "src/lib.py".into(), language: "python".into(), size_bytes: 1, symbols: vec![], imports: vec![] },
+                FileInfo { path: "src/main.rs".into(), language: "rust".into(), size_bytes: 1, symbols: vec![], imports: vec![], hash: "h1".into() },
+                FileInfo { path: "src/lib.py".into(), language: "python".into(), size_bytes: 1, symbols: vec![], imports: vec![], hash: "h2".into() },
             ],
             edges: vec![],
         };
@@ -365,9 +419,41 @@ mod tests {
     fn test_summary() {
         let map = RepoMap {
             root: PathBuf::from("."),
-            files: vec![FileInfo { path: "a.rs".into(), language: "rust".into(), size_bytes: 1, symbols: vec![], imports: vec![] }],
+            files: vec![FileInfo { path: "a.rs".into(), language: "rust".into(), size_bytes: 1, symbols: vec![], imports: vec![], hash: "h".into() }],
             edges: vec![],
         };
         assert!(map.summary().contains("1 archivos"));
+    }
+
+    #[test]
+    fn test_incremental_update() {
+        let dir = std::env::temp_dir().join(format!("lai-repomap-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.py"), "def foo():\n    return 1\n").unwrap();
+
+        let mut map = build_repo_map(&dir).unwrap();
+        assert_eq!(map.files.len(), 1);
+        assert!(map.find_symbols("foo").len() == 1);
+
+        // Modificar el archivo: el hash cambia y los símbolos se actualizan.
+        std::fs::write(dir.join("a.py"), "def bar(x):\n    return x\n").unwrap();
+        let changed = map.update(&dir).unwrap();
+        assert_eq!(changed, 1);
+        assert!(map.find_symbols("foo").is_empty(), "el símbolo eliminado no debe aparecer");
+        assert_eq!(map.find_symbols("bar").len(), 1);
+
+        // Eliminar el archivo: desaparece del índice.
+        std::fs::remove_file(dir.join("a.py")).unwrap();
+        let changed = map.update(&dir).unwrap();
+        assert_eq!(changed, 1);
+        assert!(map.files.is_empty());
+
+        // Sin cambios: update incremental no toca nada.
+        std::fs::write(dir.join("b.py"), "x = 1\n").unwrap();
+        map.update(&dir).unwrap();
+        let changed = map.update(&dir).unwrap();
+        assert_eq!(changed, 0, "sin cambios el índice no debe modificarse");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

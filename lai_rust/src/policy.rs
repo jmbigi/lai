@@ -24,10 +24,15 @@ pub struct PolicyConfig {
     pub extra_allowed_commands: Vec<String>,
     /// Additional protected paths.
     pub extra_protected_paths: Vec<String>,
-    /// Whether to enable network egress blocking.
-    pub block_network_egress: bool,
     /// Whether to enable secret detection.
     pub detect_secrets: bool,
+    /// Whether to enable network egress blocking.
+    pub block_network_egress: bool,
+    /// Require a verified sandbox (bubblewrap) to execute commands/code.
+    /// Fail-closed: if require_sandbox is true and the preflight fails,
+    /// CommandExec / run_command / run_python are DENIED (never executed
+    /// without isolation).
+    pub require_sandbox: bool,
     /// Workspace root (all paths must stay within).
     pub workspace_root: PathBuf,
 }
@@ -44,6 +49,7 @@ impl Default for PolicyConfig {
             extra_protected_paths: vec![],
             block_network_egress: true,
             detect_secrets: true,
+            require_sandbox: false,
             workspace_root: cwd,
         }
     }
@@ -202,6 +208,19 @@ impl PolicyEngine {
     }
 
     fn check_command(&self, command: &str) -> PolicyDecision {
+        // Fail-closed: si se exige sandbox y el preflight falla, denegar.
+        if self.config.require_sandbox {
+            let st = crate::sandbox::preflight();
+            if !st.available {
+                return PolicyDecision {
+                    allowed: false,
+                    reason: format!("Sandbox requerido pero no disponible: {}", st.detail),
+                    policy: "SandboxUnavailable".into(),
+                    risk_level: RiskLevel::Critical,
+                };
+            }
+        }
+
         let base_cmd = command.split_whitespace().next().unwrap_or("");
         let base_name = Path::new(base_cmd)
             .file_name()
@@ -308,6 +327,17 @@ impl PolicyEngine {
                 self.check_command(command)
             }
             "run_python" => {
+                if self.config.require_sandbox {
+                    let st = crate::sandbox::preflight();
+                    if !st.available {
+                        return PolicyDecision {
+                            allowed: false,
+                            reason: format!("Sandbox requerido pero no disponible: {}", st.detail),
+                            policy: "SandboxUnavailable".into(),
+                            risk_level: RiskLevel::Critical,
+                        };
+                    }
+                }
                 let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
                 if self.config.detect_secrets && self.contains_secrets(code) {
                     return PolicyDecision {

@@ -365,11 +365,19 @@ Correspondencia v4.0 ↔ código (rama `feat/fase-0-1-harness`):
 | Componente v4.0 | Estado |
 |---|---|
 | ExecutionEngine (FSM) | `harness.rs` — INTAKE/INSPECT/PLAN/LOCATE/EDIT/VERIFY/REPAIR/REPORT, límites de iteraciones, checkpoints, recuperación |
-| PolicyEngine fail-closed | `policy.rs` (T1) — allowlist, frontera de workspace, rutas protegidas, detección de secretos en `write_file`/`apply_patch` (test dedicado) |
-| RepoMap | `repomap.rs` — índice AST (syn) + heurístico Python, `summary()`, `find_files`, `find_symbols` |
+| PolicyEngine fail-closed | `policy.rs` — allowlist, frontera de workspace, rutas protegidas, secretos en `write_file`/`apply_patch`, `require_sandbox` con denegación incondicional |
+| Tool integrity (definition_hash) | `integrity.rs` + `tools.rs` — hash SHA-256 de la definición completa fijado al registrar; verificación **antes de cada invocación** (fail-closed); `verify_all()` |
+| SandboxManager + preflight | `sandbox.rs` — sonda real de bubblewrap (namespaces PID+net); Ubuntu 24.04+ con AppArmor restringido se detecta y el PolicyEngine **falla cerrado** (`lai harness --sandbox`) |
+| RepoMap | `repomap.rs` — índice AST (syn) + heurístico Python, `summary()`, `find_files`, `find_symbols`, **actualización incremental** (`update()` por hash de contenido; símbolos eliminados no reaparecen) |
 | ContextBuilder | `context.rs` — `ContextEngine` con presupuesto de tokens y truncamiento registrado |
-| Verificación acotada | `harness.rs::verify_phase` — solo archivos modificados + `required_tests` + criterios; ningún SUCCESS sin verificación superada |
+| Planner (Spec-Driven) | `spec.rs` — `generate_spec` con validación estructural y 2 reintentos, `verification_scope` explícito, `SPEC.md` persistido en `.lai/specs/` |
+| VerificationEngine | `verifier.rs` — niveles 1-10, veredicto acotado (`SUCCESS` / `SUCCESS_WITH_DECLARED_GAPS` / `PARTIALLY_VERIFIED` / `BLOCKED`), baseline y detección de regresiones, clasificación de fallos (código/entorno/dependencia/config) |
+| MemoryStore | `memory.rs` — SQLite + FTS5 local, memoria semántica/episódica, procedencia y confianza, **invalidación por cambio de definition_hash** (`invalidate_by_tool_hash`), destilación de trayectorias |
+| MCP (interoperabilidad) | `mcp.rs` — servidor stdio JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`) sobre el ToolRegistry; toda invocación pasa integridad + PolicyEngine |
+| BenchmarkEngine | `bench.rs` + `benchmarks/tasks/*.json` + `lai bench` — métricas: resolución, verificación efectiva, integridad (100 % por construcción), latencia, iteraciones; resultados versionados en `.benchmarks/results/` |
 | Observabilidad | `telemetry.rs` — eventos `TASK/LLM/TOOL/ERROR/CKPT/POLICY/CTX/REPAIR` en consola y JSONL |
-| Deny incondicional | `harness.rs::edit_phase` — `auto_approve` nunca convierte un Deny en ejecución |
+| Deny incondicional | `harness.rs::edit_phase` — integridad + PolicyEngine; `auto_approve` nunca convierte un Deny en ejecución |
 
-Pendiente para fases posteriores (según hoja de ruta v4.0): integrity.py/`definition_hash` (Fase 1, precondición de ejecución), sandbox_preflight (AppArmor/bwrap), veredicto `SUCCESS_WITH_DECLARED_GAPS`, memoria persistente con invalidación por hash, `lai bench`.
+**Estado del build:** `cargo check` 0 errores · `cargo test` 45/45 en verde · binario valida `harness`/`bench`/`mcp`.
+
+Pendiente para fases posteriores (según hoja de ruta v4.0): revisión adversarial (Fase 5), aislamiento por tarea con worktrees + concurrencia (transversal 4.1/4.4), Change Engine transaccional completo (transversal 4.2), suite de benchmark ampliada y comparativas (Fase 6), auto-mejora controlada.
