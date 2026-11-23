@@ -41,9 +41,9 @@ impl Services {
     }
 
     pub async fn check_all(&mut self) {
-        self.check_service(&mut self.llama_cpp).await;
-        self.check_service(&mut self.gateway).await;
-        self.check_service(&mut self.ollama).await;
+        self.llama_cpp.running = self.check_service(&self.llama_cpp).await;
+        self.gateway.running = self.check_service(&self.gateway).await;
+        self.ollama.running = self.check_service(&self.ollama).await;
     }
 
     async fn check_service(&self, service: &ServiceInfo) -> bool {

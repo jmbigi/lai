@@ -6,11 +6,27 @@ use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,60 +65,355 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Delta {
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChoice {
+    #[serde(default)]
+    pub delta: Delta,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChunk {
+    pub choices: Vec<StreamChoice>,
+}
+
+/// Result of a chat call.
 #[derive(Debug, Clone)]
+pub struct ChatResult {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub finish_reason: Option<String>,
+    pub error: Option<String>,
+}
+
+/// LLM client that talks to a local OpenAI-compatible endpoint.
 pub struct LlmClient {
-    base_url: String,
-    model: String,
-    client: reqwest::Client,
+    pub base_url: String,
+    pub model: String,
+    pub client: reqwest::Client,
+    pub allow_remote: bool,
+    pub temperature: f64,
+    pub max_tokens: i32,
+    pub thinking: bool,
 }
 
 impl LlmClient {
-    pub fn new(base_url: String, model: String) -> Self {
+    pub fn new(base_url: &str, model: &str, allow_remote: bool) -> Self {
         Self {
-            base_url,
-            model,
-            client: reqwest::Client::new(),
+            base_url: base_url.to_string(),
+            model: model.to_string(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(300))
+                .build()
+                .expect("failed to build HTTP client"),
+            allow_remote,
+            temperature: 0.7,
+            max_tokens: 4096,
+            thinking: true,
         }
     }
 
-    pub async fn chat(&self, prompt: &str) -> Result<String> {
+    /// Rule 4 guard: only local endpoints allowed unless --allow-remote.
+    pub fn is_local_url(url: &str) -> bool {
+        let host = url
+            .strip_prefix("http://")
+            .or_else(|| url.strip_prefix("https://"))
+            .unwrap_or(url)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+
+        let local_hosts = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
+        if local_hosts.contains(&host.as_str()) || host.ends_with(".local") {
+            return true;
+        }
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            match ip {
+                IpAddr::V4(v4) => return v4.is_loopback() || v4.is_private(),
+                IpAddr::V6(v6) => return v6.is_loopback() || v6.is_unicast_link_local(),
+            }
+        }
+        false
+    }
+
+    pub async fn chat(&self, prompt: &str, stream: bool, thinking: bool) -> ChatResult {
+        if !Self::is_local_url(&self.base_url) && !self.allow_remote {
+            return ChatResult {
+                content: format!(
+                    "Error: LAI requires a local model endpoint (Rule 4). Refusing non-local base_url: {}",
+                    self.base_url
+                ),
+                tool_calls: vec![],
+                finish_reason: None,
+                error: Some("non-local endpoint".to_string()),
+            };
+        }
+
+        let mut full_prompt = prompt.to_string();
+        if thinking {
+            full_prompt = format!(
+                "<thinking>\n{}\n</thinking>\n\nProvide the solution.",
+                prompt
+            );
+        }
+
         let payload = ChatRequest {
             model: self.model.clone(),
             messages: vec![Message {
-                role: "user".to_string(),
-                content: prompt.to_string(),
+                role: "user".into(),
+                content: full_prompt,
             }],
             tools: None,
             tool_choice: None,
-            stream: Some(false),
-            temperature: Some(0.7),
-            max_tokens: Some(4096),
+            stream: Some(stream),
+            temperature: Some(self.temperature),
+            max_tokens: Some(self.max_tokens),
             top_p: Some(0.95),
             top_k: Some(20),
             chat_template_kwargs: Some(HashMap::from([(
                 "enable_thinking".into(),
-                serde_json::Value::Bool(false),
+                serde_json::Value::Bool(thinking),
             )])),
         };
 
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
+        let url = format!("{}/chat/completions", self.base_url);
+
+        match self.client
+            .post(&url)
             .json(&payload)
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    return ChatResult {
+                        content: String::new(),
+                        tool_calls: vec![],
+                        finish_reason: None,
+                        error: Some(format!("HTTP {}: {}", status, text)),
+                    };
+                }
+                match resp.json::<ChatResponse>().await {
+                    Ok(data) => {
+                        let choice = data.choices.first().cloned();
+                        match choice {
+                            Some(c) => ChatResult {
+                                content: c.message.content,
+                                tool_calls: vec![],
+                                finish_reason: c.finish_reason,
+                                error: None,
+                            },
+                            None => ChatResult {
+                                content: String::new(),
+                                tool_calls: vec![],
+                                finish_reason: None,
+                                error: Some("No choices in response".to_string()),
+                            },
+                        }
+                    }
+                    Err(e) => ChatResult {
+                        content: String::new(),
+                        tool_calls: vec![],
+                        finish_reason: None,
+                        error: Some(format!("JSON parse error: {}", e)),
+                    },
+                }
+            }
+            Err(e) => ChatResult {
+                content: String::new(),
+                tool_calls: vec![],
+                finish_reason: None,
+                error: Some(format!("Request error: {}", e)),
+            },
+        }
+    }
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {}: {}", status, text);
+    pub async fn chat_messages(
+        &self,
+        messages: Vec<Message>,
+        _tools: Option<Vec<serde_json::Value>>,
+        stream: bool,
+        thinking: bool,
+    ) -> ChatResult {
+        if !Self::is_local_url(&self.base_url) && !self.allow_remote {
+            return ChatResult {
+                content: format!(
+                    "Error: LAI requires a local model endpoint (Rule 4). Refusing non-local base_url: {}",
+                    self.base_url
+                ),
+                tool_calls: vec![],
+                finish_reason: None,
+                error: Some("non-local endpoint".to_string()),
+            };
         }
 
-        let data: ChatResponse = resp.json().await?;
-        let choice = data.choices.first().cloned().ok_or_else(|| {
-            anyhow::anyhow!("No choices in response")
-        })?;
+        let mut processed_messages = messages;
+        if thinking && !processed_messages.is_empty() {
+            if let Some(first) = processed_messages.iter_mut().find(|m| m.role == "user") {
+                first.content = format!(
+                    "<thinking>\n{}\n</thinking>\n\nProvide the solution.",
+                    first.content
+                );
+            }
+        }
 
-        Ok(choice.message.content)
+        let payload = ChatRequest {
+            model: self.model.clone(),
+            messages: processed_messages,
+            tools: None,
+            tool_choice: None,
+            stream: Some(stream),
+            temperature: Some(self.temperature),
+            max_tokens: Some(self.max_tokens),
+            top_p: Some(0.95),
+            top_k: Some(20),
+            chat_template_kwargs: Some(HashMap::from([(
+                "enable_thinking".into(),
+                serde_json::Value::Bool(thinking),
+            )])),
+        };
+
+        let url = format!("{}/chat/completions", self.base_url);
+
+        match self.client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    return ChatResult {
+                        content: String::new(),
+                        tool_calls: vec![],
+                        finish_reason: None,
+                        error: Some(format!("HTTP {}: {}", status, text)),
+                    };
+                }
+                match resp.json::<ChatResponse>().await {
+                    Ok(data) => {
+                        let choice = data.choices.first().cloned();
+                        match choice {
+                            Some(c) => ChatResult {
+                                content: c.message.content,
+                                tool_calls: vec![],
+                                finish_reason: c.finish_reason,
+                                error: None,
+                            },
+                            None => ChatResult {
+                                content: String::new(),
+                                tool_calls: vec![],
+                                finish_reason: None,
+                                error: Some("No choices in response".to_string()),
+                            },
+                        }
+                    }
+                    Err(e) => ChatResult {
+                        content: String::new(),
+                        tool_calls: vec![],
+                        finish_reason: None,
+                        error: Some(format!("JSON parse error: {}", e)),
+                    },
+                }
+            }
+            Err(e) => ChatResult {
+                content: String::new(),
+                tool_calls: vec![],
+                finish_reason: None,
+                error: Some(format!("Request error: {}", e)),
+            },
+        }
+    }
+
+    async fn chat_stream(&self, _url: &str, _payload: &ChatRequest) -> ChatResult {
+        ChatResult {
+            content: String::new(),
+            tool_calls: vec![],
+            finish_reason: None,
+            error: Some("Streaming not yet implemented".to_string()),
+        }
+    }
+
+    /// Extract code from response (strip markdown fences).
+    pub fn extract_code(response: &str) -> String {
+        let text = response.trim();
+        if text.starts_with("```") {
+            let mut lines: Vec<&str> = text.lines().collect();
+            if lines.first().map_or(false, |l| l.starts_with("```")) {
+                lines.remove(0);
+            }
+            if lines.last().map_or(false, |l| l.trim() == "```") {
+                lines.pop();
+            }
+            return lines.join("\n").trim().to_string();
+        }
+        text.to_string()
+    }
+
+    /// Validate Python code syntax.
+    pub fn validate_code(code: &str) -> Result<(), String> {
+        if code.trim().is_empty() {
+            return Err("Empty code".to_string());
+        }
+        use std::process::Command;
+        use std::process::Stdio;
+        let child = Command::new("python3")
+            .arg("-c")
+            .arg(format!("import ast; ast.parse({:?})", code))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn error: {}", e))?;
+        let output = child.wait_with_output().map_err(|e| format!("wait error: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let err = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Syntax error: {}", err))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_code() {
+        let input = "Here is code:\n```python\nprint('hello')\n```\nDone.";
+        let result = LlmClient::extract_code(input);
+        assert_eq!(result, "print('hello')");
+    }
+
+    #[test]
+    fn test_validate_code() {
+        assert!(LlmClient::validate_code("print('hello')").is_ok());
+        assert!(LlmClient::validate_code("").is_err());
+    }
+
+    #[test]
+    fn test_is_local_url() {
+        assert!(LlmClient::is_local_url("http://localhost:8080/v1"));
+        assert!(LlmClient::is_local_url("http://127.0.0.1:8080/v1"));
+        assert!(!LlmClient::is_local_url("https://api.openai.com/v1"));
     }
 }
