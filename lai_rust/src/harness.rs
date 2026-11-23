@@ -129,6 +129,8 @@ pub struct ExecutionContext {
     pub start_time: Instant,
     pub last_checkpoint: Option<Instant>,
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Registro de acciones para la trayectoria (v4.0, Fase 6).
+    pub actions: Vec<crate::trajectory::TrajectoryAction>,
 }
 
 /// A checkpoint for recovery
@@ -143,6 +145,10 @@ pub struct Checkpoint {
     pub files_modified: Vec<String>,
     pub context_snapshot: serde_json::Value,
     pub plan_snapshot: Vec<PlanStep>,
+    /// Estado del RepoMap en el momento del checkpoint (v4.0: el checkpoint
+    /// debe incluir el estado del índice para poder comparar y recuperarse).
+    #[serde(default)]
+    pub repo_map_snapshot: serde_json::Value,
 }
 
 /// Result of a task execution
@@ -310,6 +316,7 @@ impl ExecutionHarness {
             start_time: Instant::now(),
             last_checkpoint: Some(Instant::now()),
             metadata: HashMap::new(),
+            actions: Vec::new(),
         };
 
         // Main execution loop
@@ -318,6 +325,34 @@ impl ExecutionHarness {
         // Final checkpoint
         if self.config.enable_checkpoints {
             self.create_checkpoint(&ctx, "final", "Final state before completion").await?;
+        }
+
+        // Trayectoria v4.0 (Fase 6): registro auditable de la tarea completa
+        // (Task -> Plan -> Actions -> Verification -> Outcome).
+        {
+            let mut record = crate::trajectory::TrajectoryRecord::new(
+                &task_id,
+                &self.llm.model,
+                task_type,
+                description,
+            );
+            record.plan_steps = ctx.plan.len();
+            record.actions = ctx.actions.clone();
+            record.verification_levels_attempted = ctx.task_spec.verification_scope.clone();
+            record.verification_levels_passed = ctx
+                .metadata
+                .get("verification_levels_passed")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            record.verdict = result.verdict.label().to_string();
+            record.files_modified = result.files_modified.clone();
+            record.iterations = ctx.iteration as u32;
+            record.duration_ms = ctx.start_time.elapsed().as_millis() as u64;
+            record.outcome = result.summary.clone();
+            if let Err(e) = crate::trajectory::record_trajectory(&record) {
+                warn!("No se pudo registrar la trayectoria: {}", e);
+            }
         }
 
         end_task_span(&task_id, result.success, ctx.start_time.elapsed(), &result.summary);
@@ -579,7 +614,19 @@ Return ONLY valid JSON array."#,
             duration,
             success,
             result.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()),
+            self.tools.integrity.hash_of(tool_name),
         );
+
+        // Trayectoria v4.0 (Fase 6): la acción queda registrada con su
+        // definition_hash para análisis de auto-mejora posterior.
+        ctx.actions.push(crate::trajectory::TrajectoryAction {
+            phase: format!("{:?}", step.phase),
+            tool: Some(tool_name.clone()),
+            tool_definition_hash: self.tools.integrity.hash_of(tool_name).map(String::from),
+            success,
+            duration_ms: duration.as_millis() as u64,
+            error: result.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()),
+        });
 
         Ok(result)
     }
@@ -621,6 +668,43 @@ Return ONLY valid JSON array."#,
         if results.iter().any(|r| !r.passed) && verdict.is_success() {
             verdict = crate::verifier::Verdict::PartiallyVerified;
         }
+
+        // Observabilidad v4.0: niveles de verificación intentados/superados.
+        {
+            let attempted = ctx.task_spec.verification_scope.clone();
+            let passed: Vec<String> = results
+                .iter()
+                .filter(|r| r.passed)
+                .map(|r| {
+                    if r.verifier.starts_with("py_compile") {
+                        "syntax".to_string()
+                    } else if r.verifier.starts_with("test:") {
+                        "unit_tests".to_string()
+                    } else if r.verifier.starts_with("criteria") {
+                        "acceptance_criteria".to_string()
+                    } else {
+                        r.verifier.clone()
+                    }
+                })
+                .collect();
+            let failures: Vec<String> = results
+                .iter()
+                .filter(|r| !r.passed)
+                .map(|r| r.details.clone())
+                .collect();
+            ctx.metadata.insert(
+                "verification_levels_passed".to_string(),
+                serde_json::to_value(&passed).unwrap_or_default(),
+            );
+            crate::telemetry::record_verification(
+                &ctx.task_id,
+                &verdict.label(),
+                attempted,
+                passed,
+                failures,
+            );
+        }
+
         Ok((verdict, results))
     }
 
@@ -745,6 +829,7 @@ Provide a concrete fix as a tool call or code change. Return JSON with:
             files_modified: ctx.task_spec.affected_files.clone(),
             context_snapshot: self.context_engine.snapshot().await?,
             plan_snapshot: ctx.plan.clone(),
+            repo_map_snapshot: self.context_engine.repo_map_snapshot(),
         };
 
         let path = self.config.checkpoint_dir.join(format!("{}-{}.json", ctx.task_id, checkpoint_id));

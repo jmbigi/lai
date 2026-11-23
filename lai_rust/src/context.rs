@@ -69,6 +69,28 @@ impl ContextEngine {
         Ok(())
     }
 
+    /// Snapshot JSON del RepoMap para checkpoints (v4.0: el checkpoint debe
+    /// incluir el estado del índice para poder comparar y recuperarse).
+    pub fn repo_map_snapshot(&self) -> serde_json::Value {
+        let map_guard = self.inner.repo_map.read().unwrap();
+        match map_guard.as_ref() {
+            Some(map) => serde_json::json!({
+                "indexed": true,
+                "root": map.root.to_string_lossy(),
+                "summary": map.summary(),
+                "files": map.files.iter().map(|f| serde_json::json!({
+                    "path": f.path,
+                    "language": f.language,
+                    "hash": f.hash,
+                    "size_bytes": f.size_bytes,
+                    "symbols": f.symbols.iter().map(|s| format!("{}:{}", s.kind, s.name)).collect::<Vec<_>>(),
+                    "imports": f.imports,
+                })).collect::<Vec<_>>(),
+            }),
+            None => serde_json::json!({ "indexed": false }),
+        }
+    }
+
     /// Resumen compacto del contexto para prompts de planificación.
     pub fn summary(&self) -> String {
         let st = self.inner.state.read().unwrap();

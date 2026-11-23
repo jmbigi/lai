@@ -19,6 +19,7 @@ mod spec;
 mod memory;
 mod bench;
 mod mcp;
+mod trajectory;
 
 use clap::Parser;
 
@@ -73,6 +74,16 @@ enum Commands {
         tasks: String,
         #[arg(long, default_value = ".benchmarks/results", help = "Output directory")]
         out: String,
+        /// Compare two benchmark result files and show the delta table
+        #[arg(long, help = "Path to baseline result file")]
+        compare_with: Option<String>,
+    },
+    /// Recover execution state: list or show checkpoints of a task
+    Recover {
+        #[arg(long, help = "Task id (task-*-xxxxxxxx); if omitted, list all tasks")]
+        task: Option<String>,
+        #[arg(long, default_value = "/tmp/lai-checkpoints", help = "Checkpoint directory")]
+        checkpoints: String,
     },
     /// Start MCP server (stdio JSON-RPC) exposing lai tools
     Mcp,
@@ -119,8 +130,11 @@ async fn main() {
         Some(Commands::Harness { task, yolo, sandbox }) => {
             commands::cmd_harness(&task, yolo, sandbox, &cli.model, &cli.base_url, cli.allow_remote).await;
         }
-        Some(Commands::Bench { tasks, out }) => {
-            commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote).await;
+        Some(Commands::Bench { tasks, out, compare_with }) => {
+            commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote, compare_with.as_deref()).await;
+        }
+        Some(Commands::Recover { task, checkpoints }) => {
+            commands::cmd_recover(task.as_deref(), &checkpoints).await;
         }
         Some(Commands::Mcp) => {
             commands::cmd_mcp().await;

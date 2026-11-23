@@ -1377,7 +1377,40 @@ pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, model: &str, bas
 }
 
 /// lai bench: ejecuta la suite interna y emite métricas versionadas.
-pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &str, allow_remote: bool) {
+pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &str, allow_remote: bool, compare_with: Option<&str>) {
+    // Modo comparativo: contrasta dos ficheros de resultados ya existentes.
+    if let Some(baseline_path) = compare_with {
+        let load = |p: &str| -> crate::bench::BenchSummary {
+            let content = std::fs::read_to_string(p).unwrap_or_else(|e| {
+                eprintln!("No se pudo leer '{}': {}", p, e);
+                std::process::exit(1);
+            });
+            serde_json::from_str(&content).unwrap_or_else(|e| {
+                eprintln!("JSON inválido en '{}': {}", p, e);
+                std::process::exit(1);
+            })
+        };
+        let baseline = load(baseline_path);
+        let out_path = std::path::PathBuf::from(out_dir);
+        let candidate_path = std::fs::read_dir(&out_path)
+            .ok()
+            .and_then(|mut entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+                    .max()
+            });
+        let candidate = candidate_path
+            .map(|p| load(p.to_str().unwrap()))
+            .unwrap_or_else(|| {
+                eprintln!("Sin resultados de benchmark en '{}'", out_dir);
+                std::process::exit(1);
+            });
+        crate::bench::print_compare(&crate::bench::compare_results(&baseline, &candidate));
+        return;
+    }
+
     let dir = std::path::PathBuf::from(tasks_dir);
     let tasks = match crate::bench::load_tasks(&dir) {
         Ok(t) => t,
@@ -1412,5 +1445,74 @@ pub async fn cmd_mcp() {
     if let Err(e) = crate::mcp::serve(registry).await {
         eprintln!("MCP server error: {}", e);
         std::process::exit(1);
+    }
+}
+
+/// lai recover: inspecciona los checkpoints de una tarea (estado recuperable).
+pub async fn cmd_recover(task: Option<&str>, checkpoints_dir: &str) {
+    let dir = std::path::PathBuf::from(checkpoints_dir);
+    if !dir.is_dir() {
+        eprintln!("Directorio de checkpoints no encontrado: {}", checkpoints_dir);
+        std::process::exit(1);
+    }
+
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| {
+            eprintln!("No se pudo leer '{}': {}", checkpoints_dir, e);
+            std::process::exit(1);
+        })
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map(|x| x == "json").unwrap_or(false)
+                && match task {
+                    Some(t) => p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with(&format!("{}-", t)))
+                        .unwrap_or(false),
+                    None => true,
+                }
+        })
+        .collect();
+
+    if files.is_empty() {
+        match task {
+            Some(t) => eprintln!("Sin checkpoints para la tarea '{}'", t),
+            None => eprintln!("Sin checkpoints en '{}'", checkpoints_dir),
+        }
+        std::process::exit(1);
+    }
+    files.sort();
+
+    println!("=== lai recover ===\nCheckpoints ({}):", files.len());
+    for path in &files {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        let cp: Result<crate::harness::Checkpoint, _> = serde_json::from_str(&content);
+        match cp {
+            Ok(cp) => println!(
+                "  [{}] {} | estado={:?} paso={} | {} archivos | {}",
+                name,
+                cp.timestamp,
+                cp.state,
+                cp.step_index,
+                cp.files_modified.len(),
+                cp.description
+            ),
+            Err(e) => println!("  [{}] (checkpoint ilegible: {})", name, e),
+        }
+    }
+
+    // Muestra el último checkpoint en detalle (estado recuperable).
+    if let Some(latest) = files.last() {
+        if let Ok(content) = std::fs::read_to_string(latest) {
+            if let Ok(cp) = serde_json::from_str::<crate::harness::Checkpoint>(&content) {
+                println!("\nÚltimo checkpoint: {}", latest.display());
+                println!("  plan: {} pasos, {} completados", cp.plan_snapshot.len(), cp.plan_snapshot.iter().filter(|s| s.completed).count());
+                println!("  repo_map indexado: {}", cp.repo_map_snapshot.get("indexed").and_then(|v| v.as_bool()).unwrap_or(false));
+                println!("  archivos modificados: {:?}", cp.files_modified);
+            }
+        }
     }
 }

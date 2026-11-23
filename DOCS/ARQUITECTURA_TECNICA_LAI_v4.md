@@ -375,9 +375,12 @@ Correspondencia v4.0 ↔ código (rama `feat/fase-0-1-harness`):
 | MemoryStore | `memory.rs` — SQLite + FTS5 local, memoria semántica/episódica, procedencia y confianza, **invalidación por cambio de definition_hash** (`invalidate_by_tool_hash`), destilación de trayectorias |
 | MCP (interoperabilidad) | `mcp.rs` — servidor stdio JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`) sobre el ToolRegistry; toda invocación pasa integridad + PolicyEngine |
 | BenchmarkEngine | `bench.rs` + `benchmarks/tasks/*.json` + `lai bench` — métricas: resolución, verificación efectiva, integridad (100 % por construcción), latencia, iteraciones; resultados versionados en `.benchmarks/results/` |
-| Observabilidad | `telemetry.rs` — eventos `TASK/LLM/TOOL/ERROR/CKPT/POLICY/CTX/REPAIR` en consola y JSONL |
+| Observabilidad | `telemetry.rs` — eventos `TASK/LLM/TOOL/ERROR/CKPT/POLICY/CTX/REPAIR` en consola y JSONL; `TOOL` incluye `tool_definition_hash`; `CKPT` incluye `verification_levels_attempted/passed` y `failures` |
+| Trayectorias (auto-mejora) | `trajectory.rs` — registro JSONL por tarea (Task → Plan → Actions con definition_hash → Verification → Outcome) en `.lai/trajectories/`; `TrajectoryStats` agrega success_rate, duración media, verificación efectiva y tasa de fallo de herramientas |
+| Recuperación | `lai recover [--task <id>]` — lista checkpoints (`<task>-<cp>.json`) con estado/paso/archivos y muestra el último en detalle (plan, repo_map, archivos modificados); los checkpoints incluyen el estado del RepoMap |
+| Comparativa de benchmarks | `lai bench --compare-with <baseline.json>` — tabla de deltas (resueltas, verificación efectiva, duración) con marcas REGRESION/MEJORA por tarea |
 | Deny incondicional | `harness.rs::edit_phase` — integridad + PolicyEngine; `auto_approve` nunca convierte un Deny en ejecución |
 
-**Estado del build:** `cargo check` 0 errores · `cargo test` 45/45 en verde · binario valida `harness`/`bench`/`mcp`.
+**Estado del build:** `cargo check` 0 errores · `cargo test` 49/49 en verde · binario valida `harness`/`bench`/`mcp`/`recover`.
 
 Pendiente para fases posteriores (según hoja de ruta v4.0): revisión adversarial (Fase 5), aislamiento por tarea con worktrees + concurrencia (transversal 4.1/4.4), Change Engine transaccional completo (transversal 4.2), suite de benchmark ampliada y comparativas (Fase 6), auto-mejora controlada.

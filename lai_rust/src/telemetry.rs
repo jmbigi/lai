@@ -185,6 +185,7 @@ pub fn end_task_span(task_id: &str, success: bool, duration: std::time::Duration
 }
 
 /// Registra una llamada a herramienta.
+#[allow(clippy::too_many_arguments)]
 pub fn record_tool_call(
     task_id: &str,
     tool: &str,
@@ -193,16 +194,18 @@ pub fn record_tool_call(
     duration: std::time::Duration,
     success: bool,
     error: Option<String>,
+    definition_hash: Option<&str>,
 ) {
     let mut event = base_event(
         TelemetryEventKind::ToolCall,
         task_id,
-        format!("tool={} ok={} err={:?}", tool, success, error),
+        format!("tool={} ok={} hash={:?} err={:?}", tool, success, definition_hash, error),
     );
     event.success = Some(success);
     event.duration_ms = Some(duration.as_millis() as u64);
     event.data = serde_json::json!({
         "tool": tool,
+        "definition_hash": definition_hash,
         "args": args,
         "result": result,
         "error": error,
@@ -245,6 +248,30 @@ pub fn record_error(task_id: &str, context: &str, error: &str) {
     );
     event.success = Some(false);
     record_event(TelemetryEventKind::Error, event);
+}
+
+/// Registra la verificación de un resultado: qué niveles se intentaron
+/// y cuáles se superaron (v4.0, transversal 4.3).
+pub fn record_verification(
+    task_id: &str,
+    verdict: &str,
+    levels_attempted: Vec<String>,
+    levels_passed: Vec<String>,
+    failures: Vec<String>,
+) {
+    let mut event = base_event(
+        TelemetryEventKind::Checkpoint,
+        task_id,
+        format!("verdict={} attempted={:?} passed={:?}", verdict, levels_attempted, levels_passed),
+    );
+    event.success = Some(verdict == "SUCCESS" || verdict == "SUCCESS_WITH_DECLARED_GAPS");
+    event.data = serde_json::json!({
+        "verdict": verdict,
+        "verification_levels_attempted": levels_attempted,
+        "verification_levels_passed": levels_passed,
+        "failures": failures,
+    });
+    record_event(TelemetryEventKind::Checkpoint, event);
 }
 
 /// Registra un checkpoint.
