@@ -1,15 +1,14 @@
 //! commands.rs - CLI command implementations with quality cycles
 
-use crate::llm::{ChatResult, LlmClient};
+use crate::llm::LlmClient;
 use crate::services::Services;
 
 pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_remote: bool) {
     let client = LlmClient::new(base_url, model, false);
     let prompt_str = prompt.join(" ");
-    let result = client.chat(&prompt_str, false, false).await;
-    match result {
-        ChatResult { content, error: None, .. } => println!("{}", content),
-        ChatResult { error: Some(e), .. } => eprintln!("Error: {}", e),
+    match client.chat(&prompt_str, false, false).await {
+        Ok(content) => println!("{}", content),
+        Err(e) => eprintln!("Error: {}", e),
     }
 }
 
@@ -37,9 +36,8 @@ pub async fn cmd_code(
     for iteration in 0..max_iterations {
         println!("Iteration {} of {}", iteration + 1, max_iterations);
 
-        let result = client.chat(&prompt, false, false).await;
-        match result {
-            ChatResult { content: raw, error: None, .. } => {
+        match client.chat(&prompt, false, false).await {
+            Ok(raw) => {
                 code = extract_code(&raw);
                 match validate_code(&code) {
                     Ok(()) => {
@@ -60,7 +58,7 @@ pub async fn cmd_code(
                     }
                 }
             }
-            ChatResult { error: Some(e), .. } => {
+            Err(e) => {
                 eprintln!("Error generating code: {}", e);
                 if iteration == max_iterations - 1 {
                     eprintln!("Failed after {} iterations", max_iterations);
@@ -98,7 +96,7 @@ fn extract_code(response: &str) -> String {
     if let Some(start) = content_between(response, "```\n", "\n```") {
         return start.to_string();
     }
-    let lines: Vec<&str> = response.lines().collect();
+    let mut lines: Vec<&str> = response.lines().collect();
     let mut start_idx = 0;
     for (i, line) in lines.iter().enumerate() {
         let stripped = line.trim();
@@ -130,6 +128,7 @@ fn validate_code(code: &str) -> Result<(), String> {
     if code.trim().is_empty() {
         return Err("Empty code".to_string());
     }
+    use std::process::Command;
     use std::process::Stdio;
     let child = std::process::Command::new("python3")
         .arg("-c")

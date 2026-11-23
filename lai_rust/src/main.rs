@@ -1,13 +1,13 @@
 //! lai - Local AI Code Assistant
-//! Minimal working Rust implementation.
-//! Focus: generate code via llama.cpp, validate syntax, save file.
-
 mod commands;
 mod context;
 mod llm;
 mod policy;
+mod quality;
 mod repomap;
+mod security;
 mod services;
+mod telemetry;
 mod tools;
 
 use clap::Parser;
@@ -51,7 +51,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -73,5 +73,4 @@ async fn main() -> anyhow::Result<()> {
             println!("Use `lai --help` for usage.");
         }
     }
-    Ok(())
 }
