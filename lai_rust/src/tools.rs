@@ -31,6 +31,8 @@ pub struct ToolRegistry {
     pub policy_engine: Arc<PolicyEngine>,
     /// Integridad de definiciones (v4.0): hash fijado por herramienta.
     pub integrity: crate::integrity::IntegrityRegistry,
+    /// Raíz del workspace para el Change Engine transaccional (4.2).
+    pub workspace_root: PathBuf,
 }
 
 type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>> + Send + Sync>;
@@ -62,6 +64,7 @@ impl ToolRegistry {
             ],
             policy_engine,
             integrity: crate::integrity::IntegrityRegistry::new(),
+            workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         };
 
         registry.register_core_tools();
@@ -76,6 +79,12 @@ impl ToolRegistry {
         registry.pin_definitions();
 
         registry
+    }
+
+    /// Fija el workspace del Change Engine (normalmente el working_dir del
+    /// harness; en modo worktree, el directorio del worktree).
+    pub fn set_workspace_root(&mut self, root: PathBuf) {
+        self.workspace_root = root;
     }
 
     /// Fija (pin) las definiciones de todas las herramientas registradas.
@@ -172,24 +181,35 @@ impl ToolRegistry {
             Ok(fs::read_to_string(path)?)
         });
 
-        // write_file
-        self.register_tool("write_file", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let strict = args.get("strict").and_then(|v| v.as_bool()).unwrap_or(false);
+        // write_file (Change Engine transaccional, transversal 4.2:
+        // validar -> diff -> checkpoint -> aplicar -> verificar integridad,
+        // con rollback automático si la verificación post-escritura falla).
+        let ws_write = self.workspace_root.clone();
+        self.register_tool("write_file", move |args| {
+            let ws = ws_write.clone();
+            async move {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let strict = args.get("strict").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            if path.ends_with(".py") {
-                if let Err(e) = validate_python_syntax(content) {
-                    return Err(anyhow::anyhow!("Syntax error: {}", e));
+                if path.ends_with(".py") {
+                    if let Err(e) = validate_python_syntax(content) {
+                        return Err(anyhow::anyhow!("Syntax error: {}", e));
+                    }
+                    if strict {
+                        // Run ruff check - simplified
+                    }
                 }
-                if strict {
-                    // Run ruff check - simplified
+
+                let ce = crate::change_engine::ChangeEngine::new(&ws);
+                if !ce.commit(path, content)? {
+                    return Err(anyhow::anyhow!(
+                        "Change verification failed for '{}': rollback applied (el archivo en disco no coincide con el hash pretendido)",
+                        path
+                    ));
                 }
+                Ok(format!("Written to {} ({} chars) [verified]", path, content.len()))
             }
-
-            fs::create_dir_all(Path::new(path).parent().unwrap_or(Path::new(".")))?;
-            fs::write(path, content)?;
-            Ok(format!("Written to {} ({} chars)", path, content.len()))
         });
 
         // list_dir
@@ -354,21 +374,52 @@ impl ToolRegistry {
         });
 
         // apply_patch
-        self.register_tool("apply_patch", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
-            let mut child = Command::new("patch")
-                .args(["-p0"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                stdin.write_all(patch.as_bytes())?;
+        // apply_patch (transaccional, transversal 4.2): captura el original,
+        // aplica el patch contra `path`, y verifica por hash que el disco
+        // refleja el cambio (detecta modificación concurrente).
+        let ws_patch = self.workspace_root.clone();
+        self.register_tool("apply_patch", move |args| {
+            let ws = ws_patch.clone();
+            async move {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
+                if path.is_empty() {
+                    return Err(anyhow::anyhow!("apply_patch requiere 'path' (archivo objetivo)"));
+                }
+                let abs = ws.join(path);
+
+                // Checkpoint: contenido original + hash antes de tocar el disco.
+                let ce = crate::change_engine::ChangeEngine::new(&ws);
+                let original = fs::read_to_string(&abs).unwrap_or_default();
+                let mut tx = ce.stage(path, &original)?;
+
+                let mut child = Command::new("patch")
+                    .arg(path)
+                    .args(["-p0"])
+                    .current_dir(&ws)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    stdin.write_all(patch.as_bytes())?;
+                }
+                let output = child.wait_with_output()?;
+                if !output.status.success() {
+                    return Ok(format!("Patch failed: {}", String::from_utf8_lossy(&output.stderr)));
+                }
+
+                // Verificación de integridad post-patch por hash.
+                let new_content = fs::read_to_string(&abs).unwrap_or_default();
+                tx.intended_hash = crate::change_engine::sha256_hex(&new_content);
+                if ce.verify(&mut tx)? {
+                    Ok("Patch applied [verified]".into())
+                } else {
+                    ce.rollback(&mut tx)?;
+                    Ok("Patch applied but post-verification failed: rolled back".into())
+                }
             }
-            let output = child.wait_with_output()?;
-            Ok(if output.status.success() { "Patch applied".into() } else { String::from_utf8_lossy(&output.stderr).to_string() })
         });
 
         // web_search

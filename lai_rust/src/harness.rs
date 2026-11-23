@@ -329,7 +329,10 @@ impl ExecutionHarness {
     /// Create a new execution harness
     pub fn new(config: HarnessConfig, llm: LlmClient) -> Result<Self> {
         fs::create_dir_all(&config.checkpoint_dir)?;
-        let tools = ToolRegistry::new();
+        let mut tools = ToolRegistry::new();
+        // Change Engine (transversal 4.2): el journal de transacciones vive
+        // bajo el workspace de la tarea (worktree incluido).
+        tools.set_workspace_root(config.working_dir.clone());
         let context_engine = ContextEngine::new(config.working_dir.clone())?;
         let mut policy_config = config.policy.clone();
         policy_config.workspace_root = config.working_dir.clone();

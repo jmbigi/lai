@@ -20,6 +20,7 @@ mod memory;
 mod bench;
 mod mcp;
 mod trajectory;
+mod change_engine;
 
 use clap::Parser;
 
