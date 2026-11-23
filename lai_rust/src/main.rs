@@ -4,7 +4,7 @@
 
 mod commands;
 mod llm;
-mod policy;
+mod services;
 
 use clap::Parser;
 

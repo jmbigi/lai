@@ -1,0 +1,558 @@
+{
+  "records": [
+    {
+      "timestamp": "2026-11-22T23:15:02.063955",
+      "prompt_hash": "ef702894",
+      "prompt": "/no_think Previous code had undefined names: kwargs, args\n\nPrevious code:\n```python\nimport time\nfrom typing import Callable, Any, Union\n\ndef timer(func: Callable[..., Any]) -> Callable[..., Any]:\n    \"\"\"\n    Decorator to measure the execution time of a function.\n\n    Args:\n        func: The function to be decorated.\n\n    Returns:\n        The decorated function with timing functionality.\n    \"\"\"\n    def wrapper(*args: Any, **kwargs: Any) -> Any:\n        start_time = time.time()\n        try:\n     ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import time\nfrom typing import Callable, Any, Union\n\ndef timer(func: Callable[..., Any]) -> Callable[..., Any]:\n    \"\"\"\n    Decorator to measure the execution time of a function.\n\n    Args:\n        func: The function to be decorated.\n\n    Returns:\n        The decorated function with timing functionality.\n    \"\"\"\n    def wrapper(*args: Any, **kwargs: Any) -> Any:\n        start_time = time.time()\n        try:\n            result = func(*args, **kwargs)\n        except Exception as e:\n            end_time = time.time()\n            duration = end_time - start_time\n            print(f\"Error in {func.__name__}: {str(e)} | Time: {duration:.6f} seconds\")\n            raise\n        else:\n            end_time = time.time()\n            duration = end_time - start_time\n            print(f\"{func.__name__} executed in {duration:.6f} seconds\")\n            return result\n    return wrapper\n\ndef main() -> None:\n    @timer\n    def example_function(n: int) -> None:\n        \"\"\"Example function to demonstrate the timer decorator.\"\"\"\n        time.sleep(n)\n\n    example_function(2)\n\nif __name__ == \"__main__\":\n    main()",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 645,
+      "duration_seconds": 5.219523191452026,
+      "code_quality_score": 0.8,
+      "prompt_category": "decorator",
+      "model_response_preview": "import time\nfrom typing import Callable, Any, Union\n\ndef timer(func: Callable[..., Any]) -> Callable[..., Any]:\n    \"\"\"\n    Decorator to measure the execution time of a function.\n\n    Args:\n        fu"
+    },
+    {
+      "timestamp": "2026-11-22T23:15:22.303111",
+      "prompt_hash": "6fc7eb96",
+      "prompt": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with type hints\n- Include: if __name__ == \"__main__\": block, main() function\n- Error handling (try/except) with meaningful messages\n- Type hints for ALL signatures, Google-style docstrings\n- Clean PEP 8 code, imports grouped at top\n- NO markdown, NO explanations, NO test ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import sys\nfrom typing import List, Any\n\ndef flatten(nested_list: List[Any]) -> List[Any]:\n    \"\"\"\n    Aplana una lista anidada recursivamente.\n\n    Args:\n        nested_list (List[Any]): Lista anidada que se desea aplanar.\n\n    Returns:\n        List[Any]: Lista aplanada con todos los elementos en una sola lista.\n    \"\"\"\n    result: List[Any] = []\n    for item in nested_list:\n        if isinstance(item, list):\n            result.extend(flatten(item))\n        else:\n            result.append(item)\n    return result\n\nif __name__ == \"__main__\":\n    try:\n        sample_input = [[1, [2, 3]], 4, [5, [6, [7, 8]]]]\n        flattened = flatten(sample_input)\n        print(flattened)\n    except Exception as e:\n        print(f\"Error: {e}\")",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 803,
+      "duration_seconds": 2.1332666873931885,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import sys\nfrom typing import List, Any\n\ndef flatten(nested_list: List[Any]) -> List[Any]:\n    \"\"\"\n    Aplana una lista anidada recursivamente.\n\n    Args:\n        nested_list (List[Any]): Lista anidad"
+    },
+    {
+      "timestamp": "2026-11-22T23:16:29.218257",
+      "prompt_hash": "43417b59",
+      "prompt": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with type hints\n- Include: if __name__ == \"__main__\": block, main() function\n- Error handling (try/except) with meaningful messages\n- Type hints for ALL signatures, Google-style docstrings\n- Clean PEP 8 code, imports grouped at top\n- NO markdown, NO explanations, NO test ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import re\nimport pytest\n\ndef validar_email(email: str) -> bool:\n    \"\"\"\n    Valida si una direcci\u00f3n de correo electr\u00f3nico es v\u00e1lida usando una expresi\u00f3n regular.\n\n    Args:\n        email (str): Direcci\u00f3n de correo electr\u00f3nico a validar.\n\n    Returns:\n        bool: True si el correo es v\u00e1lido, False de lo contrario.\n    \"\"\"\n    patron = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$'\n    return re.match(patron, email) is not None\n\ndef main() -> None:\n    try:\n        email = input(\"Ingrese una direcci\u00f3n de correo electr\u00f3nico: \")\n        if validar_email(email):\n            print(\"El correo electr\u00f3nico es v\u00e1lido.\")\n        else:\n            print(\"El correo electr\u00f3nico no es v\u00e1lido.\")\n    except Exception as e:\n        print(f\"Ocurri\u00f3 un error: {e}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 817,
+      "duration_seconds": 2.5663092136383057,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import re\nimport pytest\n\ndef validar_email(email: str) -> bool:\n    \"\"\"\n    Valida si una direcci\u00f3n de correo electr\u00f3nico es v\u00e1lida usando una expresi\u00f3n regular.\n\n    Args:\n        email (str): Direcc"
+    },
+    {
+      "timestamp": "2026-11-22T23:32:05.637896",
+      "prompt_hash": "dcdc6f5c",
+      "prompt": "/no_think Previous code had undefined names: default_value\n\nPrevious code:\n```python\nimport os\nimport yaml\nfrom typing import Any, Dict, Optional, TypeVar, Generic, Union\n\nT = TypeVar('T')\n\nclass ConfigManager(Generic[T]):\n    \"\"\"Clase para gestionar configuraci\u00f3n desde archivo YAML, variables de entorno con prefijo APP_, y valores por defecto.\n\n    Attributes:\n        config: Diccionario con la configuraci\u00f3n cargada.\n    \"\"\"\n\n    def __init__(self, config_path: str, default_config: Dict[str, An",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import os\nimport yaml\nfrom typing import Any, Dict, Optional, TypeVar, Generic, Union\n\nT = TypeVar('T')\n\nclass ConfigManager(Generic[T]):\n    \"\"\"Clase para gestionar configuraci\u00f3n desde archivo YAML, variables de entorno con prefijo APP_, y valores por defecto.\n\n    Attributes:\n        config: Diccionario con la configuraci\u00f3n cargada.\n    \"\"\"\n\n    def __init__(self, config_path: str, default_config: Dict[str, Any], env_prefix: str = 'APP_') -> None:\n        \"\"\"Inicializa el ConfigManager.\n\n        Args:\n            config_path: Ruta al archivo YAML de configuraci\u00f3n.\n            default_config: Configuraci\u00f3n por defecto.\n            env_prefix: Prefijo para variables de entorno.\n        \"\"\"\n        self.config_path = config_path\n        self.default_config = default_config\n        self.env_prefix = env_prefix\n        self.config: Dict[str, Any] = {}\n        self._load_config()\n\n    def _load_config(self) -> None:\n        \"\"\"Carga la configuraci\u00f3n desde el archivo YAML y variables de entorno.\"\"\"\n        try:\n            if os.path.exists(self.config_path):\n                with open(self.config_path, 'r') as file:\n                    self.config.update(yaml.safe_load(file) or {})\n            self._load_env_vars()\n            self._apply_defaults()\n        except Exception as e:\n            raise RuntimeError(f\"Error al cargar la configuraci\u00f3n: {e}\")\n\n    def _load_env_vars(self) -> None:\n        \"\"\"Carga variables de entorno con prefijo APP_.\"\"\"\n        for key, value in os.environ.items():\n            if key.startswith(self.env_prefix):\n                config_key = key[len(self.env_prefix):]\n                self.config[config_key] = self._convert_value(value)\n\n    def _apply_defaults(self) -> None:\n        \"\"\"Aplica valores por defecto a las claves no definidas.\"\"\"\n        for key, default_value in self.default_config.items():\n            if key not in self.config:\n                self.config[key] = self._convert_value(default_value)\n\n    def _convert_value(self, valu",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 2153,
+      "duration_seconds": 18.01494574546814,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import os\nimport yaml\nfrom typing import Any, Dict, Optional, TypeVar, Generic, Union\n\nT = TypeVar('T')\n\nclass ConfigManager(Generic[T]):\n    \"\"\"Clase para gestionar configuraci\u00f3n desde archivo YAML, "
+    },
+    {
+      "timestamp": "2026-11-22T23:33:09.345351",
+      "prompt_hash": "6fee5e17",
+      "prompt": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with type hints\n- Include: if __name__ == \"__main__\": block, main() function\n- Error handling (try/except) with meaningful messages\n- Type hints for ALL signatures, Google-style docstrings\n- Clean PEP 8 code, imports grouped at top\n- NO markdown, NO explanations, NO test ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import sys\n\ndef suma(a: float, b: float) -> float:\n    \"\"\"\n    Suma dos n\u00fameros flotantes.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la suma.\n    \"\"\"\n    return a + b\n\ndef main() -> None:\n    \"\"\"Punto de entrada principal del programa.\"\"\"\n    try:\n        if len(sys.argv) != 3:\n            raise ValueError(\"Se requieren exactamente dos argumentos num\u00e9ricos.\")\n        a = float(sys.argv[1])\n        b = float(sys.argv[2])\n        resultado = suma(a, b)\n        print(f\"Resultado: {resultado}\")\n    except ValueError as ve:\n        print(f\"Error: {ve}\")\n    except Exception as e:\n        print(f\"Ocurri\u00f3 un error inesperado: {e}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 390,
+      "duration_seconds": 3.100708484649658,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import sys\n\ndef suma(a: float, b: float) -> float:\n    \"\"\"\n    Suma dos n\u00fameros flotantes.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: "
+    },
+    {
+      "timestamp": "2026-11-22T23:41:49.045528",
+      "prompt_hash": "e518e038",
+      "prompt": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with type hints\n- Include: if __name__ == \"__main__\": block, main() function\n- Error handling (try/except) with meaningful messages\n- Type hints for ALL signatures, Google-style docstrings\n- Clean PEP 8 code, imports grouped at top\n- NO markdown, NO explanations, NO test ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nimport sys\nimport unittest\n\n\ndef factorial(n: int) -> int:\n    \"\"\"Calcula el factorial de un n\u00famero entero positivo utilizando recursi\u00f3n.\n\n    Args:\n        n: N\u00famero entero positivo para calcular su factorial.\n\n    Returns:\n        El factorial del n\u00famero.\n\n    Raises:\n        TypeError: Si el input no es un entero.\n        ValueError: Si el n\u00famero es negativo.\n    \"\"\"\n    if not isinstance(n, int):\n        raise TypeError(\"Input must be an integer\")\n    if n < 0:\n        raise ValueError(\"Input must be a non-negative integer\")\n    if n == 0:\n        return 1\n    return n * factorial(n - 1)\n\n\nclass TestFactorial(unittest.TestCase):\n    def test_factorial_positive(self):\n        self.assertEqual(factorial(5), 120)\n\n    def test_factorial_zero(self):\n        self.assertEqual(factorial(0), 1)\n\n    def test_factorial_negative(self):\n        with self.assertRaises(ValueError):\n            factorial(-3)\n\n\nif __name__ == \"__main__\":\n    try:\n        unittest.main()\n    except Exception as e:\n        print(f\"Error during test execution: {e}\")",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 894,
+      "duration_seconds": 3.711005210876465,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nimport sys\nimport unittest\n\n\ndef factorial(n: int) -> int:\n "
+    },
+    {
+      "timestamp": "2026-11-22T23:41:52.582234",
+      "prompt_hash": "d3df7f65",
+      "prompt": "/no_think Previous code had issues. Fixed code:\n```python\n#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nimport sys\nimport unittest\n\n\ndef factorial(n: int) -> int:\n    \"\"\"Calcula el factorial de un n\u00famero entero positivo utilizando recursi\u00f3n.\n\n    Args:\n        n: N\u00famero entero positivo para calcular su factorial.\n\n    Returns:\n        El factorial del n\u00famero.\n\n    Raises:\n        TypeError: Si el input ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nimport sys\nimport unittest\n\n\ndef factorial(n: int) -> int:\n    \"\"\"Calcula el factorial de un n\u00famero entero positivo utilizando recursi\u00f3n.\n\n    Args:\n        n: N\u00famero entero positivo para calcular su factorial.\n\n    Returns:\n        El factorial del n\u00famero.\n\n    Raises:\n        TypeError: Si el input no es un entero.\n        ValueError: Si el n\u00famero es negativo.\n    \"\"\"\n    if not isinstance(n, int):\n        raise TypeError(\"Input must be an integer\")\n    if n < 0:\n        raise ValueError(\"Input must be a non-negative integer\")\n    if n == 0:\n        return 1\n    return n * factorial(n - 1)\n\n\nclass TestFactorial(unittest.TestCase):\n    def test_factorial_positive(self):\n        self.assertEqual(factorial(5), 120)\n\n    def test_factorial_zero(self):\n        self.assertEqual(factorial(0), 1)\n\n    def test_factorial_negative(self):\n        with self.assertRaises(ValueError):\n            factorial(-3)\n\n\ndef main():\n    \"\"\"Ejecuta los tests unitarios.\"\"\"\n    try:\n        unittest.main()\n    except Exception as e:\n        print(f\"Error during test execution: {e}\")\n\n\nif __name__ == \"__main__\":\n    main()",
+      "fixes_applied": [
+        "auto_repair_iter_0",
+        "validation_repair"
+      ],
+      "iterations": 2,
+      "tokens_used": 711,
+      "duration_seconds": 7.247718811035156,
+      "code_quality_score": 0.8,
+      "prompt_category": "config_loader",
+      "model_response_preview": "#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nimport sys\nimport unittest\n\n\ndef factorial(n: int) -> int:\n "
+    },
+    {
+      "timestamp": "2026-11-22T23:43:15.581272",
+      "prompt_hash": "95154f44",
+      "prompt": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with type hints\n- Include: if __name__ == \"__main__\": block, main() function\n- Error handling (try/except) with meaningful messages\n- Type hints for ALL signatures, Google-style docstrings\n- Clean PEP 8 code, imports grouped at top\n- NO markdown, NO explanations, NO test ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import math\nimport unittest\n\nclass Calculadora:\n    def __init__(self):\n        \"\"\"Clase Calculadora que realiza operaciones matem\u00e1ticas b\u00e1sicas y avanzadas.\"\"\"\n        pass\n\n    def suma(self, a: float, b: float) -> float:\n        \"\"\"Realiza la suma de dos n\u00fameros.\"\"\"\n        return a + b\n\n    def resta(self, a: float, b: float) -> float:\n        \"\"\"Realiza la resta de dos n\u00fameros.\"\"\"\n        return a - b\n\n    def multiplicacion(self, a: float, b: float) -> float:\n        \"\"\"Realiza la multiplicaci\u00f3n de dos n\u00fameros.\"\"\"\n        return a * b\n\n    def division(self, a: float, b: float) -> float:\n        \"\"\"Realiza la divisi\u00f3n de dos n\u00fameros.\"\"\"\n        if b == 0:\n            raise ValueError(\"No se puede dividir entre cero.\")\n        return a / b\n\n    def potencia(self, base: float, exponente: float) -> float:\n        \"\"\"Calcula la potencia de un n\u00famero.\"\"\"\n        return base ** exponente\n\n    def raiz_cuadrada(self, numero: float) -> float:\n        \"\"\"Calcula la ra\u00edz cuadrada de un n\u00famero.\"\"\"\n        if numero < 0:\n            raise ValueError(\"No se puede calcular la ra\u00edz cuadrada de un n\u00famero negativo.\")\n        return math.sqrt(numero)\n\n    def validar_entrada(self, valor: str) -> bool:\n        \"\"\"Valida si una entrada es un n\u00famero v\u00e1lido.\"\"\"\n        try:\n            float(valor)\n            return True\n        except ValueError:\n            return False\n\ndef main():\n    \"\"\"Funci\u00f3n principal para ejecutar la calculadora.\"\"\"\n    calc = Calculadora()\n    try:\n        num1 = input(\"Ingrese el primer n\u00famero: \")\n        num2 = input(\"Ingrese el segundo n\u00famero: \")\n        if not calc.validar_entrada(num1) or not calc.validar_entrada(num2):\n            raise ValueError(\"Entrada no v\u00e1lida. Debe ser un n\u00famero.\")\n        num1 = float(num1)\n        num2 = float(num2)\n        print(\"Suma:\", calc.suma(num1, num2))\n        print(\"Resta:\", calc.resta(num1, num2))\n        print(\"Multiplicaci\u00f3n:\", calc.multiplicacion(num1, num2))\n        print(\"Divisi\u00f3n:\", calc.division(num1, num",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 1452,
+      "duration_seconds": 12.753695726394653,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import math\nimport unittest\n\nclass Calculadora:\n    def __init__(self):\n        \"\"\"Clase Calculadora que realiza operaciones matem\u00e1ticas b\u00e1sicas y avanzadas.\"\"\"\n        pass\n\n    def suma(self, a: flo"
+    },
+    {
+      "timestamp": "2026-11-22T23:44:17.729693",
+      "prompt_hash": "fabf6343",
+      "prompt": "/no_think Previous code had undefined names: any\n\nPrevious code:\n```python\nimport math\nimport unittest\n\nclass Calculadora:\n    def __init__(self):\n        \"\"\"Clase Calculadora que realiza operaciones matem\u00e1ticas b\u00e1sicas y avanzadas.\"\"\"\n        pass\n\n    def suma(self, a: float, b: float) -> float:\n        \"\"\"Realiza la suma de dos n\u00fameros.\"\"\"\n        return a + b\n\n    def resta(self, a: float, b: float) -> float:\n        \"\"\"Realiza la resta de dos n\u00fameros.\"\"\"\n        return a - b\n\n    def multip",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import math\nimport unittest\n\nclass Calculadora:\n    def __init__(self):\n        \"\"\"Clase Calculadora que realiza operaciones matem\u00e1ticas b\u00e1sicas y avanzadas.\"\"\"\n        pass\n\n    def suma(self, a: float, b: float) -> float:\n        \"\"\"Realiza la suma de dos n\u00fameros.\"\"\"\n        return a + b\n\n    def resta(self, a: float, b: float) -> float:\n        \"\"\"Realiza la resta de dos n\u00fameros.\"\"\"\n        return a - b\n\n    def multiplicacion(self, a: float, b: float) -> float:\n        \"\"\"Realiza la multiplicaci\u00f3n de dos n\u00fameros.\"\"\"\n        return a * b\n\n    def division(self, a: float, b: float) -> float:\n        \"\"\"Realiza la divisi\u00f3n de dos n\u00fameros.\"\"\"\n        if b == 0:\n            raise ValueError(\"No se puede dividir entre cero.\")\n        return a / b\n\n    def potencia(self, base: float, exponente: float) -> float:\n        \"\"\"Calcula la potencia de un n\u00famero.\"\"\"\n        return base ** exponente\n\n    def raiz_cuadrada(self, numero: float) -> float:\n        \"\"\"Calcula la ra\u00edz cuadrada de un n\u00famero.\"\"\"\n        if numero < 0:\n            raise ValueError(\"No se puede calcular la ra\u00edz cuadrada de un n\u00famero negativo.\")\n        return math.sqrt(numero)\n\n    def validar_entrada(self, valor: object) -> bool:\n        \"\"\"Valida si el valor es un n\u00famero.\"\"\"\n        return isinstance(valor, (int, float))\n\ndef main():\n    \"\"\"Funci\u00f3n principal que ejecuta el programa.\"\"\"\n    calc = Calculadora()\n    try:\n        a = float(input(\"Ingrese el primer n\u00famero: \"))\n        b = float(input(\"Ingrese el segundo n\u00famero: \"))\n        print(\"Suma:\", calc.suma(a, b))\n        print(\"Resta:\", calc.resta(a, b))\n        print(\"Multiplicaci\u00f3n:\", calc.multiplicacion(a, b))\n        print(\"Divisi\u00f3n:\", calc.division(a, b))\n        print(\"Potencia:\", calc.potencia(a, b))\n        print(\"Ra\u00edz cuadrada de\", a, \":\", calc.raiz_cuadrada(a))\n    except ValueError as e:\n        print(\"Error:\", e)\n\nif __name__ == \"__main__\":\n    main()\n\nclass TestCalculadora(unittest.TestCase):\n    \"\"\"Clase de pruebas unitarias para la c",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 2137,
+      "duration_seconds": 20.910795211791992,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import math\nimport unittest\n\nclass Calculadora:\n    def __init__(self):\n        \"\"\"Clase Calculadora que realiza operaciones matem\u00e1ticas b\u00e1sicas y avanzadas.\"\"\"\n        pass\n\n    def suma(self, a: flo"
+    },
+    {
+      "timestamp": "2026-11-22T23:46:06.562217",
+      "prompt_hash": "a2eae608",
+      "prompt": "/no_think Generate ONLY valid, production-ready Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nSTRICT REQUIREMENTS - VIOLATIONS WILL BE REJECTED:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with COMPLETE type hints (params + return)\n- Include: if __name__ == \"__main__\": block, main() function with NO interactive input()\n- Error handling (try/except) with meaningful messages - NO bare except\n- Type hints ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import argparse\nimport math\nimport pytest\n\ndef sumar(a: float, b: float) -> float:\n    \"\"\"\n    Realiza la suma de dos n\u00fameros.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la suma.\n    \"\"\"\n    return a + b\n\ndef restar(a: float, b: float) -> float:\n    \"\"\"\n    Realiza la resta de dos n\u00fameros.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la resta.\n    \"\"\"\n    return a - b\n\ndef multiplicar(a: float, b: float) -> float:\n    \"\"\"\n    Realiza la multiplicaci\u00f3n de dos n\u00fameros.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la multiplicaci\u00f3n.\n    \"\"\"\n    return a * b\n\ndef dividir(a: float, b: float) -> float:\n    \"\"\"\n    Realiza la divisi\u00f3n de dos n\u00fameros.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la divisi\u00f3n.\n\n    Raises:\n        ValueError: Si el divisor es cero.\n    \"\"\"\n    if b == 0:\n        raise ValueError(\"No se puede dividir entre cero.\")\n    return a / b\n\ndef potencia(a: float, b: float) -> float:\n    \"\"\"\n    Calcula la potencia de un n\u00famero.\n\n    Args:\n        a (float): Base.\n        b (float): Exponente.\n\n    Returns:\n        float: Resultado de la potencia.\n    \"\"\"\n    return a ** b\n\ndef raiz(a: float, b: int) -> float:\n    \"\"\"\n    Calcula la ra\u00edz de un n\u00famero.\n\n    Args:\n        a (float): N\u00famero del cual se calcula la ra\u00edz.\n        b (int): \u00cdndice de la ra\u00edz.\n\n    Returns:\n        float: Resultado de la ra\u00edz.\n\n    Raises:\n        ValueError: Si el \u00edndice es cero o negativo.\n        ValueError: Si el n\u00famero es negativo y el \u00edndice es par.\n    \"\"\"\n    if b <= 0:\n        raise ValueError(\"El \u00edndice de la ra\u00edz debe ser positivo.\")\n    if a < 0 and b % 2 == 0:\n        raise ValueError(\"No se puede calcular la ra\u00edz de un n\u00famero negativo con \u00edndice par.\")\n    retu",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 1732,
+      "duration_seconds": 14.123291015625,
+      "code_quality_score": 0.65,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import argparse\nimport math\nimport pytest\n\ndef sumar(a: float, b: float) -> float:\n    \"\"\"\n    Realiza la suma de dos n\u00fameros.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n"
+    },
+    {
+      "timestamp": "2026-11-23T00:07:12.618799",
+      "prompt_hash": "77f6b722",
+      "prompt": "/no_think Previous code had undefined names: IOError\n\nPrevious code:\n```python\nimport json\nimport jsonschema\nfrom jsonschema import validate, ValidationError\nimport sys\nimport argparse\nimport csv\nimport logging\nfrom typing import List, Dict, Any, Optional\nfrom pydantic import BaseModel, ValidationError as PydanticError\nimport os\n\n# Setup logging\nlogging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')\n\nclass JsonLine(BaseModel):\n    \"\"\"Representa una l\u00ednea de J",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import json\nimport jsonschema\nfrom jsonschema import validate, ValidationError\nimport sys\nimport argparse\nimport csv\nimport logging\nfrom typing import List, Dict, Any, Optional\nfrom pydantic import BaseModel, ValidationError as PydanticError\nimport os\n\n# Setup logging\nlogging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')\n\nclass JsonLine(BaseModel):\n    \"\"\"Representa una l\u00ednea de JSON v\u00e1lida.\"\"\"\n    data: Dict[str, Any]\n\ndef load_json_lines(file_path: str) -> List[Dict[str, Any]]:\n    \"\"\"\n    Carga l\u00edneas de JSON desde un archivo.\n\n    Args:\n        file_path (str): Ruta al archivo de entrada.\n\n    Returns:\n        List[Dict[str, Any]]: Lista de diccionarios JSON cargados.\n\n    Raises:\n        FileNotFoundError: Si el archivo no existe.\n        IOError: Si hay un error al leer el archivo.\n    \"\"\"\n    if not os.path.exists(file_path):\n        raise FileNotFoundError(f\"El archivo {file_path} no existe.\")\n    if not os.path.isfile(file_path):\n        raise IOError(f\"{file_path} no es un archivo v\u00e1lido.\")\n\n    json_lines: List[Dict[str, Any]] = []\n    try:\n        with open(file_path, 'r', encoding='utf-8') as file:\n            for line in file:\n                line = line.strip()\n                if line:\n                    try:\n                        json_lines.append(json.loads(line))\n                    except json.JSONDecodeError as e:\n                        logging.error(f\"Error al decodificar JSON en l\u00ednea: {line} - {e}\")\n    except IOError as e:\n        logging.error(f\"Error al leer el archivo {file_path}: {e}\")\n        raise\n    return json_lines\n\ndef validate_json_lines(json_lines: List[Dict[str, Any]], schema: Dict[str, Any]) -> List[Dict[str, Any]]:\n    \"\"\"\n    Valida l\u00edneas de JSON contra un esquema definido.\n\n    Args:\n        json_lines (List[Dict[str, Any]]): Lista de l\u00edneas de JSON a validar.\n        schema (Dict[str, Any]): Esquema de validaci\u00f3n.\n\n    Returns:\n        List[Dict[str, Any]]: L\u00edneas de JSON v\u00e1lidas.\n",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 2960,
+      "duration_seconds": 27.35312294960022,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import json\nimport jsonschema\nfrom jsonschema import validate, ValidationError\nimport sys\nimport argparse\nimport csv\nimport logging\nfrom typing import List, Dict, Any, Optional\nfrom pydantic import Ba"
+    },
+    {
+      "timestamp": "2026-11-23T00:10:35.585715",
+      "prompt_hash": "f7b8afe2",
+      "prompt": "/no_think Previous code had undefined names: client, kwargs, response\n\nPrevious code:\n```python\nimport aiohttp\nimport asyncio\nimport time\nfrom typing import Optional, Dict, Any, AsyncIterator, AsyncContextManager, Union, Tuple, List\nfrom contextvars import ContextVar\nfrom dataclasses import dataclass\nfrom enum import Enum\nimport logging\nimport functools\n\nlogging.basicConfig(level=logging.INFO)\n\nclass RetryStrategy(Enum):\n    EXPONENTIAL = \"exponential\"\n    LINEAR = \"linear\"\n\n@dataclass\nclass Met",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import aiohttp\nimport asyncio\nimport time\nfrom typing import Optional, Dict, Any, AsyncIterator, AsyncContextManager, Union, Tuple, List\nfrom contextvars import ContextVar\nfrom dataclasses import dataclass\nfrom enum import Enum\nimport logging\nimport functools\n\nlogging.basicConfig(level=logging.INFO)\n\nclass RetryStrategy(Enum):\n    EXPONENTIAL = \"exponential\"\n    LINEAR = \"linear\"\n\n@dataclass\nclass Metrics:\n    total_requests: int = 0\n    successful_requests: int = 0\n    failed_requests: int = 0\n    retries: int = 0\n    latency: float = 0.0\n\nclass CircuitBreakerState(Enum):\n    CLOSED = \"closed\"\n    OPEN = \"open\"\n    HALF_OPEN = \"half_open\"\n\nclass AsyncHttpClient:\n    def __init__(\n        self,\n        base_url: str,\n        max_connections: int = 10,\n        retry_strategy: RetryStrategy = RetryStrategy.EXPONENTIAL,\n        max_retries: int = 3,\n        timeout: float = 10.0,\n        circuit_breaker_threshold: int = 5,\n        circuit_breaker_window: float = 60.0,\n        metrics: Optional[Metrics] = None\n    ):\n        \"\"\"\n        Initialize an asynchronous HTTP client with connection pooling, retry strategies, timeout, circuit breaker, and metrics.\n\n        Args:\n            base_url (str): Base URL for all requests.\n            max_connections (int): Maximum number of connections in the pool.\n            retry_strategy (RetryStrategy): Strategy for retrying failed requests.\n            max_retries (int): Maximum number of retries for failed requests.\n            timeout (float): Timeout for requests in seconds.\n            circuit_breaker_threshold (int): Number of failures before the circuit breaker opens.\n            circuit_breaker_window (float): Time window in seconds for circuit breaker threshold.\n            metrics (Optional[Metrics]): Metrics object to track request statistics.\n        \"\"\"\n        self.base_url = base_url\n        self.max_connections = max_connections\n        self.retry_strategy = retry_strategy\n        self.max_retries = max_retries\n  ",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 5073,
+      "duration_seconds": 50.375235080718994,
+      "code_quality_score": 0.65,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import aiohttp\nimport asyncio\nimport time\nfrom typing import Optional, Dict, Any, AsyncIterator, AsyncContextManager, Union, Tuple, List\nfrom contextvars import ContextVar\nfrom dataclasses import data"
+    },
+    {
+      "timestamp": "2026-11-23T00:12:07.036579",
+      "prompt_hash": "6dc65d3b",
+      "prompt": "/no_think Generate ONLY valid, production-ready Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nSTRICT REQUIREMENTS - VIOLATIONS WILL BE REJECTED:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with COMPLETE type hints (params + return)\n- Include: if __name__ == \"__main__\": block, main() function with NO interactive input()\n- Error handling (try/except) with meaningful messages - NO bare except\n- Type hints ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import pandas as pd\nfrom typing import Optional, List, Tuple, Any\n\ndef calculate_ema(\n    data: pd.Series,\n    window: int,\n    span: Optional[int] = None,\n    halflife: Optional[float] = None,\n    alpha: Optional[float] = None\n) -> pd.Series:\n    \"\"\"\n    Calcula la media m\u00f3vil exponencial (EMA) de una serie temporal.\n\n    Args:\n        data (pd.Series): Serie temporal de valores num\u00e9ricos.\n        window (int): Ventana para el c\u00e1lculo de EMA.\n        span (Optional[int]): Par\u00e1metro de suavizado para EMA. Si se proporciona, se ignora window.\n        halflife (Optional[float]): Tiempo de vida media para EMA. Si se proporciona, se ignora window y span.\n        alpha (Optional[float]): Factor de suavizado para EMA. Si se proporciona, se ignora window, span y halflife.\n\n    Returns:\n        pd.Series: Serie temporal con los valores de EMA calculados.\n    \"\"\"\n    if data.empty:\n        raise ValueError(\"La serie de datos est\u00e1 vac\u00eda.\")\n\n    if window <= 0:\n        raise ValueError(\"El valor de window debe ser positivo.\")\n\n    if span is not None and span <= 0:\n        raise ValueError(\"El valor de span debe ser positivo.\")\n\n    if halflife is not None and halflife <= 0:\n        raise ValueError(\"El valor de halflife debe ser positivo.\")\n\n    if alpha is not None and alpha <= 0:\n        raise ValueError(\"El valor de alpha debe ser positivo.\")\n\n    if span is not None:\n        alpha = 2 / (span + 1)\n    elif halflife is not None:\n        alpha = 1 - (0.5 ** (1 / halflife))\n    elif window is not None:\n        alpha = 2 / (window + 1)\n    else:\n        raise ValueError(\"Debe proporcionarse al menos uno de los par\u00e1metros: window, span, halflife o alpha.\")\n\n    ema = data.ewm(alpha=alpha, adjust=False).mean()\n    return ema\n\ndef main() -> None:\n    try:\n        # Ejemplo de uso\n        data = pd.Series([10, 12, 14, 16, 18, 20, 22, 24, 26, 28])\n        window = 5\n        ema = calculate_ema(data, window)\n        print(ema)\n    except Exception as e:\n        print(f\"Error en la ",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 927,
+      "duration_seconds": 11.985958576202393,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import pandas as pd\nfrom typing import Optional, List, Tuple, Any\n\ndef calculate_ema(\n    data: pd.Series,\n    window: int,\n    span: Optional[int] = None,\n    halflife: Optional[float] = None,\n    al"
+    },
+    {
+      "timestamp": "2026-11-23T00:13:15.823307",
+      "prompt_hash": "7e82e626",
+      "prompt": "/no_think Previous code had undefined names: digit, i\n\nPrevious code:\n```python\nimport argparse\nimport re\nfrom typing import Optional, Tuple\n\ndef validate_luhn(card_number: str) -> bool:\n    \"\"\"Valida un n\u00famero de tarjeta de cr\u00e9dito usando el algoritmo Luhn.\n\n    Args:\n        card_number (str): N\u00famero de tarjeta de cr\u00e9dito.\n\n    Returns:\n        bool: True si el n\u00famero es v\u00e1lido seg\u00fan el algoritmo Luhn, False en caso contrario.\n    \"\"\"\n    card_number = card_number.replace(\" \", \"\").replace(\"-\",",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import argparse\nimport re\nfrom typing import Optional, Tuple\n\ndef validate_luhn(card_number: str) -> bool:\n    \"\"\"Valida un n\u00famero de tarjeta de cr\u00e9dito usando el algoritmo Luhn.\n\n    Args:\n        card_number (str): N\u00famero de tarjeta de cr\u00e9dito.\n\n    Returns:\n        bool: True si el n\u00famero es v\u00e1lido seg\u00fan el algoritmo Luhn, False en caso contrario.\n    \"\"\"\n    card_number = card_number.replace(\" \", \"\").replace(\"-\", \"\")\n    if not re.fullmatch(r\"\\d+\", card_number):\n        return False\n    digits = list(map(int, card_number))\n    reversed_digits = digits[::-1]\n    total = 0\n    for i, digit in enumerate(reversed_digits):\n        if i % 2 == 1:\n            doubled = digit * 2\n            if doubled > 9:\n                doubled -= 9\n            total += doubled\n        else:\n            total += digit\n    return total % 10 == 0\n\ndef detect_card_type(card_number: str) -> Optional[str]:\n    \"\"\"Detecta el tipo de tarjeta de cr\u00e9dito basado en su n\u00famero.\n\n    Args:\n        card_number (str): N\u00famero de tarjeta de cr\u00e9dito.\n\n    Returns:\n        Optional[str]: Tipo de tarjeta (Visa, Mastercard, Amex) si se puede identificar, None en caso contrario.\n    \"\"\"\n    card_number = card_number.replace(\" \", \"\").replace(\"-\", \"\")\n    if not re.fullmatch(r\"\\d+\", card_number):\n        return None\n    if card_number.startswith(\"4\") and len(card_number) in (13, 16):\n        return \"Visa\"\n    if len(card_number) == 16 and card_number[0] in (\"5\", \"2\") and card_number[1] in (\"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\"):\n        return \"Mastercard\"\n    if len(card_number) == 15 and card_number.startswith(\"34\") or card_number.startswith(\"37\"):\n        return \"Amex\"\n    return None\n\ndef validate_card_length(card_number: str) -> bool:\n    \"\"\"Valida la longitud de un n\u00famero de tarjeta de cr\u00e9dito.\n\n    Args:\n        card_number (str): N\u00famero de tarjeta de cr\u00e9dito.\n\n    Returns:\n        bool: True si la longitud es v\u00e1lida, False en caso contrario.\n    \"\"\"\n    card_number = card_number.replace(\" \", \"\").replace",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 1628,
+      "duration_seconds": 20.984455347061157,
+      "code_quality_score": 0.65,
+      "prompt_category": "cli_tool",
+      "model_response_preview": "import argparse\nimport re\nfrom typing import Optional, Tuple\n\ndef validate_luhn(card_number: str) -> bool:\n    \"\"\"Valida un n\u00famero de tarjeta de cr\u00e9dito usando el algoritmo Luhn.\n\n    Args:\n        ca"
+    },
+    {
+      "timestamp": "2026-11-23T00:14:15.933266",
+      "prompt_hash": "a1a8171e",
+      "prompt": "/no_think Generate ONLY valid, production-ready Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nSTRICT REQUIREMENTS - VIOLATIONS WILL BE REJECTED:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with COMPLETE type hints (params + return)\n- Include: if __name__ == \"__main__\": block, main() function with NO interactive input()\n- Error handling (try/except) with meaningful messages - NO bare except\n- Type hints ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import argparse\nimport random\nimport string\nimport math\n\ndef calculate_entropy(length: int, charset_size: int) -> float:\n    \"\"\"\n    Calcula la entrop\u00eda de una contrase\u00f1a basada en su longitud y el tama\u00f1o del conjunto de caracteres.\n\n    Args:\n        length (int): Longitud de la contrase\u00f1a.\n        charset_size (int): Tama\u00f1o del conjunto de caracteres utilizado.\n\n    Returns:\n        float: Entrop\u00eda en bits.\n    \"\"\"\n    return length * math.log2(charset_size)\n\ndef generate_password(length: int, charset: str) -> str:\n    \"\"\"\n    Genera una contrase\u00f1a segura con la longitud y el conjunto de caracteres especificados.\n\n    Args:\n        length (int): Longitud de la contrase\u00f1a.\n        charset (str): Conjunto de caracteres a utilizar.\n\n    Returns:\n        str: Contrase\u00f1a generada.\n    \"\"\"\n    if not charset:\n        raise ValueError(\"El conjunto de caracteres no puede estar vac\u00edo.\")\n    if length <= 0:\n        raise ValueError(\"La longitud debe ser mayor que cero.\")\n    if len(charset) <= 1:\n        raise ValueError(\"El conjunto de caracteres debe tener al menos dos caracteres.\")\n    if length > 1000:\n        raise ValueError(\"La longitud m\u00e1xima permitida es 1000.\")\n    \n    return ''.join(random.choice(charset) for _ in range(length))\n\ndef main() -> None:\n    \"\"\"\n    Punto de entrada principal del programa. Parsea los argumentos de l\u00ednea de comandos y genera una contrase\u00f1a.\n    \"\"\"\n    parser = argparse.ArgumentParser(description=\"Generador de contrase\u00f1as seguras.\")\n    parser.add_argument(\"-l\", \"--length\", type=int, default=12, help=\"Longitud de la contrase\u00f1a (default: 12)\")\n    parser.add_argument(\"-c\", \"--charset\", type=str, default=string.ascii_letters + string.digits + string.punctuation, help=\"Conjunto de caracteres a utilizar (default: letras, n\u00fameros y puntuaci\u00f3n)\")\n    parser.add_argument(\"-e\", \"--entropy\", action=\"store_true\", help=\"Muestra la entrop\u00eda de la contrase\u00f1a generada\")\n    \n    args = parser.parse_args()\n    \n    try:\n        password = generate_p",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 1403,
+      "duration_seconds": 13.158549070358276,
+      "code_quality_score": 0.0,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import argparse\nimport random\nimport string\nimport math\n\ndef calculate_entropy(length: int, charset_size: int) -> float:\n    \"\"\"\n    Calcula la entrop\u00eda de una contrase\u00f1a basada en su longitud y el ta"
+    },
+    {
+      "timestamp": "2026-11-23T00:15:20.361688",
+      "prompt_hash": "bd30afa2",
+      "prompt": "/no_think Previous code had undefined names: args, kwargs\n\nPrevious code:\n```python\nimport logging\nimport time\nfrom typing import Callable, Any, Optional, List, Union, Dict, Set\nimport functools\n\nlogging.basicConfig(level=logging.INFO)\n\nclass RetryException(Exception):\n    pass\n\ndef retry(\n    max_retries: int = 5,\n    exceptions: Union[type, List[type]] = Exception,\n    backoff_factor: float = 0.5,\n    jitter: float = 0.1,\n    delay: float = 0.1,\n    logger: Optional[logging.Logger] = None\n) ->",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import logging\nimport time\nfrom typing import Callable, Any, Optional, List, Union, Dict, Set\nimport functools\nimport random\n\nlogging.basicConfig(level=logging.INFO)\n\nclass RetryException(Exception):\n    pass\n\ndef retry(\n    max_retries: int = 5,\n    exceptions: Union[type, List[type]] = Exception,\n    backoff_factor: float = 0.5,\n    jitter: float = 0.1,\n    delay: float = 0.1,\n    logger: Optional[logging.Logger] = None\n) -> Callable:\n    \"\"\"\n    Decorator to retry a function with exponential backoff.\n\n    Args:\n        max_retries: Maximum number of retries.\n        exceptions: Exception(s) to catch and retry.\n        backoff_factor: Factor to multiply the delay between retries.\n        jitter: Random jitter to add to the delay.\n        delay: Initial delay in seconds.\n        logger: Logger to use for logging.\n\n    Returns:\n        Callable: Decorated function.\n    \"\"\"\n    if logger is None:\n        logger = logging.getLogger(__name__)\n\n    def decorator(func: Callable) -> Callable:\n        @functools.wraps(func)\n        def wrapper(*args: Any, **kwargs: Any) -> Any:\n            current_delay = delay\n            for attempt in range(max_retries + 1):\n                try:\n                    return func(*args, **kwargs)\n                except exceptions as e:\n                    if attempt >= max_retries:\n                        logger.error(f\"Failed after {max_retries} retries: {e}\")\n                        raise RetryException(f\"Failed after {max_retries} retries: {e}\") from e\n                    logger.warning(\n                        f\"Attempt {attempt + 1} of {max_retries} failed: {e}. Retrying in {current_delay:.2f}s...\"\n                    )\n                    time.sleep(current_delay)\n                    current_delay *= backoff_factor\n                    current_delay += random.uniform(-jitter, jitter)\n            return None\n        return wrapper\n    return decorator",
+      "fixes_applied": [
+        "add_type_hints_and_validation",
+        "add_type_hints_and_validation"
+      ],
+      "iterations": 3,
+      "tokens_used": 1045,
+      "duration_seconds": 11.349510669708252,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import logging\nimport time\nfrom typing import Callable, Any, Optional, List, Union, Dict, Set\nimport functools\nimport random\n\nlogging.basicConfig(level=logging.INFO)\n\nclass RetryException(Exception):\n"
+    },
+    {
+      "timestamp": "2026-11-23T00:17:24.187971",
+      "prompt_hash": "58b8f837",
+      "prompt": "/no_think Generate ONLY valid, production-ready Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nSTRICT REQUIREMENTS - VIOLATIONS WILL BE REJECTED:\n- Python 3.10+, executable standalone script\n- Professional structure: functions/classes with COMPLETE type hints (params + return)\n- Include: if __name__ == \"__main__\": block, main() function with NO interactive input()\n- Error handling (try/except) with meaningful messages - NO bare except\n- Type hints ",
+      "success": true,
+      "error_type": null,
+      "error_message": null,
+      "generated_code": "import argparse\n\ndef sumar(a: float, b: float) -> float:\n    \"\"\"\n    Suma dos n\u00fameros flotantes.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        float: Resultado de la suma.\n    \"\"\"\n    try:\n        return a + b\n    except Exception as e:\n        raise ValueError(f\"Error al sumar: {str(e)}\")\n\ndef main() -> None:\n    \"\"\"\n    Punto de entrada principal del script.\n    \"\"\"\n    parser = argparse.ArgumentParser(description=\"Suma dos n\u00fameros.\")\n    parser.add_argument(\"a\", type=float, help=\"Primer n\u00famero\")\n    parser.add_argument(\"b\", type=float, help=\"Segundo n\u00famero\")\n    args = parser.parse_args()\n\n    try:\n        resultado = sumar(args.a, args.b)\n        print(f\"Resultado: {resultado}\")\n    except ValueError as e:\n        print(f\"Error: {str(e)}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "fixes_applied": [],
+      "iterations": 1,
+      "tokens_used": 761,
+      "duration_seconds": 3.5725443363189697,
+      "code_quality_score": 0.8,
+      "prompt_category": "class_definition",
+      "model_response_preview": "import argparse\n\ndef sumar(a: float, b: float) -> float:\n    \"\"\"\n    Suma dos n\u00fameros flotantes.\n\n    Args:\n        a (float): Primer n\u00famero.\n        b (float): Segundo n\u00famero.\n\n    Returns:\n        f"
+    }
+  ],
+  "rules": [
+    {
+      "pattern": "timeout",
+      "condition": "duration_seconds > 100 or 'timeout' in error_message.lower()",
+      "action": "split_prompt",
+      "confidence": 0.9,
+      "times_applied": 5,
+      "times_successful": 4,
+      "created_at": "2026-11-22T23:14:56.844443",
+      "last_used": null,
+      "metadata": {
+        "description": "Split complex prompt into subtasks"
+      }
+    },
+    {
+      "pattern": "truncation",
+      "condition": "'length' in error_message.lower() or 'truncat' in error_message.lower() or len(generated_code or '') > 6000",
+      "action": "increase_max_tokens",
+      "confidence": 0.95,
+      "times_applied": 8,
+      "times_successful": 7,
+      "created_at": "2026-11-22T23:14:56.844452",
+      "last_used": null,
+      "metadata": {
+        "description": "Double max_tokens up to 32K"
+      }
+    },
+    {
+      "pattern": "reasoning_leak",
+      "condition": "any(w in (generated_code or '').lower() for w in ['okay,', 'here is', 'here\\'s', 'certainly', 'alright,', 'the code', 'the function', 'i will', 'let me', 'here\\'s the', 'below is', 'as requested', 'per your'])",
+      "action": "add_no_think_prefix",
+      "confidence": 0.9,
+      "times_applied": 10,
+      "times_successful": 9,
+      "created_at": "2026-11-22T23:14:56.844455",
+      "last_used": null,
+      "metadata": {
+        "description": "Prefix prompt with /no_think"
+      }
+    },
+    {
+      "pattern": "syntax_error",
+      "condition": "'syntax' in error_message.lower() or 'invalid syntax' in error_message.lower()",
+      "action": "retry_with_feedback",
+      "confidence": 0.85,
+      "times_applied": 15,
+      "times_successful": 12,
+      "created_at": "2026-11-22T23:14:56.844457",
+      "last_used": null,
+      "metadata": {
+        "description": "Retry with specific error feedback"
+      }
+    },
+    {
+      "pattern": "undefined_names",
+      "condition": "'undefined' in error_message.lower() or 'potential undefined' in error_message.lower()",
+      "action": "add_type_hints_and_validation",
+      "confidence": 0.8,
+      "times_applied": 10,
+      "times_successful": 7,
+      "created_at": "2026-11-22T23:14:56.844459",
+      "last_used": null,
+      "metadata": {
+        "description": "Add missing imports/definitions"
+      }
+    },
+    {
+      "pattern": "conversational_output",
+      "condition": "any(w in (generated_code or '').lower() for w in ['explanation:', 'example:', 'usage:', 'note:', 'this function', 'this class', 'the following', 'here is an', 'below is an', 'here is the'])",
+      "action": "strengthen_extraction",
+      "confidence": 0.85,
+      "times_applied": 8,
+      "times_successful": 6,
+      "created_at": "2026-11-22T23:14:56.844461",
+      "last_used": null,
+      "metadata": {
+        "description": "Use stricter code extraction"
+      }
+    },
+    {
+      "pattern": "complex_prompt",
+      "condition": "len(prompt) > 1500 or prompt.count(',') > 8 or len(re.findall(r'\\d+\\.', prompt)) > 3",
+      "action": "decompose_prompt",
+      "confidence": 0.8,
+      "times_applied": 6,
+      "times_successful": 4,
+      "created_at": "2026-11-22T23:14:56.844463",
+      "last_used": null,
+      "metadata": {
+        "description": "Break into sequential steps"
+      }
+    },
+    {
+      "pattern": "config_env_merge_bug",
+      "condition": "'config' in prompt.lower() and 'env' in prompt.lower() and ('merge' in prompt.lower() or 'environment' in prompt.lower())",
+      "action": "add_env_prefix_filter",
+      "confidence": 0.9,
+      "times_applied": 2,
+      "times_successful": 2,
+      "created_at": "2026-11-22T23:14:56.844466",
+      "last_used": null,
+      "metadata": {
+        "description": "Filter env vars with APP_ prefix"
+      }
+    },
+    {
+      "pattern": "entropy_calculation_bug",
+      "condition": "'entropy' in prompt.lower() and 'password' in prompt.lower()",
+      "action": "fix_entropy_formula",
+      "confidence": 0.95,
+      "times_applied": 1,
+      "times_successful": 1,
+      "created_at": "2026-11-22T23:14:56.844469",
+      "last_used": null,
+      "metadata": {
+        "description": "Use correct entropy formula: length * log2(charset)"
+      }
+    },
+    {
+      "pattern": "cli_argument_conflict",
+      "condition": "'argparse' in error_message.lower() and ('conflict' in error_message.lower() or 'duplicate' in error_message.lower())",
+      "action": "fix_cli_args",
+      "confidence": 0.95,
+      "times_applied": 1,
+      "times_successful": 1,
+      "created_at": "2026-11-22T23:14:56.844470",
+      "last_used": null,
+      "metadata": {
+        "description": "Use unique short flags"
+      }
+    },
+    {
+      "pattern": "f_string_brace_error",
+      "condition": "'f.string' in error_message.lower() and 'brace' in error_message.lower() or 'format' in error_message.lower() and 'brace' in error_message.lower()",
+      "action": "fix_fstring_braces",
+      "confidence": 0.9,
+      "times_applied": 3,
+      "times_successful": 3,
+      "created_at": "2026-11-22T23:14:56.844472",
+      "last_used": null,
+      "metadata": {
+        "description": "Escape double braces in f-strings"
+      }
+    },
+    {
+      "pattern": "indentation_error",
+      "condition": "'indentation' in error_message.lower() or 'indent' in error_message.lower() or 'unexpected indent' in error_message.lower()",
+      "action": "fix_indentation",
+      "confidence": 0.85,
+      "times_applied": 4,
+      "times_successful": 3,
+      "created_at": "2026-11-22T23:14:56.844474",
+      "last_used": null,
+      "metadata": {
+        "description": "Normalize indentation to 4 spaces"
+      }
+    },
+    {
+      "pattern": "import_error",
+      "condition": "'no module named' in error_message.lower() or 'modulenotfounderror' in error_message.lower()",
+      "action": "add_missing_import",
+      "confidence": 0.85,
+      "times_applied": 5,
+      "times_successful": 4,
+      "created_at": "2026-11-22T23:14:56.844476",
+      "last_used": null,
+      "metadata": {
+        "description": "Add missing import statement"
+      }
+    },
+    {
+      "pattern": "type_annotation_error",
+      "condition": "'type' in error_message.lower() and ('annotation' in error_message.lower() or 'hint' in error_message.lower() or 'generics' in error_message.lower())",
+      "action": "fix_type_annotations",
+      "confidence": 0.8,
+      "times_applied": 3,
+      "times_successful": 2,
+      "created_at": "2026-11-22T23:14:56.844478",
+      "last_used": null,
+      "metadata": {
+        "description": "Fix type hint syntax"
+      }
+    }
+  ],
+  "patterns": {
+    "decorator": {
+      "category": "decorator",
+      "template": "/no_think Previous code had undefined names: kwargs, args\n\nPrevious code:\n```python\nimport time\nfrom typing import Callable, Any, Union\n\ndef timer(func: Callable[..., Any]) -> Callable[..., Any]:\n    ",
+      "success_count": 1,
+      "total_uses": 1,
+      "avg_tokens": 645.0,
+      "avg_duration": 5.219523191452026,
+      "keywords": [
+        "decorator",
+        "decorator"
+      ]
+    },
+    "class_definition": {
+      "category": "class_definition",
+      "template": "/no_think Generate ONLY valid Python code. No markdown, no explanations, no comments about generation.\n\nTask: {description}\n\nREQUIREMENTS:\n- Python 3.10+, executable standalone script\n- Professional s",
+      "success_count": 14,
+      "total_uses": 14,
+      "avg_tokens": 1610.5,
+      "avg_duration": 13.936352712767464,
+      "keywords": [
+        "class"
+      ]
+    },
+    "config_loader": {
+      "category": "config_loader",
+      "template": "/no_think Previous code had issues. Fixed code:\n```python\n#!/usr/bin/env python3\n\"\"\"Calcula el factorial de un n\u00famero utilizando recursi\u00f3n y incluye tests unitarios.\"\"\"\n\nfrom typing import Optional\nim",
+      "success_count": 1,
+      "total_uses": 1,
+      "avg_tokens": 711.0,
+      "avg_duration": 7.247718811035156,
+      "keywords": [
+        "unittest"
+      ]
+    },
+    "cli_tool": {
+      "category": "cli_tool",
+      "template": "/no_think Previous code had undefined names: digit, i\n\nPrevious code:\n```python\nimport argparse\nimport re\nfrom typing import Optional, Tuple\n\ndef validate_luhn(card_number: str) -> bool:\n    \"\"\"Valida",
+      "success_count": 1,
+      "total_uses": 1,
+      "avg_tokens": 1628.0,
+      "avg_duration": 20.984455347061157,
+      "keywords": []
+    }
+  },
+  "error_signatures": {},
+  "success_signatures": {
+    "example_function(n)|main()|timer(func)|wrapper()": 1,
+    "flatten(nested_list)": 1,
+    "main()|validar_email(email)": 1,
+    "main()|suma(a,b)": 1,
+    "class TestFactorial|factorial(n)|test_factorial_negative(self)|test_factorial_positive(self)|test_factorial_zero(self)": 1,
+    "class TestFactorial|factorial(n)|main()|test_factorial_negative(self)|test_factorial_positive(self)": 1,
+    "dividir(a,b)|multiplicar(a,b)|potencia(a,b)|raiz(a,b)|restar(a,b)": 1,
+    "__init__(self,base_url,max_connections,retry_strategy,max_retries,timeout,circuit_breaker_threshold,circuit_breaker_window,metrics)|class AsyncHttpClient|class CircuitBreakerState|class Metrics|class RetryStrategy": 1,
+    "detect_card_type(card_number)|validate_card_length(card_number)|validate_luhn(card_number)": 1,
+    "class RetryException|decorator(func)|retry(max_retries,exceptions,backoff_factor,jitter,delay,logger)|wrapper()": 1,
+    "main()|sumar(a,b)": 1
+  },
+  "fix_effectiveness": {
+    "add_type_hints_and_validation": {
+      "success": 14,
+      "total": 14
+    },
+    "auto_repair_iter_0": {
+      "success": 1,
+      "total": 1
+    },
+    "validation_repair": {
+      "success": 1,
+      "total": 1
+    }
+  },
+  "last_updated": "2026-11-23T00:17:24.189093"
+}
