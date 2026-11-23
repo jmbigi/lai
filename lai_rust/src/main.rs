@@ -3,8 +3,12 @@
 //! Focus: generate code via llama.cpp, validate syntax, save file.
 
 mod commands;
+mod context;
 mod llm;
+mod policy;
+mod repomap;
 mod services;
+mod tools;
 
 use clap::Parser;
 
@@ -47,7 +51,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -69,4 +73,5 @@ async fn main() {
             println!("Use `lai --help` for usage.");
         }
     }
+    Ok(())
 }

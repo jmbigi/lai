@@ -1,6 +1,5 @@
 //! services.rs - Service management for llama.cpp, gateway, ollama
 
-use anyhow::Result;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -53,7 +52,10 @@ impl Services {
     async fn check_service(&self, service: &ServiceInfo) -> bool {
         let client = Client::new();
         match client
-            .get(format!("http://127.0.0.1:{}{}", service.port, service.health_path))
+            .get(format!(
+                "http://127.0.0.1:{}{}",
+                service.port, service.health_path
+            ))
             .timeout(Duration::from_secs(2))
             .send()
             .await
@@ -71,21 +73,34 @@ impl Services {
         ]
     }
 
+    #[allow(dead_code)]
     pub fn print_status(&self) {
         println!("Services status:");
         println!(
             "  llama.cpp: {} (Port {})",
-            if self.llama_cpp.running { "Running" } else { "Stopped" },
+            if self.llama_cpp.running {
+                "Running"
+            } else {
+                "Stopped"
+            },
             self.llama_cpp.port
         );
         println!(
             "  gateway: {} (Port {})",
-            if self.gateway.running { "Running" } else { "Stopped" },
+            if self.gateway.running {
+                "Running"
+            } else {
+                "Stopped"
+            },
             self.gateway.port
         );
         println!(
             "  ollama: {} (Port {})",
-            if self.ollama.running { "Running" } else { "Stopped" },
+            if self.ollama.running {
+                "Running"
+            } else {
+                "Stopped"
+            },
             self.ollama.port
         );
     }
