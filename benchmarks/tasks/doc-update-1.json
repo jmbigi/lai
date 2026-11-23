@@ -1,0 +1,13 @@
+{
+  "id": "doc-update-1",
+  "task_type": "documentation",
+  "description": "Update README.md: add a short section '## Uso rápido' explaining how to run lai status and lai harness with a one-line example. Keep changes minimal and focused.",
+  "acceptance_criteria": [
+    "README.md contains a '## Uso rápido' section",
+    "The section mentions lai status and lai harness"
+  ],
+  "required_tests": [],
+  "verification_scope": [
+    "lint"
+  ]
+}

@@ -382,8 +382,10 @@ Correspondencia v4.0 ↔ código (rama `feat/fase-0-1-harness`):
 | Aislamiento por tarea | `harness.rs::create_worktree_in/remove_worktree/merge_worktree` + `lai harness --worktree [--worktree-merge]` — cada tarea corre en un worktree git propio (`lai/task-<slug>-<id>`); la frontera del PolicyEngine queda confinada al worktree; fusión solo tras éxito verificado |
 | Change Engine transaccional | `change_engine.rs` + `tools.rs` — flujo `validar → diff → checkpoint → aplicar → verificar integridad` en `write_file`/`apply_patch`; journal por transacción en `.lai/transactions/<id>.json` (contenido original + hashes SHA-256); escritura atómica (tmp+rename); **rollback automático verificado por hash** si un proceso externo modifica el archivo entre escritura y verificación |
 | Análisis de trayectorias | `lai trajectories` — agrega success_rate, duración media, iteraciones, verificación efectiva y tasa de fallo de herramientas sobre `.lai/trajectories/`; lista las 10 más recientes |
+| Concurrencia | `concurrency.rs` + `harness.rs` — locks por `(repo, índice)` y `(repo, worktree)` con `mkdir` atómico y recuperación de locks stale por PID; `inspect_phase` toma el lock de índice antes de construir/actualizar el RepoMap |
+| Suite de benchmark | `benchmarks/tasks/*.json` — 6 tareas (sintaxis, reparación Python, análisis, fix test-dirigido, generación de código, documentación); `lai bench` + comparativa |
 | Deny incondicional | `harness.rs::edit_phase` — integridad + PolicyEngine; `auto_approve` nunca convierte un Deny en ejecución |
 
-**Estado del build:** `cargo check` 0 errores · `cargo test` 56/56 en verde · binario valida `harness`/`bench`/`mcp`/`recover`/`trajectories`.
+**Estado del build:** `cargo check` 0 errores · `cargo test` 60/60 en verde · binario valida `harness`/`bench`/`mcp`/`recover`/`trajectories`.
 
-Pendiente para fases posteriores (según hoja de ruta v4.0): concurrencia con bloqueos por `(repo, índice)` y `(repo, worktree)` (transversal 4.4), suite de benchmark ampliada (Fase 6), auto-mejora controlada (análisis offline de trayectorias + adopción condicionada a benchmark).
+Pendiente para fases posteriores (según hoja de ruta v4.0): auto-mejora controlada completa (análisis offline de trayectorias + adopción de cambios en lai condicionada a benchmark). El resto de transversales (4.1 aislamiento, 4.2 Change Engine, 4.3 observabilidad, 4.4 concurrencia) y las Fases 0-6 están implementados.

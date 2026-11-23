@@ -21,6 +21,7 @@ mod bench;
 mod mcp;
 mod trajectory;
 mod change_engine;
+mod concurrency;
 
 use clap::Parser;
 

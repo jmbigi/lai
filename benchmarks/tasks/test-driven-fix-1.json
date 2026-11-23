@@ -1,0 +1,16 @@
+{
+  "id": "test-driven-fix-1",
+  "task_type": "bugfix",
+  "description": "In the repository there is a Python module with a failing behavior: the add(a, b) function in src/calc.py returns a - b instead of a + b. Find the bug, fix it, and verify with the existing test suite (tests/test_calc.py).",
+  "acceptance_criteria": [
+    "src/calc.py contains def add(a, b) returning the sum a + b",
+    "tests/test_calc.py passes"
+  ],
+  "required_tests": [
+    "python3 -m pytest tests/test_calc.py -q"
+  ],
+  "verification_scope": [
+    "syntax",
+    "unit_tests"
+  ]
+}

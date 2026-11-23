@@ -1,0 +1,15 @@
+{
+  "id": "code-generation-1",
+  "task_type": "feature",
+  "description": "Create a new Python module src/geometry.py with a function rectangle_area(width, height) that returns width*height, raising ValueError for negative dimensions, plus a docstring. No tests exist yet; verify syntax only.",
+  "acceptance_criteria": [
+    "src/geometry.py exists and defines rectangle_area",
+    "Negative dimensions raise ValueError"
+  ],
+  "required_tests": [
+    "python3 -m py_compile src/geometry.py"
+  ],
+  "verification_scope": [
+    "syntax"
+  ]
+}

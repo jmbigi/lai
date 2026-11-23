@@ -543,6 +543,13 @@ impl ExecutionHarness {
     async fn inspect_phase(&mut self, task_id: &str, spec: &TaskSpec) -> Result<crate::repomap::RepoMap> {
         info!("Inspecting repository for task: {}", task_id);
 
+        // Transversal 4.4: lock exclusivo de índice por (repo, índice).
+        // Dos tareas con worktrees distintos no indexan el mismo repo a la vez.
+        let repo_key = self.config.working_dir.to_string_lossy().to_string();
+        let _index_lock = crate::concurrency::LockManager::new(&self.config.working_dir)
+            .acquire_index_lock(&repo_key, Duration::from_secs(10))
+            .map_err(|e| anyhow::anyhow!("No se pudo adquirir el lock de índice: {}", e))?;
+
         // Build or update repo map
         let repo_map = self.context_engine.build_repo_map(&self.config.working_dir).await?;
 
