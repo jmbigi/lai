@@ -56,3 +56,9 @@ htmlcov/
 # Gateway logs (rotated)
 gateway-go/*.log
 lai_rust/target/
+
+# lai runtime artifacts
+.lai/
+.benchmarks/
+*.rej
+*.orig
