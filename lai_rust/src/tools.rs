@@ -825,6 +825,19 @@ impl ToolRegistry {
             Err(anyhow::anyhow!("Tool not found: {}", name))
         }
     }
+
+    /// JSON-value wrapper for the harness: Value args -> call_tool -> parsed Value.
+    /// Non-JSON outputs are wrapped as {"output": "..."}.
+    pub async fn call(&self, name: &str, args: Value) -> Result<Value> {
+        let map: HashMap<String, Value> = args
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let out = self.call_tool(name, map).await?;
+        Ok(serde_json::from_str(&out).unwrap_or_else(|_| serde_json::json!({ "output": out })))
+    }
 }
 
 fn validate_python_syntax(code: &str) -> Result<()> {

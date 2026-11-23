@@ -1314,3 +1314,52 @@ complete -c lai -f -a "(__fish_lai_complete)"
     };
     print!("{}", script);
 }
+
+// ============================================================================
+// Harness command - ExecutionLoop (deterministic runtime, Fase 0/1)
+// ============================================================================
+
+pub async fn cmd_harness(task: &str, yolo: bool, model: &str, base_url: &str, allow_remote: bool) {
+    use crate::harness::{ExecutionHarness, HarnessConfig};
+
+    let llm = crate::llm::LlmClient::new(base_url, model, allow_remote);
+    let mut config = HarnessConfig::default();
+    if yolo {
+        config.auto_approve = true;
+    }
+
+    let mut harness = match ExecutionHarness::new(config, llm) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Harness init error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("lai harness: {}", task);
+    match harness.execute(task, "generic").await {
+        Ok(result) => {
+            println!("\n=== Execution Result ===");
+            println!("Task:      {}", result.task_id);
+            println!("Success:   {}", result.success);
+            println!("State:     {:?}", result.final_state);
+            println!("Iterations: {}", result.iterations);
+            println!("Tool turns: {}", result.total_tool_turns);
+            println!("Duration:  {}ms", result.duration_ms);
+            if !result.files_modified.is_empty() {
+                println!("Files:     {}", result.files_modified.join(", "));
+            }
+            for v in &result.verification_results {
+                println!("Verify [{}] {}: {}", if v.passed { "PASS" } else { "FAIL" }, v.verifier, v.details);
+            }
+            println!("Summary:   {}", result.summary);
+            if !result.success {
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("Harness error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}

@@ -5,6 +5,13 @@
 mod commands;
 mod llm;
 mod policy;
+mod services;
+mod safety;
+mod tools;
+mod telemetry;
+mod repomap;
+mod context;
+mod harness;
 
 use clap::Parser;
 
@@ -44,25 +51,55 @@ enum Commands {
     },
     /// Check status
     Status,
+    /// Run an autonomous task through the ExecutionHarness (deterministic runtime)
+    Harness {
+        #[arg(help = "Task description")]
+        task: String,
+        #[arg(long, help = "YOLO mode: auto-approve confirmations (Deny remains enforced)")]
+        yolo: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() {
+    // Initialize telemetry first - before any other operations
+    let telemetry_config = crate::telemetry::TelemetryConfig {
+        level: std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+        log_dir: std::env::var("LAI_LOG_DIR").ok().map(std::path::PathBuf::from),
+        json_output: std::env::var("LAI_LOG_JSON").is_ok(),
+        console_output: true,
+        debug_artifacts: std::env::var("LAI_DEBUG_ARTIFACTS").is_ok(),
+        debug_artifacts_dir: std::env::var("LAI_DEBUG_TESTS").ok().map(std::path::PathBuf::from),
+        max_file_size_mb: 100,
+        max_files: 10,
+        span_events: true,
+    };
+    let _ = crate::telemetry::init_telemetry(telemetry_config);
+
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Chat { prompt, .. }) => {
-            commands::cmd_chat(&prompt, &cli.model, &cli.base_url, cli.allow_remote).await;
+            commands::cmd_chat(
+                &prompt, false, false, false, false, false, None, None,
+                &cli.model, &cli.base_url, "es", cli.allow_remote,
+            ).await;
         }
         Some(Commands::Code {
             description,
             filename,
             yolo,
         }) => {
-            commands::cmd_code(&description, &filename, yolo, &cli.model, &cli.base_url, cli.allow_remote).await;
+            commands::cmd_code(
+                &description, &filename, false, yolo, 2,
+                &cli.model, &cli.base_url, cli.allow_remote,
+            ).await;
         }
         Some(Commands::Status) => {
             commands::cmd_status().await;
+        }
+        Some(Commands::Harness { task, yolo }) => {
+            commands::cmd_harness(&task, yolo, &cli.model, &cli.base_url, cli.allow_remote).await;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);

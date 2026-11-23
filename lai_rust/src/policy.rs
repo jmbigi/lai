@@ -282,7 +282,26 @@ impl PolicyEngine {
         match tool {
             "write_file" | "apply_patch" => {
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                self.check_write_path(path)
+                let write_decision = self.check_write_path(path);
+                if !write_decision.allowed {
+                    return write_decision;
+                }
+                // Secret detection in content/patch (Rule 8: no credentials in writes).
+                if self.config.detect_secrets {
+                    for field in ["content", "patch"] {
+                        if let Some(text) = args.get(field).and_then(|v| v.as_str()) {
+                            if self.contains_secrets(text) {
+                                return PolicyDecision {
+                                    allowed: false,
+                                    reason: format!("{} appears to contain secrets/credentials", field),
+                                    policy: "SecretDetection".into(),
+                                    risk_level: RiskLevel::Critical,
+                                };
+                            }
+                        }
+                    }
+                }
+                write_decision
             }
             "run_command" => {
                 let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
