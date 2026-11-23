@@ -235,6 +235,96 @@ pub struct ExecutionHarness {
     recovered_context: Option<ExecutionContext>,
 }
 
+/// Aislamiento por tarea con git worktrees (v4.0, transversal 4.1).
+/// Cada tarea corre en su propio worktree; la frontera del PolicyEngine
+/// (`working_dir`) queda confinada a ese directorio.
+pub struct TaskWorktree {
+    pub path: PathBuf,
+    pub branch: String,
+    pub repo_root: PathBuf,
+}
+
+/// Crea un worktree aislado para una tarea: rama `lai/task-<slug>-<id>`
+/// basada en HEAD, en `<repo>/.lai/worktrees/<nombre>`.
+pub fn create_worktree(task: &str) -> Result<TaskWorktree> {
+    use std::process::Command;
+
+    let repo_root = PathBuf::from(String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("git no disponible: {}", e))?
+            .stdout,
+    )?
+    .trim()
+    .to_string());
+
+    create_worktree_in(&repo_root, task)
+}
+
+/// Igual que [`create_worktree`] pero con el repo root explícito (testeable).
+pub fn create_worktree_in(repo_root: &std::path::Path, task: &str) -> Result<TaskWorktree> {
+    use std::process::Command;
+
+    let slug: String = task
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .collect::<String>()
+        .chars()
+        .take(40)
+        .collect();
+    let slug = slug.trim_matches('-');
+    let slug = if slug.is_empty() { "tarea" } else { slug };
+    let id = &Uuid::new_v4().to_string()[..8];
+    let name = format!("{}-{}", slug, id);
+    let branch = format!("lai/task-{}", name);
+    let path = repo_root.join(".lai").join("worktrees").join(&name);
+
+    let out = Command::new("git")
+        .args(["worktree", "add", "-b", &branch, path.to_str().unwrap(), "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("git worktree add falló: {}", e))?;
+    if !out.status.success() {
+        return Err(anyhow::anyhow!(
+            "git worktree add falló: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+
+    Ok(TaskWorktree { path, branch, repo_root: repo_root.to_path_buf() })
+}
+
+/// Elimina el worktree y su rama (usado cuando la tarea falla).
+pub fn remove_worktree(wt: &TaskWorktree) {
+    use std::process::Command;
+    let _ = Command::new("git")
+        .args(["worktree", "remove", "--force", wt.path.to_str().unwrap()])
+        .current_dir(&wt.repo_root)
+        .output();
+    let _ = Command::new("git")
+        .args(["branch", "-D", &wt.branch])
+        .current_dir(&wt.repo_root)
+        .output();
+}
+
+/// Fusiona la rama del worktree en la rama principal (solo tras éxito).
+pub fn merge_worktree(wt: &TaskWorktree) -> Result<()> {
+    use std::process::Command;
+    let out = Command::new("git")
+        .args(["merge", "--no-edit", &wt.branch])
+        .current_dir(&wt.repo_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("git merge falló: {}", e))?;
+    if !out.status.success() {
+        return Err(anyhow::anyhow!(
+            "git merge falló: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 impl ExecutionHarness {
     /// Create a new execution harness
     pub fn new(config: HarnessConfig, llm: LlmClient) -> Result<Self> {
@@ -993,5 +1083,68 @@ mod tests {
         let rm = RecoveryManager::new(dir);
         let task_id = format!("task-x-{}", Uuid::new_v4());
         assert!(rm.list_checkpoints(&task_id).unwrap().is_empty());
+    }
+
+    /// Ciclo de vida completo del aislamiento por worktree (transversal 4.1):
+    /// crear -> editar dentro -> merge -> remove.
+    #[test]
+    fn test_worktree_lifecycle() {
+        use std::process::Command;
+
+        let repo = std::env::temp_dir().join(format!("lai-wt-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {:?} falló: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-b", "master"]);
+        fs::write(repo.join("README.md"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+
+        // Crear worktree aislado
+        let wt = create_worktree_in(&repo, "tarea de prueba").expect("create_worktree_in");
+        assert!(wt.path.is_dir());
+        assert!(wt.path.join("README.md").exists());
+
+        // Editar dentro del worktree y commitear en su rama
+        fs::write(wt.path.join("README.md"), "cambio aislado\n").unwrap();
+        let out = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&wt.path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = Command::new("git")
+            .args(["commit", "-m", "cambio"])
+            .current_dir(&wt.path)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // La rama principal NO ve el cambio (aislamiento real)
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "base\n");
+
+        // Merge -> la rama principal ve el cambio
+        merge_worktree(&wt).expect("merge_worktree");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "cambio aislado\n");
+
+        // Remove -> worktree y rama desaparecen
+        remove_worktree(&wt);
+        assert!(!wt.path.exists());
+
+        let _ = fs::remove_dir_all(&repo);
     }
 }

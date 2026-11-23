@@ -379,8 +379,10 @@ Correspondencia v4.0 ↔ código (rama `feat/fase-0-1-harness`):
 | Trayectorias (auto-mejora) | `trajectory.rs` — registro JSONL por tarea (Task → Plan → Actions con definition_hash → Verification → Outcome) en `.lai/trajectories/`; `TrajectoryStats` agrega success_rate, duración media, verificación efectiva y tasa de fallo de herramientas |
 | Recuperación | `lai recover [--task <id>]` — lista checkpoints (`<task>-<cp>.json`) con estado/paso/archivos y muestra el último en detalle (plan, repo_map, archivos modificados); los checkpoints incluyen el estado del RepoMap |
 | Comparativa de benchmarks | `lai bench --compare-with <baseline.json>` — tabla de deltas (resueltas, verificación efectiva, duración) con marcas REGRESION/MEJORA por tarea |
+| Aislamiento por tarea | `harness.rs::create_worktree_in/remove_worktree/merge_worktree` + `lai harness --worktree [--worktree-merge]` — cada tarea corre en un worktree git propio (`lai/task-<slug>-<id>`); la frontera del PolicyEngine queda confinada al worktree; fusión solo tras éxito verificado |
+| Análisis de trayectorias | `lai trajectories` — agrega success_rate, duración media, iteraciones, verificación efectiva y tasa de fallo de herramientas sobre `.lai/trajectories/`; lista las 10 más recientes |
 | Deny incondicional | `harness.rs::edit_phase` — integridad + PolicyEngine; `auto_approve` nunca convierte un Deny en ejecución |
 
-**Estado del build:** `cargo check` 0 errores · `cargo test` 49/49 en verde · binario valida `harness`/`bench`/`mcp`/`recover`.
+**Estado del build:** `cargo check` 0 errores · `cargo test` 50/50 en verde · binario valida `harness`/`bench`/`mcp`/`recover`/`trajectories`.
 
 Pendiente para fases posteriores (según hoja de ruta v4.0): revisión adversarial (Fase 5), aislamiento por tarea con worktrees + concurrencia (transversal 4.1/4.4), Change Engine transaccional completo (transversal 4.2), suite de benchmark ampliada y comparativas (Fase 6), auto-mejora controlada.

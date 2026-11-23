@@ -67,6 +67,10 @@ enum Commands {
         yolo: bool,
         #[arg(long, help = "Require a verified sandbox for command execution (fail-closed)")]
         sandbox: bool,
+        #[arg(long, help = "Isolate the task in a dedicated git worktree (transversal 4.1)")]
+        worktree: bool,
+        #[arg(long, help = "Merge the worktree branch back on success (requires --worktree)")]
+        worktree_merge: bool,
     },
     /// Run the internal benchmark suite (lai bench)
     Bench {
@@ -85,6 +89,8 @@ enum Commands {
         #[arg(long, default_value = "/tmp/lai-checkpoints", help = "Checkpoint directory")]
         checkpoints: String,
     },
+    /// Analyze registered trajectories (auto-improvement metrics, v4.0 Phase 6)
+    Trajectories,
     /// Start MCP server (stdio JSON-RPC) exposing lai tools
     Mcp,
 }
@@ -127,14 +133,17 @@ async fn main() {
         Some(Commands::Status) => {
             commands::cmd_status().await;
         }
-        Some(Commands::Harness { task, yolo, sandbox }) => {
-            commands::cmd_harness(&task, yolo, sandbox, &cli.model, &cli.base_url, cli.allow_remote).await;
+        Some(Commands::Harness { task, yolo, sandbox, worktree, worktree_merge }) => {
+            commands::cmd_harness(&task, yolo, sandbox, worktree, worktree_merge, &cli.model, &cli.base_url, cli.allow_remote).await;
         }
         Some(Commands::Bench { tasks, out, compare_with }) => {
             commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote, compare_with.as_deref()).await;
         }
         Some(Commands::Recover { task, checkpoints }) => {
             commands::cmd_recover(task.as_deref(), &checkpoints).await;
+        }
+        Some(Commands::Trajectories) => {
+            commands::cmd_trajectories().await;
         }
         Some(Commands::Mcp) => {
             commands::cmd_mcp().await;

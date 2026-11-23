@@ -1319,7 +1319,7 @@ complete -c lai -f -a "(__fish_lai_complete)"
 // Harness command - ExecutionLoop (deterministic runtime, Fase 0/1)
 // ============================================================================
 
-pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, model: &str, base_url: &str, allow_remote: bool) {
+pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, worktree: bool, worktree_merge: bool, model: &str, base_url: &str, allow_remote: bool) {
     use crate::harness::{ExecutionHarness, HarnessConfig};
 
     // Sandbox preflight (v4.0): si se exige y no puede aplicarse, el
@@ -1336,8 +1336,26 @@ pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, model: &str, bas
         println!("Sandbox: no disponible ({}) — comandos sin aislamiento (usa --sandbox para exigirlo)", st.detail);
     }
 
+    // Aislamiento por tarea (transversal 4.1): la tarea corre en un worktree
+    // propio y la frontera del PolicyEngine queda confinada a ese directorio.
+    let mut config = HarnessConfig::default().require_sandbox(sandbox);
+    let wt = if worktree {
+        match crate::harness::create_worktree(task) {
+            Ok(wt) => {
+                println!("Worktree aislado: {} (rama {})", wt.path.display(), wt.branch);
+                config.working_dir = wt.path.clone();
+                Some(wt)
+            }
+            Err(e) => {
+                eprintln!("No se pudo crear el worktree: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
     let llm = crate::llm::LlmClient::new(base_url, model, allow_remote);
-    let config = HarnessConfig::default().require_sandbox(sandbox);
 
     let mut harness = match ExecutionHarness::new(config, llm) {
         Ok(h) => h,
@@ -1348,31 +1366,57 @@ pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, model: &str, bas
     };
 
     println!("lai harness: {}", task);
-    match harness.execute(task, "generic").await {
-        Ok(result) => {
-            println!("\n=== Execution Result ===");
-            println!("Task:      {}", result.task_id);
-            println!("Success:   {}", result.success);
-            println!("Verdict:   {}", result.verdict.label());
-            println!("State:     {:?}", result.final_state);
-            println!("Iterations: {}", result.iterations);
-            println!("Tool turns: {}", result.total_tool_turns);
-            println!("Duration:  {}ms", result.duration_ms);
-            if !result.files_modified.is_empty() {
-                println!("Files:     {}", result.files_modified.join(", "));
-            }
-            for v in &result.verification_results {
-                println!("Verify [{}] {}: {}", if v.passed { "PASS" } else { "FAIL" }, v.verifier, v.details);
-            }
-            println!("Summary:   {}", result.summary);
-            if !result.success {
-                std::process::exit(1);
-            }
-        }
+    let outcome = harness.execute(task, "generic").await;
+    let result = match outcome {
+        Ok(r) => r,
         Err(e) => {
+            if let Some(wt) = &wt {
+                crate::harness::remove_worktree(wt);
+                println!("Worktree eliminado (tarea falló).");
+            }
             eprintln!("Harness error: {}", e);
             std::process::exit(1);
         }
+    };
+
+    // Cierre del worktree: éxito + --worktree-merge fusiona la rama;
+    // éxito sin merge deja el worktree para revisión; fallo lo elimina.
+    if let Some(wt) = &wt {
+        if result.success {
+            if worktree_merge {
+                match crate::harness::merge_worktree(wt) {
+                    Ok(()) => {
+                        println!("Rama {} fusionada en la rama principal.", wt.branch);
+                        crate::harness::remove_worktree(wt);
+                    }
+                    Err(e) => eprintln!("Fusión falló (worktree conservado para revisión): {}", e),
+                }
+            } else {
+                println!("Worktree conservado para revisión: {} (rama {})", wt.path.display(), wt.branch);
+            }
+        } else {
+            crate::harness::remove_worktree(wt);
+            println!("Worktree eliminado (tarea no exitosa).");
+        }
+    }
+
+    println!("\n=== Execution Result ===");
+    println!("Task:      {}", result.task_id);
+    println!("Success:   {}", result.success);
+    println!("Verdict:   {}", result.verdict.label());
+    println!("State:     {:?}", result.final_state);
+    println!("Iterations: {}", result.iterations);
+    println!("Tool turns: {}", result.total_tool_turns);
+    println!("Duration:  {}ms", result.duration_ms);
+    if !result.files_modified.is_empty() {
+        println!("Files:     {}", result.files_modified.join(", "));
+    }
+    for v in &result.verification_results {
+        println!("Verify [{}] {}: {}", if v.passed { "PASS" } else { "FAIL" }, v.verifier, v.details);
+    }
+    println!("Summary:   {}", result.summary);
+    if !result.success {
+        std::process::exit(1);
     }
 }
 
@@ -1445,6 +1489,37 @@ pub async fn cmd_mcp() {
     if let Err(e) = crate::mcp::serve(registry).await {
         eprintln!("MCP server error: {}", e);
         std::process::exit(1);
+    }
+}
+
+/// lai trajectories: análisis de rendimiento sobre las trayectorias
+/// registradas (base de la auto-mejora, v4.0 Fase 6).
+pub async fn cmd_trajectories() {
+    let records = crate::trajectory::load_trajectories();
+    if records.is_empty() {
+        println!("Sin trayectorias registradas en .lai/trajectories/.");
+        return;
+    }
+
+    let stats = crate::trajectory::TrajectoryStats::compute(&records);
+    println!("=== lai trajectories ===");
+    println!("Tareas registradas:     {}", stats.tasks);
+    println!("Tasa de éxito:          {:.0}%", stats.success_rate * 100.0);
+    println!("Duración media:         {:.0}ms", stats.avg_duration_ms);
+    println!("Iteraciones medias:     {:.1}", stats.avg_iterations);
+    println!("Verificación efectiva:  {:.0}%", stats.verification_effective_rate * 100.0);
+    println!("Tasa de fallo de tools: {:.0}%", stats.tool_failure_rate * 100.0);
+
+    println!("\nTrayectorias (más recientes al final):");
+    for r in records.iter().rev().take(10) {
+        println!(
+            "  [{}] {} -> {} | {} acciones | {} verif. | {}ms | {}",
+            r.task_id, r.model, r.verdict, r.actions.len(),
+            r.verification_levels_passed.len(), r.duration_ms, r.outcome
+        );
+    }
+    if records.len() > 10 {
+        println!("  ... y {} trayectorias más", records.len() - 10);
     }
 }
 
