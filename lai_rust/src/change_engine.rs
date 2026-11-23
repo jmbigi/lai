@@ -12,7 +12,6 @@
 //! sobre el estado final en disco.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -58,11 +57,9 @@ pub struct ChangeEngine {
     journal_dir: PathBuf,
 }
 
-/// Hash SHA-256 en hexadecimal de un contenido.
+/// Hash SHA-256 en hexadecimal de un contenido (delega en integrity.rs).
 pub fn sha256_hex(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    crate::integrity::sha256_hex(content)
 }
 
 impl ChangeEngine {

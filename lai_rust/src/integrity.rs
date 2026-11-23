@@ -9,6 +9,14 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+/// Hash SHA-256 en hexadecimal de un contenido (compartido por los
+/// subsistemas de integridad: definiciones, journal, pins MCP).
+pub fn sha256_hex(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 use std::collections::HashMap;
 
 /// Definición completa de una herramienta (fuente del hash de integridad).

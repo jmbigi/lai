@@ -22,6 +22,13 @@ mod mcp;
 mod trajectory;
 mod change_engine;
 mod concurrency;
+mod contracts;
+mod mcp_security;
+mod hybrid_rag;
+mod cpg;
+mod dag;
+mod property_testing;
+mod formal;
 
 use clap::Parser;
 
