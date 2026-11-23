@@ -124,7 +124,10 @@ impl MemoryStore {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
-        let pattern = tokens.join(" ");
+        // Recall orientado a recuperación: OR entre tokens (cualquier término
+        // coincide, BM25 ordena por relevancia). FTS5 con AND implícito hace
+        // que las preguntas largas no recuperen nada.
+        let pattern = tokens.join(" OR ");
 
         let mut sql = String::from(
             "SELECT m.id, m.kind, m.project, m.source, m.confidence, m.content, m.metadata, m.created_at \
@@ -230,7 +233,13 @@ mod tests {
         assert_eq!(invalidated, 1);
 
         let results = store.recall("write_file", None, 5).unwrap();
-        assert!(results.is_empty(), "la entrada invalidada no debe recuperarse");
+        // Con recall OR pueden recuperarse otras entradas válidas; la
+        // entrada invalidada (hash-v1) nunca debe aparecer.
+        assert!(
+            results.iter().all(|r| !r.content.contains("produjo X")),
+            "la entrada invalidada no debe recuperarse: {:?}",
+            results.iter().map(|r| r.content.clone()).collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

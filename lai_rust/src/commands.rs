@@ -1421,7 +1421,7 @@ pub async fn cmd_harness(task: &str, yolo: bool, sandbox: bool, worktree: bool, 
 }
 
 /// lai bench: ejecuta la suite interna y emite métricas versionadas.
-pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &str, allow_remote: bool, compare_with: Option<&str>) {
+pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &str, allow_remote: bool, compare_with: Option<&str>, concurrency: usize, retrieval: bool) {
     // Modo comparativo: contrasta dos ficheros de resultados ya existentes.
     if let Some(baseline_path) = compare_with {
         let load = |p: &str| -> crate::bench::BenchSummary {
@@ -1469,25 +1469,336 @@ pub async fn cmd_bench(tasks_dir: &str, out_dir: &str, model: &str, base_url: &s
     }
 
     let workdir = std::env::current_dir().unwrap_or_default();
-    let summary = crate::bench::run_bench(&tasks, model, base_url, allow_remote, workdir)
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("Benchmark error: {}", e);
-            std::process::exit(1);
-        });
+    let summary = if concurrency > 1 {
+        println!("Ejecución concurrente: {} tareas en paralelo (worktrees aislados)", concurrency);
+        crate::bench::run_bench_concurrent(&tasks, model, base_url, allow_remote, &workdir, concurrency)
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("Benchmark error: {}", e);
+                std::process::exit(1);
+            })
+    } else {
+        crate::bench::run_bench(&tasks, model, base_url, allow_remote, workdir.clone())
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("Benchmark error: {}", e);
+                std::process::exit(1);
+            })
+    };
 
     crate::bench::print_summary(&summary);
     match crate::bench::write_results(&summary, std::path::Path::new(out_dir)) {
         Ok(path) => println!("Resultados: {}", path.display()),
         Err(e) => eprintln!("No se pudieron guardar los resultados: {}", e),
     }
+
+    // Benchmark de recuperación (admisibilidad del hybrid RAG, v5.0).
+    if retrieval {
+        match crate::retrieval_bench::run_retrieval_bench(&workdir, 3) {
+            Ok(r) => {
+                println!("\n=== lai bench --retrieval ===");
+                println!("Keyword baseline: Recall@3={:.2} MRR@3={:.2}", r.baseline_keyword.recall_at_k, r.baseline_keyword.mrr_at_k);
+                println!("Hybrid RRF:       Recall@3={:.2} MRR@3={:.2}", r.hybrid_rrf.recall_at_k, r.hybrid_rrf.mrr_at_k);
+                if r.hybrid_wins {
+                    println!("Híbrido MEJORA la línea base (candidato a adopción).");
+                } else {
+                    println!("Híbrido NO mejora la línea base (no adoptar).");
+                }
+            }
+            Err(e) => eprintln!("Retrieval bench error: {}", e),
+        }
+    }
 }
 
 /// lai mcp: servidor MCP mínimo (stdio JSON-RPC) sobre el ToolRegistry.
-pub async fn cmd_mcp() {
-    let registry = crate::tools::ToolRegistry::new();
+pub async fn cmd_mcp(verify_pins: Option<&str>) {
+    let mut registry = crate::tools::ToolRegistry::new();
+
+    // MCP Hangar (v5.0): si se pasa un fichero de pins, la integridad de las
+    // definiciones se verifica antes de servir; mismatch -> fail-closed.
+    if let Some(pins_path) = verify_pins {
+        match crate::mcp_security::McpPinRegistry::load_or_init(std::path::Path::new(pins_path)) {
+            Ok(pins) => {
+                let defs = registry
+                    .get_tools_schema()
+                    .iter()
+                    .map(|s| crate::mcp_security::McpToolDef {
+                        server: "lai".to_string(),
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        input_schema: s.parameters.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let (ok, denied) = pins.filter_verified(&defs);
+                if !denied.is_empty() {
+                    eprintln!("MCP fail-closed: {} herramientas NO verificadas contra los pins:", denied.len());
+                    for (name, reason) in &denied {
+                        eprintln!("  - {}: {}", name, reason);
+                    }
+                    std::process::exit(1);
+                }
+                println!("MCP pins verificados: {} herramientas conformes.", ok.len());
+            }
+            Err(e) => {
+                eprintln!("MCP fail-closed: no se pudo leer '{}': {}", pins_path, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     if let Err(e) = crate::mcp::serve(registry).await {
         eprintln!("MCP server error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+/// lai mcp-pin: fija los pins de las definiciones actuales (MCP Hangar).
+pub fn cmd_mcp_pin(out: &str) {
+    let registry = crate::tools::ToolRegistry::new();
+    let mut pins = crate::mcp_security::McpPinRegistry::new();
+    let count = registry.get_tools_schema().len();
+    for s in registry.get_tools_schema() {
+        pins.pin(&crate::mcp_security::McpToolDef {
+            server: "lai".to_string(),
+            name: s.name.clone(),
+            description: s.description.clone(),
+            input_schema: s.parameters.clone(),
+        });
+    }
+    match pins.save(std::path::Path::new(out)) {
+        Ok(()) => println!("Pins guardados: {} herramientas -> {}", count, out),
+        Err(e) => {
+            eprintln!("No se pudieron guardar los pins: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// lai mcp-verify: verifica definiciones anunciadas contra los pins.
+pub fn cmd_mcp_verify(pins: &str, defs: &str) {
+    let registry = match crate::mcp_security::McpPinRegistry::load_or_init(std::path::Path::new(pins)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("No se pudo leer '{}': {}", pins, e);
+            std::process::exit(1);
+        }
+    };
+    let content = std::fs::read_to_string(defs).unwrap_or_else(|e| {
+        eprintln!("No se pudo leer '{}': {}", defs, e);
+        std::process::exit(1);
+    });
+    let defs: Vec<crate::mcp_security::McpToolDef> = serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("JSON inválido en '{}': {}", defs, e);
+        std::process::exit(1);
+    });
+    let (ok, denied) = registry.filter_verified(&defs);
+    println!("Verificadas: {}", ok.len());
+    for (name, reason) in &denied {
+        println!("DENEGADA {}: {}", name, reason);
+    }
+    if !denied.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+/// lai contracts: verifica contratos requires/ensures de un SPEC.md.
+pub fn cmd_contracts(spec_path: &str, pre: &str, post: &str) {
+    let spec_md = std::fs::read_to_string(spec_path).unwrap_or_else(|e| {
+        eprintln!("No se pudo leer '{}': {}", spec_path, e);
+        std::process::exit(1);
+    });
+    let pre: serde_json::Value = serde_json::from_str(pre).unwrap_or_else(|e| {
+        eprintln!("Pre-state JSON inválido: {}", e);
+        std::process::exit(1);
+    });
+    let post: serde_json::Value = serde_json::from_str(post).unwrap_or_else(|e| {
+        eprintln!("Post-state JSON inválido: {}", e);
+        std::process::exit(1);
+    });
+    let specs = crate::formal::parse_contracts_from_spec(&spec_md);
+    if specs.is_empty() {
+        eprintln!("Sin contratos en '{}'", spec_path);
+        std::process::exit(1);
+    }
+    let mut all_closed = true;
+    for spec in &specs {
+        let r = crate::formal::check_contract(spec, &pre, &post);
+        let verdict = r.to_external_verdict().to_verdict(spec.required);
+        println!("[{}] {} -> {}", if r.closed { "CLOSED" } else { "OPEN" }, spec.target, verdict.label());
+        for c in &r.clauses {
+            println!("    {} {}: {}", c.expression, if c.satisfied { "OK" } else { "FAIL" }, c.error.clone().unwrap_or_default());
+        }
+        if !r.closed {
+            all_closed = false;
+        }
+    }
+    if !all_closed {
+        std::process::exit(1);
+    }
+}
+
+/// lai nn-verify: verifica una propiedad de robustez neuronal.
+pub fn cmd_nn_verify(spec_path: &str, required: bool) {
+    let content = std::fs::read_to_string(spec_path).unwrap_or_else(|e| {
+        eprintln!("No se pudo leer '{}': {}", spec_path, e);
+        std::process::exit(1);
+    });
+    let spec: crate::nn_verifier::NnPropertySpec = serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("JSON inválido en '{}': {}", spec_path, e);
+        std::process::exit(1);
+    });
+    let result = crate::nn_verifier::verify_nn(&spec);
+    let verdict = result.verdict.to_verdict(required);
+    println!("Verificación NN ({}): {} [{}ms] {}", spec.model, verdict.label(), result.duration_ms, result.detail);
+    if !matches!(verdict, crate::verifier::Verdict::Success) {
+        std::process::exit(1);
+    }
+}
+
+/// lai memory-eval: evalúa el MemoryStore contra un dataset LOCOMO.
+pub fn cmd_memory_eval(dataset: &str, db: &str, k: usize) {
+    let store = match crate::memory::MemoryStore::open(std::path::Path::new(db)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("No se pudo abrir '{}': {}", db, e);
+            std::process::exit(1);
+        }
+    };
+    let dataset = crate::memory_eval::load_dataset(std::path::Path::new(dataset)).unwrap_or_else(|e| {
+        eprintln!("No se pudo leer '{}': {}", dataset, e);
+        std::process::exit(1);
+    });
+    let m = crate::memory_eval::evaluate_memory(&store, &dataset, k);
+    println!("=== lai memory-eval ===");
+    println!("Preguntas:            {}", m.questions);
+    println!("Recall@{}:            {:.2}", k, m.recall_at_k);
+    println!("MRR@{}:               {:.2}", k, m.mrr_at_k);
+    println!("Latencia media:       {:.1}ms", m.avg_latency_ms);
+    println!("Tokens de contexto:   {:.0}", m.avg_context_tokens);
+}
+
+/// lai cpg: reporte del grafo de propiedades (taint / slicing).
+pub fn cmd_cpg(workspace: &str, taint: bool, slice: Option<&str>) {
+    use std::collections::HashMap;
+    let root = std::path::PathBuf::from(workspace);
+    let repo_map = crate::repomap::build_repo_map(&root).unwrap_or_else(|e| {
+        eprintln!("RepoMap error: {}", e);
+        std::process::exit(1);
+    });
+    let mut contents: HashMap<String, String> = HashMap::new();
+    for f in &repo_map.files {
+        if let Ok(c) = std::fs::read_to_string(root.join(&f.path)) {
+            contents.insert(f.path.clone(), c);
+        }
+    }
+    let graph = crate::cpg::build_cpg(&repo_map, &contents);
+    println!("{}", graph.summary());
+    if taint {
+        let findings = crate::cpg::taint_analysis(&repo_map, &contents);
+        println!("\n=== Taint findings ({}) ===", findings.len());
+        for f in &findings {
+            println!("[{}] {}:{} -> {}:{} ({} -> {})", f.severity, f.file, f.source_line, f.file, f.sink_line, f.source, f.sink);
+        }
+    }
+    if let Some(sym) = slice {
+        let ids: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
+        let root_id = ids
+            .iter()
+            .find(|id| id.ends_with(&format!("::{}", sym)) || *id == sym)
+            .cloned()
+            .unwrap_or_else(|| {
+                eprintln!("Símbolo '{}' no encontrado. IDs válidos: {:?}", sym, ids.iter().take(5).collect::<Vec<_>>());
+                std::process::exit(1);
+            });
+        let slice = graph.slice(&root_id);
+        println!("\n=== Slice desde {} ({} nodos) ===", root_id, slice.len());
+        for id in &slice {
+            println!("  {}", id);
+        }
+    }
+}
+
+/// lai telemetry-export: exporta trayectorias a batches Langfuse.
+pub fn cmd_telemetry_export(dir: &str, host: Option<&str>) {
+    let records = crate::trajectory::load_trajectories();
+    if records.is_empty() {
+        println!("Sin trayectorias registradas.");
+        return;
+    }
+    let exporter = crate::langfuse::LangfuseExporter::new(
+        std::path::Path::new(dir),
+        host.map(String::from),
+        std::env::var("LANGFUSE_API_KEY").ok(),
+    );
+    for r in &records {
+        let batch = crate::langfuse::batch_from_trajectory(
+            &r.task_id,
+            &r.model,
+            &r.verdict,
+            r.actions.iter().filter_map(|a| a.tool_definition_hash.clone()).collect(),
+            vec![],
+            r.verification_levels_attempted.clone(),
+            r.verification_levels_passed.clone(),
+            r.duration_ms,
+        );
+        match exporter.export(&batch) {
+            Ok(path) => println!("{} -> {}", r.task_id, path.display()),
+            Err(e) => eprintln!("Export falló (fail-open): {}", e),
+        }
+    }
+}
+
+/// lai graph-run: ejecuta un grafo LangGraph-style con el ToolRegistry.
+pub async fn cmd_graph_run(spec_path: &str, required: bool) {
+    let content = std::fs::read_to_string(spec_path).unwrap_or_else(|e| {
+        eprintln!("No se pudo leer '{}': {}", spec_path, e);
+        std::process::exit(1);
+    });
+    let spec: crate::graph_orchestrator::GraphSpec = serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("JSON inválido en '{}': {}", spec_path, e);
+        std::process::exit(1);
+    });
+    let registry = crate::tools::ToolRegistry::new();
+    let registry_ref = &registry;
+    let initial = crate::graph_orchestrator::GraphState {
+        current: spec.entry.clone(),
+        tokens_used: 0,
+        steps: vec![],
+        last_result: None,
+        halted_reason: None,
+    };
+    let state = crate::graph_orchestrator::run_graph_async::<_, _>(&spec, initial, |node: crate::graph_orchestrator::GraphNode| async move {
+        match node.kind.as_str() {
+            "tool" => {
+                let tool = node.tool.clone().unwrap_or_default();
+                let args = node
+                    .prompt
+                    .as_ref()
+                    .and_then(|p| serde_json::from_str::<serde_json::Value>(p).ok())
+                    .unwrap_or_default();
+                match registry_ref.call(&tool, args).await {
+                    Ok(result) => Ok((result.to_string(), 0, true)),
+                    Err(e) => Ok((format!("error: {}", e), 0, false)),
+                }
+            }
+            "verify" => {
+                let ok = node.prompt.as_deref() == Some("ok") || node.prompt.is_none();
+                Ok(("ok".to_string(), 0, ok))
+            }
+            _ => Ok((node.prompt.clone().unwrap_or_default(), 0, true)),
+        }
+    })
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("Graph error: {}", e);
+        std::process::exit(1);
+    });
+    let verdict = crate::graph_orchestrator::graph_to_verdict(&spec, &state, required);
+    println!("Pasos: {:?}", state.steps);
+    println!("Tokens: {} / {}", state.tokens_used, spec.token_budget);
+    println!("Detenido: {:?}", state.halted_reason);
+    println!("Veredicto: {}", verdict.label());
+    if !matches!(verdict, crate::verifier::Verdict::Success) {
         std::process::exit(1);
     }
 }

@@ -160,6 +160,162 @@ pub async fn run_bench(
     })
 }
 
+/// Ejecuta las tareas del benchmark en paralelo con aislamiento por worktree
+/// (DAGent, transversal 4.1 + 4.4): cada tarea corre en su propio worktree,
+/// con `concurrency` tareas simultáneas como máximo. Los worktrees son
+/// árboles independientes: indexan sin contención (cada uno tiene su lock
+/// de índice propio por working_dir).
+pub async fn run_bench_concurrent(
+    tasks: &[BenchTask],
+    model: &str,
+    base_url: &str,
+    allow_remote: bool,
+    workdir: &std::path::Path,
+    concurrency: usize,
+) -> Result<BenchSummary> {
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    let total_start = std::time::Instant::now();
+    let sem = Arc::new(Semaphore::new(concurrency.max(1)));
+    let mut handles = Vec::new();
+
+    for task in tasks {
+        let permit = sem.clone().acquire_owned().await.map_err(|e| anyhow::anyhow!(e))?;
+        let task = task.clone();
+        let model = model.to_string();
+        let base_url = base_url.to_string();
+        let workdir = workdir.to_path_buf();
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            run_single_task(&task, &model, &base_url, allow_remote, &workdir).await
+        }));
+    }
+
+    let mut results = Vec::new();
+    for h in handles {
+        match h.await {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(BenchResult {
+                task_id: "unknown".to_string(),
+                resolved: false,
+                verdict: "PANIC".to_string(),
+                iterations: 0,
+                tool_turns: 0,
+                duration_ms: 0,
+                verification_effective: false,
+                integrity_verified: false,
+                error: Some(format!("task panic: {}", e)),
+            }),
+        }
+    }
+
+    summarize(results, model, total_start)
+}
+
+/// Ejecuta una tarea aislada en su propio worktree.
+async fn run_single_task(
+    task: &BenchTask,
+    model: &str,
+    base_url: &str,
+    allow_remote: bool,
+    workdir: &std::path::Path,
+) -> BenchResult {
+    use crate::harness::{create_worktree_in, remove_worktree, ExecutionHarness, HarnessConfig};
+
+    let start = std::time::Instant::now();
+    let wt = match create_worktree_in(workdir, &task.id) {
+        Ok(wt) => wt,
+        Err(e) => {
+            return BenchResult {
+                task_id: task.id.clone(),
+                resolved: false,
+                verdict: "WORKTREE_ERROR".to_string(),
+                iterations: 0,
+                tool_turns: 0,
+                duration_ms: 0,
+                verification_effective: false,
+                integrity_verified: true,
+                error: Some(format!("{}", e)),
+            }
+        }
+    };
+
+    let mut config = HarnessConfig::default();
+    config.working_dir = wt.path.clone();
+    config.checkpoint_dir = std::env::temp_dir().join(format!("lai-checkpoints-{}", task.id));
+    let llm = crate::llm::LlmClient::new(base_url, model, allow_remote);
+    let mut harness = match ExecutionHarness::new(config, llm) {
+        Ok(h) => h,
+        Err(e) => {
+            remove_worktree(&wt);
+            return BenchResult {
+                task_id: task.id.clone(),
+                resolved: false,
+                verdict: "INIT_ERROR".to_string(),
+                iterations: 0,
+                tool_turns: 0,
+                duration_ms: 0,
+                verification_effective: false,
+                integrity_verified: true,
+                error: Some(format!("{}", e)),
+            };
+        }
+    };
+
+    let result = harness.execute(&task.description, &task.task_type).await;
+    remove_worktree(&wt);
+
+    match result {
+        Ok(r) => BenchResult {
+            task_id: task.id.clone(),
+            resolved: r.success,
+            verdict: r.verdict.label().to_string(),
+            iterations: r.iterations,
+            tool_turns: r.total_tool_turns,
+            duration_ms: start.elapsed().as_millis() as u64,
+            verification_effective: r.success,
+            integrity_verified: true,
+            error: r.error,
+        },
+        Err(e) => BenchResult {
+            task_id: task.id.clone(),
+            resolved: false,
+            verdict: "ERROR".to_string(),
+            iterations: 0,
+            tool_turns: 0,
+            duration_ms: start.elapsed().as_millis() as u64,
+            verification_effective: false,
+            integrity_verified: true,
+            error: Some(format!("{}", e)),
+        },
+    }
+}
+
+/// Agrega resultados en un BenchSummary.
+fn summarize(results: Vec<BenchResult>, model: &str, total_start: std::time::Instant) -> Result<BenchSummary> {
+    let total = results.len();
+    let resolved = results.iter().filter(|r| r.resolved).count();
+    let verification_effective = results.iter().filter(|r| r.verification_effective).count();
+    let integrity_verified = results.iter().filter(|r| r.integrity_verified).count();
+    let total_duration_ms = total_start.elapsed().as_millis() as u64;
+    let avg_duration_ms = if total > 0 {
+        results.iter().map(|r| r.duration_ms as f64).sum::<f64>() / total as f64
+    } else {
+        0.0
+    };
+    Ok(BenchSummary {
+        model: model.to_string(),
+        total_tasks: total,
+        resolved,
+        verification_effective_rate: if total > 0 { verification_effective as f64 / total as f64 } else { 0.0 },
+        integrity_rate: if total > 0 { integrity_verified as f64 / total as f64 } else { 1.0 },
+        avg_duration_ms,
+        total_duration_ms,
+        results,
+    })
+}
+
 /// Persiste los resultados versionados en `<out_dir>/bench-<timestamp>.json`.
 pub fn write_results(summary: &BenchSummary, out_dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(out_dir)?;

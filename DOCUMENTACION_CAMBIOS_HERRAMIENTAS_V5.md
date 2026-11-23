@@ -93,4 +93,16 @@
 
 ---
 
-**Estado del bloque:** `cargo test` 102/102 (antes 60).
+---
+
+## Cambio 8 — Integración CLI y `lai bench` (concurrencia, retrieval, contratos, NN, memoria, CPG, telemetría, grafo)
+
+**Qué/por qué:** exponer las 10 herramientas por línea de comandos y conectar la medición obligatoria a `lai bench`.
+
+**ANTES:** los módulos existían pero sin punto de entrada CLI ni métricas de adopción.
+
+**DESPUÉS:** `lai bench [--concurrency N]` ejecuta tareas en paralelo aisladas en worktrees (DAGent + 4.1/4.4); `lai bench --retrieval` mide Recall@k/MRR@k del hybrid RAG vs línea base keyword (alimenta la AdmissionGate); `lai mcp-pin`/`lai mcp-verify` (MCP Hangar); `lai contracts` (Dafny-lite); `lai nn-verify` (α,β-CROWN/Marabou/ERAN adapter); `lai memory-eval` (LOCOMO Recall/MRR); `lai cpg` (taint/slice); `lai telemetry-export` (batches Langfuse); `lai graph-run` (LangGraph grafo con presupuesto de tokens).
+
+**Verificación:** `cargo check` 0 errores · `cargo test` 121/102+21.
+
+**Estado del bloque 1:** `cargo test` 121 en verde (antes 60 en v4.0).

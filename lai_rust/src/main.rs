@@ -29,6 +29,11 @@ mod cpg;
 mod dag;
 mod property_testing;
 mod formal;
+mod nn_verifier;
+mod langfuse;
+mod graph_orchestrator;
+mod memory_eval;
+mod retrieval_bench;
 
 use clap::Parser;
 
@@ -81,16 +86,6 @@ enum Commands {
         #[arg(long, help = "Merge the worktree branch back on success (requires --worktree)")]
         worktree_merge: bool,
     },
-    /// Run the internal benchmark suite (lai bench)
-    Bench {
-        #[arg(long, default_value = "benchmarks/tasks", help = "Tasks directory (*.json)")]
-        tasks: String,
-        #[arg(long, default_value = ".benchmarks/results", help = "Output directory")]
-        out: String,
-        /// Compare two benchmark result files and show the delta table
-        #[arg(long, help = "Path to baseline result file")]
-        compare_with: Option<String>,
-    },
     /// Recover execution state: list or show checkpoints of a task
     Recover {
         #[arg(long, help = "Task id (task-*-xxxxxxxx); if omitted, list all tasks")]
@@ -100,8 +95,88 @@ enum Commands {
     },
     /// Analyze registered trajectories (auto-improvement metrics, v4.0 Phase 6)
     Trajectories,
+    /// Run the internal benchmark suite (lai bench)
+    Bench {
+        #[arg(long, default_value = "benchmarks/tasks", help = "Tasks directory (*.json)")]
+        tasks: String,
+        #[arg(long, default_value = ".benchmarks/results", help = "Output directory")]
+        out: String,
+        /// Compare two benchmark result files and show the delta table
+        #[arg(long, help = "Path to baseline result file")]
+        compare_with: Option<String>,
+        /// Run tasks in parallel, each isolated in its own git worktree (DAGent)
+        #[arg(long, default_value = "1", help = "Max concurrent tasks (each in its own worktree)")]
+        concurrency: usize,
+        /// Also run the retrieval benchmark (hybrid RAG vs keyword baseline)
+        #[arg(long, help = "Run retrieval bench over the current workspace")]
+        retrieval: bool,
+    },
     /// Start MCP server (stdio JSON-RPC) exposing lai tools
-    Mcp,
+    Mcp {
+        /// Refuse to serve if the pins file does not verify (fail-closed)
+        #[arg(long, help = "Path to mcp-pins.json; if set, startup is denied on mismatch")]
+        verify_pins: Option<String>,
+    },
+    /// Pin the current tool definitions to a pins file (MCP Hangar, v5.0)
+    McpPin {
+        #[arg(long, default_value = ".lai/mcp-pins.json", help = "Output pins file")]
+        out: String,
+    },
+    /// Verify advertised MCP tool definitions against a pins file (fail-closed)
+    McpVerify {
+        #[arg(long, help = "Pins file (.lai/mcp-pins.json)")]
+        pins: String,
+        #[arg(long, help = "JSON file with advertised tool definitions [{server,name,description,input_schema}]")]
+        defs: String,
+    },
+    /// Check formal contracts (requires/ensures) declared in a SPEC.md
+    Contracts {
+        #[arg(long, help = "SPEC.md with a ```json contracts``` block")]
+        spec: String,
+        #[arg(long, help = "Pre-state JSON")]
+        pre: String,
+        #[arg(long, help = "Post-state JSON")]
+        post: String,
+    },
+    /// Verify a neural-network robustness property with an external verifier
+    NnVerify {
+        #[arg(long, help = "JSON file with NnPropertySpec")]
+        spec: String,
+        #[arg(long, help = "The property is required by verification_scope (fail-closed BLOCKED)")]
+        required: bool,
+    },
+    /// Evaluate MemoryStore recall against a LOCOMO-style dataset (JSONL)
+    MemoryEval {
+        #[arg(long, help = "Dataset JSONL: {question, expected[]})")]
+        dataset: String,
+        #[arg(long, default_value = ".lai/memory.db", help = "Memory database")]
+        db: String,
+        #[arg(long, default_value = "3", help = "k for recall@k")]
+        k: usize,
+    },
+    /// Code Property Graph report over a workspace (taint/slicing, v5.0)
+    Cpg {
+        #[arg(long, default_value = ".", help = "Workspace root")]
+        workspace: String,
+        #[arg(long, help = "Show taint findings (sources -> sinks)")]
+        taint: bool,
+        #[arg(long, help = "Slice from this symbol id (file::kind::name)")]
+        slice: Option<String>,
+    },
+    /// Export trajectories to Langfuse-compatible batches (v5.0)
+    TelemetryExport {
+        #[arg(long, default_value = ".lai/langfuse", help = "Output directory")]
+        dir: String,
+        #[arg(long, help = "Langfuse host for POST (default: local batch only)")]
+        host: Option<String>,
+    },
+    /// Run a LangGraph-style explicit graph spec (tool/llm/verify nodes)
+    GraphRun {
+        #[arg(long, help = "JSON file with GraphSpec")]
+        spec: String,
+        #[arg(long, help = "The graph result is required (fail-closed BLOCKED)")]
+        required: bool,
+    },
 }
 
 #[tokio::main]
@@ -145,8 +220,8 @@ async fn main() {
         Some(Commands::Harness { task, yolo, sandbox, worktree, worktree_merge }) => {
             commands::cmd_harness(&task, yolo, sandbox, worktree, worktree_merge, &cli.model, &cli.base_url, cli.allow_remote).await;
         }
-        Some(Commands::Bench { tasks, out, compare_with }) => {
-            commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote, compare_with.as_deref()).await;
+        Some(Commands::Bench { tasks, out, compare_with, concurrency, retrieval }) => {
+            commands::cmd_bench(&tasks, &out, &cli.model, &cli.base_url, cli.allow_remote, compare_with.as_deref(), concurrency, retrieval).await;
         }
         Some(Commands::Recover { task, checkpoints }) => {
             commands::cmd_recover(task.as_deref(), &checkpoints).await;
@@ -154,8 +229,32 @@ async fn main() {
         Some(Commands::Trajectories) => {
             commands::cmd_trajectories().await;
         }
-        Some(Commands::Mcp) => {
-            commands::cmd_mcp().await;
+        Some(Commands::Mcp { verify_pins }) => {
+            commands::cmd_mcp(verify_pins.as_deref()).await;
+        }
+        Some(Commands::McpPin { out }) => {
+            commands::cmd_mcp_pin(&out);
+        }
+        Some(Commands::McpVerify { pins, defs }) => {
+            commands::cmd_mcp_verify(&pins, &defs);
+        }
+        Some(Commands::Contracts { spec, pre, post }) => {
+            commands::cmd_contracts(&spec, &pre, &post);
+        }
+        Some(Commands::NnVerify { spec, required }) => {
+            commands::cmd_nn_verify(&spec, required);
+        }
+        Some(Commands::MemoryEval { dataset, db, k }) => {
+            commands::cmd_memory_eval(&dataset, &db, k);
+        }
+        Some(Commands::Cpg { workspace, taint, slice }) => {
+            commands::cmd_cpg(&workspace, taint, slice.as_deref());
+        }
+        Some(Commands::TelemetryExport { dir, host }) => {
+            commands::cmd_telemetry_export(&dir, host.as_deref());
+        }
+        Some(Commands::GraphRun { spec, required }) => {
+            commands::cmd_graph_run(&spec, required).await;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);
