@@ -386,6 +386,23 @@ Correspondencia v4.0 ↔ código (rama `feat/fase-0-1-harness`):
 | Suite de benchmark | `benchmarks/tasks/*.json` — 6 tareas (sintaxis, reparación Python, análisis, fix test-dirigido, generación de código, documentación); `lai bench` + comparativa |
 | Deny incondicional | `harness.rs::edit_phase` — integridad + PolicyEngine; `auto_approve` nunca convierte un Deny en ejecución |
 
-**Estado del build:** `cargo check` 0 errores · `cargo test` 60/60 en verde · binario valida `harness`/`bench`/`mcp`/`recover`/`trajectories`.
+### 11b. Herramientas v5.0 integradas (medición obligatoria vía `lai bench`)
 
-Pendiente para fases posteriores (según hoja de ruta v4.0): auto-mejora controlada completa (análisis offline de trayectorias + adopción de cambios en lai condicionada a benchmark). El resto de transversales (4.1 aislamiento, 4.2 Change Engine, 4.3 observabilidad, 4.4 concurrencia) y las Fases 0-6 están implementados.
+Todas se integran bajo los contratos v5.0: `contracts.rs` mapea sus resultados parciales a `Verdict` acotado y la `AdmissionGate` exige medición contra línea base antes de adoptar ninguna. Ninguna sustituye un control determinista por una afirmación del modelo; ninguna se declara "verificada" si solo ejecutó lo que pudo.
+
+| Herramienta v5.0 | Módulo / CLI | Contrato aplicado |
+|---|---|---|
+| LangGraph (orquesta DAG) | `graph_orchestrator.rs` + `lai graph-run` | grafo explícito con presupuesto de tokens; agotamiento → `BLOCKED` |
+| α,β-CROWN / Marabou / ERAN | `nn_verifier.rs` + `lai nn-verify` | protocolo JSON; safe/unsafe/timeout/unknown → SUCCESS/GAPS/BLOCKED; sin verificador → Unknown → BLOCKED si requerido |
+| Mem0 / Zep (medición) | `memory_eval.rs` + `lai memory-eval` | LOCOMO Recall@k/MRR@k + tokens; adopción solo si mejora la línea base |
+| Langfuse (observabilidad) | `langfuse.rs` + `lai telemetry-export` | batches Langfuse locales + POST opcional a localhost:3000; **fail-open** (no es un control) |
+| codebadger / Joern CPG | `cpg.rs` + `lai cpg` | call graph, taint tracking sources→sinks, slicing; no sustituye el RepoMap |
+| Hybrid RAG (FTS5+grafo+RRF) | `hybrid_rag.rs` + `lai bench --retrieval` | fusión RRF; Recall@k/MRR@c vs keyword baseline |
+| MCP Hangar (digest pinning) | `mcp_security.rs` + `lai mcp-pin/--verify-pins` | definition_hash SHA-256; **fail-closed** ante drift |
+| Dafny / TLA+ (formales) | `formal.rs` + `lai contracts` | requires/ensures ejecutables; requerido sin cerrar → BLOCKED |
+| Hypothesis / fast-check | `property_testing.rs` | propiedades + mutation testing; propiedad débil → Unknown |
+| DAGent (planificación DAG) | `dag.rs` + `--concurrency` en `lai bench` | capas topológicas, grow incremental, ejecución con worktrees aislados |
+
+**Estado del build:** `cargo check` 0 errores · `cargo test` 121/121 en verde · binario valida `harness`/`bench`/`mcp`/`recover`/`trajectories` + 10 herramientas v5.0 por CLI.
+
+Pendiente para fases posteriores (según hoja de ruta v4.0/v5.0): **auto-mejora controlada completa** — adopción real de una herramienta externa solo si `lai bench` demuestra mejora sobre la línea base (medición ya instrumentada: AdmissionGate, retrieval bench, memory-eval). El resto de transversales (4.1–4.4) y las Fases 0-6 están implementados.

@@ -106,3 +106,13 @@
 **Verificación:** `cargo check` 0 errores · `cargo test` 121/102+21.
 
 **Estado del bloque 1:** `cargo test` 121 en verde (antes 60 en v4.0).
+
+---
+
+## Resumen final (2026-11-23)
+
+- **Tests:** 121/121 (baseline v4.0: 60).
+- **Build:** `cargo check` 0 errores · `cargo build --release` OK.
+- **Contratos v5.0 cumplidos:** fail-closed (MCP pins, integridad, sandbox, Change Engine rollback, required-contracts BLOCKED), veredicto acotado (SUCCESS/GAPS/BLOCKED vía contracts.rs), integridad de herramientas (definition_hash en TOOL, journal de cambios, pins MCP), medición obligatoria (AdmissionGate, retrieval bench Recall@k/MRR@k, memory-eval LOCOMO, `--concurrency` en bench).
+- **Regla 0:** todo local; sin cloud/API keys. Langfuse es fail-open y solo POSTea a `LANGFUSE_HOST` si se configura (default: batch local).
+- **Próximo paso (auto-mejora controlada):** adoptar una herramienta externa solo cuando `lai bench` demuestre mejora contra la línea base sin degradar verificación.

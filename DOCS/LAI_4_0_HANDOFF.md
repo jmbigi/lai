@@ -29,13 +29,35 @@ Implementación completa de la especificación v4.0 (`DOCS/ARQUITECTURA_TECNICA_
 ## Verificación
 
 - `cargo check`: 0 errores.
-- `cargo test`: **60/60 en verde**.
+- `cargo test`: **121/121 en verde**.
 - `cargo build --release`: OK.
-- Smoke tests: `lai mcp` (tools/list + tools/call write_file/apply_patch con journal y `[verified]`), `lai recover` (checkpoint sintético), `lai bench --help`, `lai trajectories`, `lai harness --help`.
+- Smoke tests: `lai mcp` (tools/list + tools/call con journal), `lai mcp-pin/--verify-pins` (fail-closed ante drift), `lai nn-verify` (BLOCKED sin verificador externo), `lai contracts` (requires/ensures cerrado/violado), `lai memory-eval` (LOCOMO Recall/MRR), `lai cpg` (taint + slicing sobre el workspace), `lai graph-run` (grafo con presupuesto de tokens), `lai telemetry-export` (batches Langfuse), `lai recover`, `lai bench` (--concurrency con worktrees aislados, --retrieval con Recall@k/MRR@k del hybrid RAG vs línea base).
+
+## Herramientas v5.0 integradas (medición obligatoria vía `lai bench`)
+
+Todas bajo contratos v5.0 (fail-closed, veredicto acotado, `definition_hash`, medición contra línea base):
+
+| # | Herramienta | Módulo | CLI |
+|---|---|---|---|
+| 1 | LangGraph (orquesta DAG) | `graph_orchestrator.rs` | `lai graph-run --spec` |
+| 2 | α,β-CROWN / Marabou / ERAN | `nn_verifier.rs` | `lai nn-verify --spec --required` |
+| 3 | Mem0 / Zep (medición LOCOMO) | `memory_eval.rs` | `lai memory-eval --dataset --db` |
+| 4 | Langfuse (observabilidad) | `langfuse.rs` | `lai telemetry-export --dir [--host]` |
+| 5 | codebadger / Joern CPG | `cpg.rs` | `lai cpg [--taint|--slice]` |
+| 6 | Hybrid RAG (FTS5+grafo+RRF) | `hybrid_rag.rs` + `retrieval_bench.rs` | `lai bench --retrieval` |
+| 7 | MCP Hangar (digest pinning) | `mcp_security.rs` | `lai mcp-pin`, `lai mcp --verify-pins`, `lai mcp-verify` |
+| 8 | Dafny / TLA+ (formales) | `formal.rs` | `lai contracts --spec --pre --post` |
+| 9 | Hypothesis / fast-check | `property_testing.rs` | (uso interno de `AdmissionGate`) |
+| 10 | DAGent (planificación DAG) | `dag.rs` | `lai bench --concurrency N` |
+
+Base común: `contracts.rs` (`ExternalVerdict` → `Verdict` acotado + `AdmissionGate` con `may_adopt()`).
 
 ## Commits en la rama
 
 ```
+73e170d fix(v5.0): slice por símbolo y contratos SPEC con fence 'json contracts'
+d795412 feat(v5.0 herramientas 1-10): integración CLI y bench con medición obligatoria
+8d8e01a feat(v5.0 herramientas 5-10): capa de contratos, MCP Hangar, hybrid RAG, CPG, DAG, property testing, contratos formales
 085a474 feat: concurrencia con locks (transversal 4.4) y suite de benchmark ampliada
 ed8b7a6 chore: limpiar artefactos de prueba y versionar .lai/.benchmarks en .gitignore
 2aca2a0 feat: Change Engine transaccional (transversal 4.2) en write_file y apply_patch
@@ -48,7 +70,7 @@ d3ce41c feat: observabilidad v4.0 completa, trayectorias, recover y comparativa 
 
 ## Pendiente (largo plazo, experimental en la spec)
 
-- Auto-mejora controlada: análisis offline de trayectorias + adopción de cambios sobre lai condicionada a benchmark. La infraestructura de medida ya está (trayectorias, `TrajectoryStats`, `lai bench --compare-with`).
+- **Auto-mejora controlada completa**: adopción real de una herramienta externa solo si `lai bench` demuestra mejora sobre la línea base (medición ya instrumentada: `AdmissionGate`, retrieval bench, memory-eval; `may_adopt()`).
 
 ## Notas operativas
 

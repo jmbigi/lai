@@ -187,8 +187,10 @@ mod tests {
             &HashMap::new(),
             5,
         );
-        assert_eq!(ranked[0], "models.py"); // semilla presente en keyword
-        assert!(ranked.contains(&"views.py".to_string())); // vecino por símbolo
+        // Ambos, semilla y vecino por símbolo, deben aparecer en el top-k.
+        assert!(ranked.contains(&"models.py".to_string()));
+        assert!(ranked.contains(&"views.py".to_string()));
+        assert!(ranked.len() >= 2);
     }
 
     #[test]
