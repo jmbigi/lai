@@ -160,14 +160,157 @@ docker-compose down -v
 
 ---
 
-## 🔗 RECURSOS
+## 📋 REGLAS DE ADMISIÓN (Sección 7.3 - Obligatorio)
 
-- **Repositorio:** https://github.com/jmbigi/lai
-- **Docker Hub:** ghcr.io/ggerganov/llama.cpp, ollama/ollama, langfuse/langfuse, etc.
-- **Documentación:** AGENTS.md, ARQUITECTURA_TECNICA_LAI.md
-- **Benchmarks:** standard_benchmarks::all_benchmarks()
+Una herramienta **SOLO** entra en producción cuando:
+
+- [ ] 1. Supera las pruebas funcionales
+- [ ] 2. Cumple los contratos de seguridad (Sección 5)
+- [ ] 3. Tiene resultados reproducibles (múltiples ejecuciones)
+- [ ] 4. No degrada garantías existentes (fail-closed, verification)
+- [ ] 5. Demuestra mejora medible O capacidad nueva necesaria (benchmark vs baseline)
+- [ ] 6. Tiene mantenimiento y versiones controladas (semver, changelog)
+- [ ] 7. Dispone de mecanismo de desactivación (feature flag, kill switch)
+- [ ] 8. No introduce dependencias innecesarias (minimalismo)
+
+**Regla de oro:** Una herramienta que no demuestra valor medible en `lai bench` permanece experimental o se descarta.
 
 ---
 
-*Última actualización: 2026-11-23*
-*Commit: 0a649b6*
+## 🚫 QUÉ NO HACER (Sección 9 - Prohibido)
+
+| ❌ Decisión Prohibida | ✅ Alternativa Correcta |
+|---|---|
+| Sustituir ExecutionEngine por LangGraph | LangGraph como alternativa experimental (Phase 9) |
+| Instalar Mem0 y Zep/Graphiti simultáneamente | Benchmark propio primero, elegir uno |
+| Reemplazar FTS5 por embeddings | Hybrid RAG (FTS5 + embeddings + RRF) |
+| Usar LLM como verificador | Verificadores externos: Dafny, TLC, α,β-CROWN, Hypothesis |
+| Considerar Hypothesis = Dafny | Hypothesis = testing (evidencia experimental), Dafny = verificación formal |
+| Ejecutar todas las herramientas MCP directo | MCP Hangar + digest pinning + integrity checks |
+| Ejecutar análisis CPG en cada operación | Bajo demanda, cacheado |
+| Adoptar DAGent como dependencia crítica | DAG nativo + DAGent como referencia |
+| Incorporar verificadores neuronales sin modelos | Solo cuando existan componentes NN que verificar |
+| Medir éxito por respuestas del LLM | Métricas objetivas: latency, tokens, verification rate, error rate |
+
+---
+
+## 🏗️ PRINCIPIOS ARQUITECTÓNICOS (Sección 4)
+
+- **Adapter Pattern:** Cada herramienta externa tiene un `CapabilityAdapter` 
+- **Contratos Internos Estables:** `CapabilityAdapter` trait + `ExecutionRequest/Result`
+- **Fail-Closed:** Si integridad no verificada → bloquear ejecución
+- **Verificación Acotada:** `ResultStatus` distingue `VERIFIED` (formal) vs `PASSED` (testing)
+- **Integridad de Herramientas:** fingerprint + executable hash + container hash + deps versions
+- **Medición Obligatoria:** Cada adapter registra métricas completas (Sección 5.4)
+- **Autoridad del Núcleo:** LLM propone, núcleos deterministas deciden
+
+---
+
+## 🔒 CONTRATOS OBLIGATORIOS (Sección 5)
+
+### 5.1 Contrato de Ejecución (`CapabilityAdapter`)
+```rust
+trait CapabilityAdapter {
+    fn capability_id(&self) -> String;
+    fn tool_version(&self) -> String;
+    fn definition_hash(&self) -> String;
+    async fn health_check(&self) -> HealthCheckResult;
+    async fn preflight(&self, request: &ExecutionRequest) -> PreflightResult;
+    async fn execute(&self, request: ExecutionRequest) -> ExecutionResult;
+    async fn validate(&self, result: &ExecutionResult) -> ValidationResult;
+    async fn get_metrics(&self, execution_id: &str) -> Option<ExecutionMetrics>;
+}
+```
+
+### 5.2 Estados de Resultado (`ResultStatus`)
+| Estado | Significado | Es Éxito? |
+|---|---|---|
+| `VERIFIED` | Verificado formalmente (Dafny, TLC, α,β-CROWN) | ✅ |
+| `PASSED` | Test/check pasó (Hypothesis, lint, type-check) | ✅ |
+| `FAILED` | Fallo reproducible | ❌ |
+| `COUNTEREXAMPLE_FOUND` | Contraejemplo válido (Hypothesis, Marabou) | ❌ |
+| `PARTIAL` | Completado parcialmente | ⚠️ |
+| `UNKNOWN` | Evidencia insuficiente | ⚠️ |
+| `TIMEOUT` | Presupuesto temporal agotado | ⚠️ |
+| `RESOURCE_LIMIT` | Límite de recursos alcanzado | ⚠️ |
+| `BLOCKED` | Condición obligatoria impidió continuar | ⚠️ |
+| `ERROR` | Error interno | ❌ |
+
+**Regla:** `TIMEOUT` ≠ `VERIFIED`, `UNKNOWN` ≠ `PASSED`, `PARTIAL` ≠ `SUCCESS`
+
+### 5.3 Contrato de Integridad (Pre-ejecución)
+1. Verificar identidad (nombre, versión, instance_id)
+2. Validar fingerprint definición (SHA-256)
+3. Validar hash ejecutable/imagen contenedor
+4. Verificar versiones dependencias fijadas
+5. Validar permisos explícitos
+6. Verificar aislamiento (filesystem, red)
+7. Comprobar límites ejecución (CPU, memoria, timeout)
+
+### 5.4 Contrato de Medición (Por ejecución)
+```text
+tool_version, definition_hash, execution_time, cpu_time, memory_peak,
+tokens_input, tokens_output, network_io, result_status, verification_status,
+error_count, timeout_count, resource_limit_count
+```
+
+---
+
+## 🎯 PLAN DE IMPLEMENTACIÓN PRIORIZADO (Sección 6)
+
+| Fase | Incorporaciones | Prioridad | Criterio de Salida |
+|---|---|---|---|
+| 1 | **MCP Hangar + Integridad** | Crítica | Integridad 100%, discrepancias bloqueadas, auditoría completa |
+| 2 | **Langfuse** | Crítica | Línea base: coste, latencia, herramientas, errores, verificaciones |
+| 3 | **Hypothesis + Mutation Testing** | Muy Alta | Detectar mutaciones relevantes, reproducir contraejemplos |
+| 4 | **Hybrid RAG** | Muy Alta | Mejora estadísticamente significativa vs FTS5 baseline |
+| 5 | **Joern + codebadger** | Alta | CPG generation, taint tracking, vulnerability detection |
+| 6 | **Memoria (Mem0/Graphiti)** | Alta | Benchmark propio: decisiones, contratos, dependencias |
+| 7 | **Planificación DAG** | Alta | DAG nativo + comparación vs DAGent |
+| 8 | **Dafny + TLA+** | Media-Alta | Módulos críticos: permisos, estado, planificador, transacciones |
+| 9 | **LangGraph** | Media | Solo si reduce tokens/latencia SIN reducir verification rate |
+| 10 | **α,β-CROWN / Marabou / ERAN** | Condicional | Cuando existan componentes NN que verificar |
+
+---
+
+## 📊 MÉTRICAS DE BENCHMARK (Sección 7.1)
+
+| Dimensión | Métricas |
+|---|---|
+| **Calidad** | Exactitud, Recall@K, MRR, nDCG |
+| **Verificación** | % propiedades verificadas, verification rate |
+| **Seguridad** | Vulnerabilidades, controles incumplidos, integrity failures |
+| **Rendimiento** | Latencia p50, p95, p99, throughput |
+| **Eficiencia** | Tokens/tarea, CPU/tarea, memory/tarea |
+| **Recuperación** | Recall@5, Recall@10, MRR@10, nDCG@10 |
+| **Robustez** | Comportamiento entradas adversariales, fuzzing |
+| **Fiabilidad** | Reproducibilidad, recovery rate, MTTR |
+| **Mantenimiento** | Complejidad ciclomática, dependencias, LOC |
+| **Autonomía** | % tareas sin intervención, human-in-the-loop rate |
+
+**Comparación Obligatoria:** Mismo corpus, mismas consultas, mismos criterios, versiones fijadas, configuraciones documentadas, conjuntos de evaluación separados.
+
+**Significancia Estadística:** p-value < 0.05, Cohen's d effect size, intervalos de confianza 95%.
+
+---
+
+## 🛠️ HERRAMIENTAS ADICIONALES A EVALUAR (Sección 8)
+
+| Tecnología | Aplicación | Valor | Fase |
+|---|---|---|---|
+| **Z3** | SMT solving, constraints | Muy Alto | 6 |
+| **CVC5** | SMT, logical reasoning | Muy Alto | 6 |
+| **Why3** | Deductive verification | Muy Alto | 6 |
+| **Semgrep** | Static analysis, security rules | Alto | 5 |
+| **Tree-sitter** | Incremental parsing multi-lang | Alto | 6 |
+| **OpenTelemetry** | Standard instrumentation | Muy Alto | 5 |
+| **OPA/Rego** | Declarative policies | Muy Alto | 4/5 |
+| **SyGuS/CEGIS** | Program synthesis | Muy Alto | 6 |
+| **LibAFL** | Coverage-guided fuzzing | Alto | 6 |
+| **Mutmut** | Mutation testing Python | Alto | 3 |
+
+**Tres prioritarias:** OPA/Rego (políticas), Tree-sitter (parsing), OpenTelemetry (instrumentación).
+
+---
+
+## 🔗 RECURSOS
