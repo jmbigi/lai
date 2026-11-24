@@ -360,16 +360,18 @@ mod tests {
 
     #[test]
     fn test_contract_verification_result() {
-        let contract = VerificationContract::new(
+        let mut contract = VerificationContract::new(
             "test".to_string(),
             "comp".to_string(),
             "1.0".to_string(),
             "spec".to_string(),
         );
-        let mut result = ContractVerificationResult::new(&contract);
-        
+
         let formula = LogicFormula::new(VerificationLanguage::Dafny, "true".to_string());
         let obligation = ProofObligation::new("test".to_string(), "desc".to_string(), formula);
+        contract.add_obligation(obligation.clone());
+
+        let mut result = ContractVerificationResult::new(&contract);
         
         let proof_result = ProofResult {
             obligation_id: obligation.id,

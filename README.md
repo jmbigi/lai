@@ -154,6 +154,37 @@ Environment variables:
 
 ## Development
 
+### Windows (PowerShell)
+
+```powershell
+# Install/refresh toolchains and Python dependencies.
+# Add -Elevate to relaunch with a UAC prompt for machine-wide installs.
+powershell -ExecutionPolicy Bypass -File scripts/setup-dev.ps1 -Elevate
+
+# Build and run Rust, Go and Python checks.
+powershell -ExecutionPolicy Bypass -File scripts/dev-check.ps1
+
+# Start/stop the local stack.
+powershell -ExecutionPolicy Bypass -File scripts/start-services.ps1
+powershell -ExecutionPolicy Bypass -File scripts/stop-services.ps1
+```
+
+`start-llama.ps1` resolves the model from `-ModelPath`, `LAI_MODEL_PATH`,
+`models/*.gguf`, or an Ollama blob (default `qwen3:8b-nothink`). If port 8080
+is already occupied, stop the conflicting process or start llama.cpp on
+another port and update the upstream URL in `gateway-go/config.yaml`.
+
+### Linux / macOS
+
+```bash
+./scripts/setup-dev.sh          # install toolchains + Python deps
+./scripts/dev-check.sh          # cargo check/test + go build + pytest
+./scripts/start-services.sh     # llama.cpp :8080 + gateway :8081
+./scripts/stop-services.sh
+```
+
+### Manual commands
+
 ```bash
 # Rust version
 cd lai_rust
@@ -163,7 +194,7 @@ cargo test            # Run tests
 cargo clippy          # Lint
 cargo fmt             # Format
 
-# Python version
+# Python version (legacy; GNU make required)
 make check            # compile + ruff + pytest
 make lint             # ruff only
 make format           # ruff --fix + black
@@ -171,6 +202,17 @@ make type             # mypy
 make test             # pytest
 make gateway-build    # Build Go gateway
 ```
+
+### Development scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/setup-dev.ps1` / `.sh` | Install toolchains, create `.venv`, build gateway and CLI |
+| `scripts/dev-check.ps1` / `.sh` | Run Rust, Go and Python checks (`-Full`/`--full` adds fmt + clippy/vet) |
+| `scripts/start-llama.ps1` / `.sh` | Resolve a GGUF model and start llama.cpp on `127.0.0.1:8080` |
+| `scripts/start-gateway.ps1` / `.sh` | Build/start the Go gateway on `127.0.0.1:8081` |
+| `scripts/start-services.ps1` / `.sh` | Start llama.cpp and the gateway together |
+| `scripts/stop-services.ps1` / `.sh` | Stop processes recorded in `logs/*.pid` |
 
 ## Services
 

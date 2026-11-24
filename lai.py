@@ -1902,20 +1902,23 @@ def generate_cmd(args):
 
 
 def code_cmd(lai: LAI, args):
-    rag = get_rag()
+    corpus = None
+    # RAG is optional: sentence-transformers may not be installed. Code
+    # generation must still work without semantic context.
     try:
+        rag = get_rag()
         rag.add_directory("codegen", os.path.dirname(args.filename) or ".", extensions=(".py",))
+        ctx = rag.search(args.description, collection="codegen", top_k=5)
+        corpus = "\n".join([f'[REF {i}] {r["text"][:300]}' for i, r in enumerate(ctx)]) or None
     except Exception:
         pass
-    ctx = rag.search(args.description, collection="codegen", top_k=5)
-    corpus = "\n".join([f'[REF {i}] {r["text"][:300]}' for i, r in enumerate(ctx)])
     lai.code(
         args.description,
         args.filename,
         auto=args.auto,
         yolo=args.yolo,
         max_iterations=getattr(args, "max_iterations", 3),
-        corpus=corpus if corpus else None,
+        corpus=corpus,
     )
 
 
@@ -2010,8 +2013,9 @@ def review_cmd(lai: LAI, args):
 
     Files are chunked with line numbers so the model can cite exact locations.
     """
-    rag = get_rag()
+    # RAG indexing is optional; review itself only needs the local model.
     try:
+        rag = get_rag()
         target = args.path
         if os.path.isdir(target):
             rag.add_directory(

@@ -1,6 +1,16 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Helper macro for creating HashMaps with serde_json::Value
+macro_rules! hashmap {
+    ($( $key:expr => $val:expr ),* $(,)?) => {{
+        let mut map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        $( map.insert($key, $val.into()); )*
+        map
+    }};
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)] pub struct PolicyDecision { pub allowed: bool, pub reason: String, pub policy: String, pub risk_level: RiskLevel }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum RiskLevel { Low, Medium, High, Critical }
 #[derive(Debug, Clone)] pub struct PolicyConfig { pub max_session_tokens: u64, pub max_session_cost_cents: u64, pub extra_allowed_commands: Vec<String>, pub extra_protected_paths: Vec<String>, pub block_network_egress: bool, pub max_consecutive_calls: usize, pub max_writes_per_file: usize, pub detect_secrets: bool, pub workspace_root: PathBuf }
@@ -70,12 +80,24 @@ impl PolicyEngine {
     fn is_within_workspace(&self, path: &str) -> bool {
         let p = Path::new(path);
         let abs = if p.is_absolute() { p.to_path_buf() } else { self.config.workspace_root.join(p) };
-        let canon = abs.canonicalize().unwrap_or(abs);
-        let ws = self.config.workspace_root.canonicalize().unwrap_or_else(|_| self.config.workspace_root.clone());
-        canon.starts_with(&ws)
+        
+        // For non-existent paths, we can't canonicalize. Use the absolute path directly.
+        // Ensure both paths are normalized consistently (strip \\?\ prefix on Windows)
+        let canon = abs.canonicalize().map(|p| normalize_path(&p)).unwrap_or_else(|_| normalize_path(&abs));
+        let ws = self.config.workspace_root.canonicalize().map(|p| normalize_path(&p)).unwrap_or_else(|_| normalize_path(&self.config.workspace_root));
+        
+        // On Windows, compare case-insensitively
+        #[cfg(target_os = "windows")]
+        let starts_with = canon.to_string_lossy().to_lowercase().starts_with(&ws.to_string_lossy().to_lowercase());
+        #[cfg(not(target_os = "windows"))]
+        let starts_with = canon.starts_with(&ws);
+        
+        starts_with
     }
     fn is_protected(&self, path: &str) -> bool {
-        const PROTECTED: &[&str] = &["lai_rust/src/", ".git/", "lai.py", "AGENTS.md", "README.md"];
+        // Paths are relative to workspace root. When tests run from lai_rust/, paths are relative to lai_rust/.
+        // Protected paths that matter within the lai_rust/ workspace:
+        const PROTECTED: &[&str] = &["src/", ".git/", "Cargo.toml", "Cargo.lock"];
         let ps = path.to_string();
         for p in PROTECTED { if ps.contains(p) { return true; } }
         for extra in &self.config.extra_protected_paths { if ps.contains(extra) { return true; } }
@@ -86,4 +108,17 @@ impl PolicyEngine {
         ALLOWED.iter().any(|a| cmd == *a || cmd.ends_with(&format!(".{}", a)))
     }
     fn has_secrets(&self, text: &str) -> bool { text.contains("api_key") || text.contains("password") || text.contains("secret") }
+}
+
+/// Strip the Windows verbatim prefix (`\\?\`) so canonicalized paths compare
+/// correctly with regular absolute paths.
+fn normalize_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", rest))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
 }

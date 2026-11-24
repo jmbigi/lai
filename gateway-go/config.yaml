@@ -9,16 +9,16 @@ server:
   max_request_size: 52428800  # 50MB
 
 upstream:
-  llama_cpp:
-    url: "http://127.0.0.1:8080"
-    weight: 100
-    timeout: 300s
-    max_connections: 100
   ollama:
     url: "http://127.0.0.1:11434"
-    weight: 0
+    weight: 100
     timeout: 300s
     max_connections: 50
+  llama_cpp:
+    url: "http://127.0.0.1:8080"
+    weight: 0
+    timeout: 300s
+    max_connections: 100
 
 context:
   max_tokens: 32768

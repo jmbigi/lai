@@ -777,7 +777,31 @@ impl LangGraphBuilder {
         self
     }
 
-    pub fn build(self) -> LangGraphDefinition {
+    pub fn build(mut self) -> LangGraphDefinition {
+        // Materialize the implicit entry node so the executor can find it.
+        if !self.definition.nodes.iter().any(|n| n.id == self.definition.entry_point) {
+            let entry = self.definition.entry_point.clone();
+            self.definition
+                .add_node(LangGraphNode::new(entry, "Start".to_string(), LangGraphNodeType::Start));
+        }
+
+        // Materialize an implicit "end" node when an edge references it.
+        let references_end = self.definition.edges.iter().any(|e| e.to == "end");
+        if references_end && !self.definition.nodes.iter().any(|n| n.id == "end") {
+            self.definition.add_node(LangGraphNode::new(
+                "end".to_string(),
+                "End".to_string(),
+                LangGraphNodeType::End,
+            ));
+        }
+
+        // Exit points are nodes without outgoing edges.
+        let ids: Vec<String> = self.definition.nodes.iter().map(|n| n.id.clone()).collect();
+        self.definition.exit_points = ids
+            .into_iter()
+            .filter(|id| !self.definition.edges.iter().any(|e| &e.from == id))
+            .collect();
+
         self.definition
     }
 }

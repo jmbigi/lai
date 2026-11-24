@@ -36,8 +36,9 @@ fn test_policy_engine_protected_path() {
     let mut engine = PolicyEngine::default();
     
     // Write to protected path should be denied
+    // Note: tests run from lai_rust directory, so use "src/main.rs" not "lai_rust/src/main.rs"
     let decision = engine.check(&Operation::FileWrite {
-        path: "lai_rust/src/main.rs".to_string(),
+        path: "src/main.rs".to_string(),
     });
     
     assert!(!decision.allowed);

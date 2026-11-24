@@ -73,6 +73,7 @@ pub struct Choice {
 pub struct LlmClient {
     base_url: String,
     model: String,
+    api_key: Option<String>,
     client: reqwest::Client,
 }
 
@@ -81,7 +82,20 @@ impl LlmClient {
         Self {
             base_url,
             model,
+            api_key: std::env::var("LAI_API_KEY")
+                .ok()
+                .filter(|key| !key.is_empty()),
             client: reqwest::Client::new(),
+        }
+    }
+
+    fn chat_request(&self) -> reqwest::RequestBuilder {
+        let request = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url));
+        match &self.api_key {
+            Some(key) => request.bearer_auth(key),
+            None => request,
         }
     }
 
@@ -96,7 +110,7 @@ impl LlmClient {
                 name: None,
             }],
             tools: None,
-            tool_choice: None,
+            tool_choice: Some("none".to_string()),
             stream: Some(false),
             temperature: Some(0.7),
             max_tokens: Some(4096),
@@ -108,12 +122,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .json(&payload)
-            .send()
-            .await?;
+        let resp = self.chat_request().json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -151,12 +160,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .json(&payload)
-            .send()
-            .await?;
+        let resp = self.chat_request().json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

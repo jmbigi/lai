@@ -74,6 +74,9 @@ pub struct Checkpoint {
     pub changeset_id: String,
     pub timestamp: String,
     pub file_snapshots: HashMap<PathBuf, String>,
+    /// Files created by the changeset. They are removed on rollback.
+    #[serde(default)]
+    pub created_files: Vec<PathBuf>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -107,8 +110,13 @@ impl Default for ChangeEngineConfig {
 }
 
 impl ChangeEngine {
-    pub fn new(workspace_root: PathBuf, config: ChangeEngineConfig) -> Result<Self> {
-        fs::create_dir_all(&config.checkpoint_dir)?;
+    pub fn new(workspace_root: PathBuf, mut config: ChangeEngineConfig) -> Result<Self> {
+        // Keep checkpoints inside the workspace when a relative path is used.
+        if config.checkpoint_dir.is_relative() {
+            config.checkpoint_dir = workspace_root.join(&config.checkpoint_dir);
+        }
+        fs::create_dir_all(&config.checkpoint_dir)
+            .with_context(|| format!("creating checkpoint dir {}", config.checkpoint_dir.display()))?;
 
         Ok(Self {
             workspace_root,
@@ -131,24 +139,43 @@ impl ChangeEngine {
 
     /// Aplicar todos los cambios pendientes
     pub fn apply_changes(&self, description: &str) -> Result<ChangeSet> {
-        let mut pending = self.pending_changes.write().unwrap();
-        if pending.is_empty() {
-            return Err(anyhow::anyhow!("No pending changes to apply"));
-        }
+        // Take the pending changes out before creating the checkpoint: holding
+        // this write lock while create_checkpoint() reads it would deadlock.
+        let changes: Vec<FileChange> = {
+            let mut pending = self.pending_changes.write().unwrap();
+            if pending.is_empty() {
+                return Err(anyhow::anyhow!("No pending changes to apply"));
+            }
+            std::mem::take(&mut *pending)
+        };
 
         let changeset_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
 
         // Crear checkpoint antes de aplicar si está habilitado
-        if self.config.auto_checkpoint {
-            self.create_checkpoint(&changeset_id, "Pre-apply checkpoint")?;
-        }
+        let checkpoint_id = if self.config.auto_checkpoint {
+            match self.create_checkpoint_for(&changes, &changeset_id, "Pre-apply checkpoint") {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    self.pending_changes.write().unwrap().extend(changes);
+                    return Err(e);
+                }
+            }
+        } else {
+            None
+        };
 
-        let mut applied_changes = Vec::new();
+        let mut applied_changes = Vec::with_capacity(changes.len());
 
-        for change in pending.drain(..) {
-            self.apply_single_change(&change)?;
-            applied_changes.push(change);
+        for change in &changes {
+            if let Err(e) = self.apply_single_change(change) {
+                // Restore the pre-apply state before returning the error.
+                if let Some(id) = &checkpoint_id {
+                    let _ = self.rollback(id);
+                }
+                self.pending_changes.write().unwrap().extend(changes);
+                return Err(e);
+            }
+            applied_changes.push(change.clone());
         }
 
         let changeset = ChangeSet {
@@ -206,17 +233,42 @@ impl ChangeEngine {
 
     /// Crear checkpoint para rollback
     pub fn create_checkpoint(&self, changeset_id: &str, description: &str) -> Result<String> {
+        let pending = self.pending_changes.read().unwrap().clone();
+        self.create_checkpoint_for(&pending, changeset_id, description)
+    }
+
+    /// Crear checkpoint para un conjunto concreto de cambios.
+    ///
+    /// No adquiere el lock de `pending_changes`, por lo que es seguro llamarlo
+    /// mientras el llamador ya tiene esos cambios en su poder.
+    fn create_checkpoint_for(
+        &self,
+        changes: &[FileChange],
+        changeset_id: &str,
+        description: &str,
+    ) -> Result<String> {
         let checkpoint_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
         let mut snapshots = HashMap::new();
-        let pending = self.pending_changes.read().unwrap();
-        
-        for change in pending.iter() {
+        let mut created_files = Vec::new();
+
+        for change in changes {
             let full_path = self.workspace_root.join(&change.file_path);
             if full_path.exists() {
-                let content = fs::read_to_string(&full_path)?;
+                let content = fs::read_to_string(&full_path)
+                    .with_context(|| format!("snapshotting {}", full_path.display()))?;
                 snapshots.insert(change.file_path.clone(), content);
+            } else {
+                match change.change_type {
+                    ChangeType::Create => created_files.push(change.file_path.clone()),
+                    ChangeType::Move => {
+                        if let Some(new_path) = &change.new_content {
+                            created_files.push(PathBuf::from(new_path));
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -225,6 +277,7 @@ impl ChangeEngine {
             changeset_id: changeset_id.to_string(),
             timestamp: now,
             file_snapshots: snapshots,
+            created_files,
             metadata: {
                 let mut m = HashMap::new();
                 m.insert("description".to_string(), description.to_string());
@@ -245,8 +298,18 @@ impl ChangeEngine {
         let checkpoint = self.checkpoints.read().unwrap().get(checkpoint_id).cloned()
             .ok_or_else(|| anyhow::anyhow!("Checkpoint not found: {}", checkpoint_id))?;
 
-        for (path, content) in checkpoint.file_snapshots {
-            let full_path = self.workspace_root.join(&path);
+        // Remove files that did not exist before the changeset.
+        for path in &checkpoint.created_files {
+            let full_path = self.workspace_root.join(path);
+            if full_path.is_dir() {
+                fs::remove_dir_all(&full_path)?;
+            } else if full_path.exists() {
+                fs::remove_file(&full_path)?;
+            }
+        }
+
+        for (path, content) in &checkpoint.file_snapshots {
+            let full_path = self.workspace_root.join(path);
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)?;
             }

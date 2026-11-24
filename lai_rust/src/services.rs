@@ -120,20 +120,22 @@ impl Default for Services {
 }
 
 fn check_service(port: u16, health_path: &str) -> bool {
-    // Try HTTP health endpoint
-    if let Ok(resp) = reqwest::blocking::get(format!("http://127.0.0.1:{}{}", port, health_path)) {
-        if resp.status().is_success() {
-            return true;
-        }
+    // Prefer the HTTP health endpoint. A TCP-only fallback would report
+    // unrelated processes (for example a web server on port 8080) as healthy.
+    if !health_path.is_empty() {
+        return match reqwest::blocking::get(format!(
+            "http://127.0.0.1:{}{}",
+            port, health_path
+        )) {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        };
     }
-    // TCP fallback
-    if let Ok(_) = std::net::TcpStream::connect_timeout(
+    std::net::TcpStream::connect_timeout(
         &format!("127.0.0.1:{}", port).parse().unwrap(),
         Duration::from_millis(500),
-    ) {
-        return true;
-    }
-    false
+    )
+    .is_ok()
 }
 
 fn start_service(svc: &ServiceInfo) -> bool {
@@ -179,15 +181,21 @@ fn start_service(svc: &ServiceInfo) -> bool {
 }
 
 pub async fn check_service_async(client: &Client, port: u16, health_path: &str) -> bool {
-    if let Ok(resp) = client.get(format!("http://127.0.0.1:{}{}", port, health_path)).send().await {
-        if resp.status().is_success() {
-            return true;
-        }
+    // Prefer the HTTP health endpoint. Only fall back to a TCP probe when the
+    // service has no health path, so unrelated listeners are not reported.
+    if !health_path.is_empty() {
+        return match client
+            .get(format!("http://127.0.0.1:{}{}", port, health_path))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        };
     }
-    if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.is_ok() {
-        return true;
-    }
-    false
+    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .is_ok()
 }
 
 pub async fn check_all_services_async(services: &Services, client: &Client) {
