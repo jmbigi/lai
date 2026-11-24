@@ -1,0 +1,1 @@
+def escribir_archivo(ruta, contenido):
