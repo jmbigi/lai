@@ -47,36 +47,37 @@ A comprehensive CLI tool for reviewing, repairing, and improving any code projec
 | **Python (legacy)** | `lai.py`, `lai_tools.py`, `lai_automode.py` | Stable |
 | **Rust (current)** | `lai_rust/` | **Primary** |
 
-## Quick Start
+## Quick Start (5 min)
 
 ```bash
-# Build Rust version (recommended)
-cd lai_rust && cargo build --release
-./target/release/lai --help
+# 1. Clone & build
+git clone https://github.com/jmbigi/lai.git
+cd lai/lai_rust && cargo install --path . --locked
 
-# Or use Python version
-python3 lai.py --help
+# 2. Install ollama (model manager)
+curl -fsSL https://ollama.com/install.sh | sh
 
-# Check services
-lai status
+# 3. One-command setup wizard
+lai init --auto
+```
 
-# Start services if needed
-lai status  # will prompt to start stopped services
+📖 **Guía completa**: [`QUICKSTART.md`](QUICKSTART.md) — capturas de TUI, MCP, benchmarking, troubleshooting.
 
-# Chat with AI
-lai chat "Hola, ¿cómo estás?"
+```bash
+# Primer agente autónomo
+cd tu-proyecto
+lai auto "añade tests para src/auth.rs"
 
-# Generate code
-lai code "Crear una calculadora en Python" calculadora.py
+# Terminal UI visual (4 paneles)
+lai tui
+# Ctrl+1/2/3/4: archivos/chat/diff/tools | Ctrl+H: ayuda
 
-# Autonomous agent
-lai auto "Refactorizar el proyecto para usar async/await" --max-iterations 10
+# MCP Server para Cursor/Cline/Claude Code
+lai mcp --stdio    # Claude Code
+lai mcp --port 8083 # Cursor/Cline
 
-# Code review
-lai review ./mi_proyecto --focus security
-
-# Run tests
-lai test ./tests -v
+# Benchmark local (SWE-bench style)
+cargo test --test swe_bench
 ```
 
 ## Commands
