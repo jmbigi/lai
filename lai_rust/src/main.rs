@@ -136,6 +136,17 @@ enum Commands {
         #[arg(long, help = "Use stdio transport (for Claude Code)")]
         stdio: bool,
     },
+    /// Run SWE-bench style coding benchmark against local models
+    BenchSwe {
+        #[arg(long, help = "Model to benchmark")]
+        model: String,
+        #[arg(long, default_value = "http://localhost:8081/v1", help = "Base URL for the model")]
+        base_url: String,
+        #[arg(long, help = "Run only easy tasks (quick mode)")]
+        quick: bool,
+        #[arg(long, help = "Compare with previous benchmark result file")]
+        compare: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -229,6 +240,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Mcp { port, stdio }) => {
             cmd_mcp(port, stdio).await?;
+        }
+        Some(Commands::BenchSwe { model, base_url, quick, compare }) => {
+            if let Some(compare_file) = compare {
+                // Compare mode
+                let bench_file = std::env::current_dir()?.join("benchmark_results").join(&model.replace([':', '/'], "_"));
+                // This would need the test module's compare_results function
+                println!("Compare mode not fully implemented in main binary yet");
+            } else {
+                // Import the test module's benchmark functions
+                // For now, just show help
+                println!("SWE-bench evaluation for model: {}", model);
+                println!("Run with: cargo test --test swe_bench -- --nocapture");
+            }
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);
