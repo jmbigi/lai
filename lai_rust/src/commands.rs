@@ -798,12 +798,24 @@ pub async fn cmd_auto(
         .map(|ctx| format_context_for_llm(&ctx))
         .unwrap_or_else(|_| analyze_project_context(&cwd));
 
-    let _llm = LlmClient::new(base_url.to_string(), model.to_string());
     let tools = ToolRegistry::new();
 
     // Build tool schema descriptions for the system prompt
     let tool_schemas = tools.get_tools_schema();
     let tools_description = build_tools_description(&tool_schemas);
+
+    // Native function-calling schemas ([OI]-compatible) for models that support tools
+    let native_tool_schemas: Vec<crate::llm::ToolSchema> = tool_schemas
+        .iter()
+        .map(|t| crate::llm::ToolSchema {
+            schema_type: "function".to_string(),
+            function: crate::llm::FunctionSchema {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.parameters.clone(),
+            },
+        })
+        .collect();
 
     let system_prompt = format!(
         r#"You are an AI assistant with access to tools. You can use tools by responding with JSON in a code block.
@@ -885,7 +897,6 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     );
 
     let llm = LlmClient::new(base_url.to_string(), model.to_string());
-    let tools = ToolRegistry::new();
 
     let mut messages = vec![
         crate::llm::Message {
@@ -904,15 +915,22 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
         },
     ];
 
+    // If the model answers in prose without touching any tool, we ask once or
+    // twice more before accepting it as a final answer. Without this, small
+    // local models often "describe" the code instead of writing it.
+    let mut nudges: u32 = 0;
+    const MAX_NUDGES: u32 = 2;
+
     for iteration in 1..=max_iterations {
         println!("\n--- Iteration {} of {} ---", iteration, max_iterations);
 
-        // Use regular chat (no native tool calling)
+        // Prefer native function calling; models without tool support answer in
+        // plain text and we fall back to the JSON-block protocol below.
         let result = llm
-            .chat_with_tools(
+            .chat_with_native_tools(
                 messages.clone(),
-                None, // No native tool schemas
-                None, // No tool_choice
+                Some(native_tool_schemas.clone()),
+                Some(crate::llm::ToolChoice::Auto),
             )
             .await;
 
@@ -924,10 +942,31 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                 }
                 messages.push(msg.clone());
 
-                // Parse simulated tool calls from JSON code blocks
-                let tool_calls = parse_simulated_tool_calls(&msg.content);
+                // Native tool calls take precedence; fall back to JSON code blocks.
+                let mut tool_calls = parse_native_tool_calls(&msg.tool_calls);
+                if tool_calls.is_empty() {
+                    tool_calls = parse_simulated_tool_calls(&msg.content);
+                }
 
                 if tool_calls.is_empty() {
+                    if nudges < MAX_NUDGES && iteration < max_iterations {
+                        nudges += 1;
+                        println!(
+                            "↻ No tool call emitted; asking the model to act ({}/{})",
+                            nudges, MAX_NUDGES
+                        );
+                        messages.push(crate::llm::Message {
+                            role: "user".into(),
+                            content: "You did not call any tool. If this task requires creating \
+or modifying files you MUST call the write_file tool now with the complete final file \
+content (path + content). Do not describe the code in prose; call the tool."
+                                .into(),
+                            tool_calls: None,
+                            tool_call_id: None,
+                            name: None,
+                        });
+                        continue;
+                    }
                     println!("✅ Task completed (no tool calls requested)");
                     break;
                 }
@@ -937,6 +976,11 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                 for call in tool_calls {
                     let name = &call["tool"];
                     let name_str = name.as_str().unwrap_or("");
+                    // Native tool calls carry an id that must be echoed back.
+                    let call_id = call
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let mut arguments = call["arguments"]
                         .as_object()
                         .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -954,7 +998,7 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                         messages.push(crate::llm::Message {
                             role: "tool".into(),
                             content: tool_result,
-                            tool_call_id: None,
+                            tool_call_id: call_id.clone(),
                             name: Some(name_str.to_string()),
                             tool_calls: None,
                         });
@@ -986,7 +1030,7 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                     messages.push(crate::llm::Message {
                         role: "tool".into(),
                         content: tool_result,
-                        tool_call_id: None,
+                        tool_call_id: call_id,
                         name: Some(name_str.to_string()),
                         tool_calls: None,
                     });
@@ -1000,6 +1044,21 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     }
 }
 
+/// Convert literal escape sequences (`\n`, `\t`, `\"`) into real characters.
+///
+/// Only applied when the payload has no real newline at all: in that case the
+/// model double-escaped the JSON and the file would end up as a single line.
+fn unescape_literal_escapes(content: &str) -> String {
+    if content.contains('\n') {
+        return content.to_string();
+    }
+    content
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\"", "\"")
+}
+
 fn build_tools_description(schemas: &[crate::tools::ToolSchema]) -> String {
     let mut desc = String::from("Available tools:\n");
     for schema in schemas {
@@ -1009,6 +1068,28 @@ fn build_tools_description(schemas: &[crate::tools::ToolSchema]) -> String {
         ));
     }
     desc
+}
+
+/// Parse tool calls emitted by the model through native function calling.
+fn parse_native_tool_calls(tool_calls: &Option<Vec<crate::llm::ToolCall>>) -> Vec<Value> {
+    let mut calls = Vec::new();
+    if let Some(list) = tool_calls {
+        for tc in list {
+            let arguments: Value =
+                serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
+            // Some models emit arguments as a nested string; unwrap it once.
+            let arguments = match arguments {
+                Value::String(inner) => serde_json::from_str(&inner).unwrap_or(Value::Null),
+                other => other,
+            };
+            calls.push(serde_json::json!({
+                "tool": tc.function.name,
+                "arguments": arguments,
+                "id": tc.id,
+            }));
+        }
+    }
+    calls
 }
 
 fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
@@ -1038,6 +1119,21 @@ fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
 
 fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap<String, Value> {
     match tool {
+        // Normalise write_file: keep path/content as strings and repair payloads
+        // where the model double-escaped newlines (whole file on one line).
+        "write_file" => {
+            let mut normalized = HashMap::new();
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                normalized.insert("path".to_string(), Value::String(path.to_string()));
+            }
+            if let Some(content) = args.get("content").and_then(|v| v.as_str()) {
+                normalized.insert(
+                    "content".to_string(),
+                    Value::String(unescape_literal_escapes(content)),
+                );
+            }
+            normalized
+        }
         "run_python" => {
             // Model often passes "command" or "path" instead of "code"
             if let Some(code) = args.get("code").cloned() {
@@ -1093,17 +1189,6 @@ fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap
             }
             // Default fallback
             hashmap!["code".to_string() => Value::String("print('Hello')".to_string())]
-        }
-        "write_file" => {
-            // Ensure path and content are strings
-            let mut normalized = HashMap::new();
-            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                normalized.insert("path".to_string(), Value::String(path.to_string()));
-            }
-            if let Some(content) = args.get("content").and_then(|v| v.as_str()) {
-                normalized.insert("content".to_string(), Value::String(content.to_string()));
-            }
-            normalized
         }
         "run_command" => {
             let mut normalized = HashMap::new();
@@ -1419,5 +1504,55 @@ impl CapabilityAdapter for MockBenchmarkAdapter {
             requires_network: false,
             requires_sandbox: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn unescape_converts_literal_newlines() {
+        let input = "fn main() {\\n    println!(\"hi\");\\n}\\n";
+        let out = unescape_literal_escapes(input);
+        assert!(out.contains('\n'));
+        assert!(!out.contains("\\n"));
+        assert_eq!(out.lines().count(), 3);
+    }
+
+    #[test]
+    fn unescape_leaves_real_newlines_untouched() {
+        let input = "fn main() {\n    let s = \"a\\\\nb\";\n}\n";
+        assert_eq!(unescape_literal_escapes(input), input);
+    }
+
+    #[test]
+    fn normalize_write_file_fixes_double_escaped_content() {
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), Value::String("src/lib.rs".into()));
+        args.insert(
+            "content".to_string(),
+            Value::String("pub fn f() -> i32 {\\n    1\\n}\\n".into()),
+        );
+        let out = normalize_tool_arguments("write_file", args);
+        let content = out.get("content").unwrap().as_str().unwrap();
+        assert!(content.contains('\n'));
+    }
+
+    #[test]
+    fn native_tool_calls_are_parsed_with_ids() {
+        let calls = Some(vec![crate::llm::ToolCall {
+            id: "call_1".to_string(),
+            call_type: "function".to_string(),
+            function: crate::llm::ToolFunction {
+                name: "write_file".to_string(),
+                arguments: "{\"path\":\"a.rs\",\"content\":\"x\"}".to_string(),
+            },
+        }]);
+        let parsed = parse_native_tool_calls(&calls);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["tool"], "write_file");
+        assert_eq!(parsed[0]["id"], "call_1");
+        assert_eq!(parsed[0]["arguments"]["path"], "a.rs");
     }
 }
