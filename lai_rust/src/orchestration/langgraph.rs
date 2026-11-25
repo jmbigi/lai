@@ -1,12 +1,11 @@
 /// LangGraph Orchestration Adapter for lai
-/// 
+///
 /// Provides integration with LangGraph for stateful graph-based orchestration,
 /// enabling complex workflows with checkpoints, retries, and human-in-the-loop.
-
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -123,25 +122,13 @@ pub struct LangGraphEdge {
 }
 
 /// LangGraph state (shared across nodes)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LangGraphState {
     pub variables: HashMap<String, serde_json::Value>,
     pub messages: Vec<LangGraphMessage>,
     pub tool_results: HashMap<String, serde_json::Value>,
     pub checkpoints: Vec<CheckpointData>,
     pub execution_metadata: ExecutionMetadata,
-}
-
-impl Default for LangGraphState {
-    fn default() -> Self {
-        Self {
-            variables: HashMap::new(),
-            messages: Vec::new(),
-            tool_results: HashMap::new(),
-            checkpoints: Vec::new(),
-            execution_metadata: ExecutionMetadata::default(),
-        }
-    }
 }
 
 /// Message in the LangGraph conversation
@@ -316,10 +303,13 @@ impl LangGraphAdapter {
     }
 
     /// Execute the graph
-    pub async fn execute(&self, initial_state: Option<LangGraphState>) -> Result<LangGraphExecutionResult, LangGraphError> {
+    pub async fn execute(
+        &self,
+        initial_state: Option<LangGraphState>,
+    ) -> Result<LangGraphExecutionResult, LangGraphError> {
         let run_id = Uuid::new_v4().to_string();
         let start_time = Instant::now();
-        
+
         // Initialize state
         if let Some(state) = initial_state {
             *self.state.write().await = state;
@@ -339,7 +329,10 @@ impl LangGraphAdapter {
             iteration += 1;
 
             // Find current node
-            let node = self.graph.nodes.iter()
+            let node = self
+                .graph
+                .nodes
+                .iter()
                 .find(|n| n.id == current_node_id)
                 .ok_or_else(|| LangGraphError::NodeNotFound(current_node_id.clone()))?;
 
@@ -352,9 +345,10 @@ impl LangGraphAdapter {
 
             // Execute node
             let node_result = self.execute_node(node).await;
-            
+
             // Update execution metadata
-            self.update_execution_metadata(&current_node_id, &node_result).await;
+            self.update_execution_metadata(&current_node_id, &node_result)
+                .await;
 
             match node_result {
                 Ok(next_node) => {
@@ -362,20 +356,20 @@ impl LangGraphAdapter {
                 }
                 Err(e) => {
                     errors.push(format!("Node {} failed: {}", current_node_id, e));
-                    
+
                     // Try fallback edge
                     if let Some(fallback) = self.find_fallback_edge(&current_node_id) {
                         current_node_id = fallback;
                         continue;
                     }
-                    
+
                     // Try retry
-                    if let Some(retry_config) = &node.retry_config {
+                    if let Some(_retry_config) = &node.retry_config {
                         if self.should_retry(node, &errors).await {
                             continue;
                         }
                     }
-                    
+
                     // No fallback or retry exhausted
                     let final_state = self.state.read().await.clone();
                     return Ok(LangGraphExecutionResult {
@@ -392,11 +386,11 @@ impl LangGraphAdapter {
             }
 
             // Create checkpoint if interval reached
-            if execution_path.len() % self.graph.config.checkpoint_interval as usize == 0 {
-                if self.graph.config.persistence_enabled {
-                    self.create_checkpoint(&current_node_id).await?;
-                    checkpoints_created += 1;
-                }
+            if execution_path.len() % self.graph.config.checkpoint_interval as usize == 0
+                && self.graph.config.persistence_enabled
+            {
+                self.create_checkpoint(&current_node_id).await?;
+                checkpoints_created += 1;
             }
         }
 
@@ -409,7 +403,11 @@ impl LangGraphAdapter {
             graph_id: self.graph.id.clone(),
             final_state: final_state.clone(),
             execution_path,
-            status: if errors.is_empty() { ExecutionStatus::Completed } else { ExecutionStatus::Failed },
+            status: if errors.is_empty() {
+                ExecutionStatus::Completed
+            } else {
+                ExecutionStatus::Failed
+            },
             total_time_ms: start_time.elapsed().as_millis() as u64,
             checkpoints_created,
             errors,
@@ -447,11 +445,13 @@ impl LangGraphAdapter {
     async fn execute_llm_node(&self, node: &LangGraphNode) -> Result<String, LangGraphError> {
         // Simulate LLM call - in production would call actual LLM
         let mut state = self.state.write().await;
-        
-        let prompt = node.config.get("prompt")
+
+        let prompt = node
+            .config
+            .get("prompt")
             .and_then(|v| v.as_str())
             .unwrap_or("Default prompt");
-        
+
         state.messages.push(LangGraphMessage {
             role: "assistant".to_string(),
             content: format!("LLM response for: {}", prompt),
@@ -466,37 +466,49 @@ impl LangGraphAdapter {
     /// Execute tool call node
     async fn execute_tool_node(&self, node: &LangGraphNode) -> Result<String, LangGraphError> {
         let mut state = self.state.write().await;
-        
-        let tool_name = node.config.get("tool")
+
+        let tool_name = node
+            .config
+            .get("tool")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown_tool");
-        
-        let args = node.config.get("arguments")
+
+        let args = node
+            .config
+            .get("arguments")
             .cloned()
             .unwrap_or(serde_json::json!({}));
 
         // Simulate tool execution
-        state.tool_results.insert(tool_name.to_string(), serde_json::json!({
-            "status": "success",
-            "result": format!("Tool {} executed with args: {}", tool_name, args),
-        }));
+        state.tool_results.insert(
+            tool_name.to_string(),
+            serde_json::json!({
+                "status": "success",
+                "result": format!("Tool {} executed with args: {}", tool_name, args),
+            }),
+        );
 
         Ok(self.find_next_node(&node.id).unwrap_or_default())
     }
 
     /// Execute conditional node
-    async fn execute_conditional_node(&self, node: &LangGraphNode) -> Result<String, LangGraphError> {
+    async fn execute_conditional_node(
+        &self,
+        node: &LangGraphNode,
+    ) -> Result<String, LangGraphError> {
         let state = self.state.read().await;
-        
-        let condition = node.config.get("condition")
+
+        let condition = node
+            .config
+            .get("condition")
             .and_then(|v| v.as_str())
             .unwrap_or("true");
-        
+
         // Simple condition evaluation - in production would use expression evaluator
         let condition_met = condition == "true" || condition == "1";
-        
+
         drop(state);
-        
+
         // Find conditional edges
         for edge in &self.graph.edges {
             if edge.from == node.id && edge.edge_type == LangGraphEdgeType::Conditional {
@@ -509,7 +521,7 @@ impl LangGraphAdapter {
                 }
             }
         }
-        
+
         // Default to first sequential edge
         Ok(self.find_next_node(&node.id).unwrap_or_default())
     }
@@ -519,13 +531,19 @@ impl LangGraphAdapter {
         // In production, this would wait for human input
         // For now, simulate approval
         let mut state = self.state.write().await;
-        state.execution_metadata.errors.push("Human approval required - auto-approved for testing".to_string());
-        
+        state
+            .execution_metadata
+            .errors
+            .push("Human approval required - auto-approved for testing".to_string());
+
         Ok(self.find_next_node(&node.id).unwrap_or_default())
     }
 
     /// Execute checkpoint node
-    async fn execute_checkpoint_node(&self, node: &LangGraphNode) -> Result<String, LangGraphError> {
+    async fn execute_checkpoint_node(
+        &self,
+        node: &LangGraphNode,
+    ) -> Result<String, LangGraphError> {
         self.create_checkpoint(&node.id).await?;
         Ok(self.find_next_node(&node.id).unwrap_or_default())
     }
@@ -533,12 +551,14 @@ impl LangGraphAdapter {
     /// Execute aggregate node
     async fn execute_aggregate_node(&self, node: &LangGraphNode) -> Result<String, LangGraphError> {
         let mut state = self.state.write().await;
-        
+
         // Aggregate results from previous nodes
-        let agg_key = node.config.get("aggregate_key")
+        let agg_key = node
+            .config
+            .get("aggregate_key")
             .and_then(|v| v.as_str())
             .unwrap_or("aggregated_results");
-        
+
         let mut aggregated = Vec::new();
         for (key, value) in &state.tool_results {
             aggregated.push(serde_json::json!({
@@ -546,9 +566,11 @@ impl LangGraphAdapter {
                 "result": value,
             }));
         }
-        
-        state.variables.insert(agg_key.to_string(), serde_json::json!(aggregated));
-        
+
+        state
+            .variables
+            .insert(agg_key.to_string(), serde_json::json!(aggregated));
+
         Ok(self.find_next_node(&node.id).unwrap_or_default())
     }
 
@@ -598,17 +620,23 @@ impl LangGraphAdapter {
             timestamp: SystemTime::now(),
             metadata: HashMap::new(),
         };
-        
+
         let mut state_mut = self.state.write().await;
         state_mut.checkpoints.push(checkpoint);
-        
+
         Ok(())
     }
 
     /// Update execution metadata
-    async fn update_execution_metadata(&self, node_id: &str, result: &Result<String, LangGraphError>) {
+    async fn update_execution_metadata(
+        &self,
+        node_id: &str,
+        result: &Result<String, LangGraphError>,
+    ) {
         let mut state = self.state.write().await;
-        let exec_info = state.execution_metadata.node_executions
+        let exec_info = state
+            .execution_metadata
+            .node_executions
             .entry(node_id.to_string())
             .or_insert_with(|| NodeExecutionInfo {
                 node_id: node_id.to_string(),
@@ -619,37 +647,42 @@ impl LangGraphAdapter {
                 tokens_used: 0,
                 error: None,
             });
-        
+
         exec_info.attempts += 1;
         exec_info.end_time = Some(SystemTime::now());
-        exec_info.status = if result.is_ok() { 
-            NodeExecutionStatus::Completed 
-        } else { 
-            NodeExecutionStatus::Failed 
+        exec_info.status = if result.is_ok() {
+            NodeExecutionStatus::Completed
+        } else {
+            NodeExecutionStatus::Failed
         };
-        
+
         if let Err(e) = result {
             exec_info.error = Some(e.to_string());
         }
     }
 
     /// Resume from checkpoint
-    pub async fn resume_from_checkpoint(&self, checkpoint_id: &str) -> Result<LangGraphExecutionResult, LangGraphError> {
+    pub async fn resume_from_checkpoint(
+        &self,
+        checkpoint_id: &str,
+    ) -> Result<LangGraphExecutionResult, LangGraphError> {
         let state = self.state.read().await;
-        let checkpoint = state.checkpoints.iter()
+        let checkpoint = state
+            .checkpoints
+            .iter()
             .find(|c| c.id == checkpoint_id)
             .ok_or_else(|| LangGraphError::CheckpointNotFound(checkpoint_id.to_string()))?
             .clone();
         drop(state);
-        
+
         // Restore state
         let restored_state = checkpoint.state_snapshot.clone();
         *self.state.write().await = restored_state.clone();
-        
+
         // Continue execution from checkpoint node
         let node_id = checkpoint.node_id;
-        let next_node = self.find_next_node(&node_id).unwrap_or(node_id);
-        
+        let _next_node = self.find_next_node(&node_id).unwrap_or(node_id);
+
         // Execute from next node
         self.execute(Some(restored_state)).await
     }
@@ -663,7 +696,11 @@ impl LangGraphAdapter {
 /// Node handler trait for custom node execution
 #[async_trait]
 pub trait NodeHandler: Send + Sync {
-    async fn execute(&self, node: &LangGraphNode, state: &mut LangGraphState) -> Result<String, LangGraphError>;
+    async fn execute(
+        &self,
+        node: &LangGraphNode,
+        state: &mut LangGraphState,
+    ) -> Result<String, LangGraphError>;
 }
 
 /// LangGraph errors
@@ -693,49 +730,58 @@ pub struct LangGraphBuilder {
 impl LangGraphBuilder {
     pub fn new(name: String, entry_point: String) -> Self {
         Self {
-            definition: LangGraphDefinition::new(
-                Uuid::new_v4().to_string(),
-                name,
-                entry_point,
-            ),
+            definition: LangGraphDefinition::new(Uuid::new_v4().to_string(), name, entry_point),
         }
     }
 
     pub fn add_llm_node(mut self, id: String, name: String, prompt: String) -> Self {
         let mut config = HashMap::new();
         config.insert("prompt".to_string(), serde_json::json!(prompt));
-        
-        self.definition.add_node(LangGraphNode::new(id, name, LangGraphNodeType::LlmCall)
-            .with_config(config));
+
+        self.definition
+            .add_node(LangGraphNode::new(id, name, LangGraphNodeType::LlmCall).with_config(config));
         self
     }
 
-    pub fn add_tool_node(mut self, id: String, name: String, tool: String, args: serde_json::Value) -> Self {
+    pub fn add_tool_node(
+        mut self,
+        id: String,
+        name: String,
+        tool: String,
+        args: serde_json::Value,
+    ) -> Self {
         let mut config = HashMap::new();
         config.insert("tool".to_string(), serde_json::json!(tool));
         config.insert("arguments".to_string(), args);
-        
-        self.definition.add_node(LangGraphNode::new(id, name, LangGraphNodeType::ToolCall)
-            .with_config(config));
+
+        self.definition.add_node(
+            LangGraphNode::new(id, name, LangGraphNodeType::ToolCall).with_config(config),
+        );
         self
     }
 
     pub fn add_conditional_node(mut self, id: String, name: String, condition: String) -> Self {
         let mut config = HashMap::new();
         config.insert("condition".to_string(), serde_json::json!(condition));
-        
-        self.definition.add_node(LangGraphNode::new(id, name, LangGraphNodeType::Conditional)
-            .with_config(config));
+
+        self.definition.add_node(
+            LangGraphNode::new(id, name, LangGraphNodeType::Conditional).with_config(config),
+        );
         self
     }
 
     pub fn add_approval_node(mut self, id: String, name: String) -> Self {
-        self.definition.add_node(LangGraphNode::new(id, name, LangGraphNodeType::HumanApproval));
+        self.definition.add_node(LangGraphNode::new(
+            id,
+            name,
+            LangGraphNodeType::HumanApproval,
+        ));
         self
     }
 
     pub fn add_checkpoint_node(mut self, id: String, name: String) -> Self {
-        self.definition.add_node(LangGraphNode::new(id, name, LangGraphNodeType::Checkpoint));
+        self.definition
+            .add_node(LangGraphNode::new(id, name, LangGraphNodeType::Checkpoint));
         self
     }
 
@@ -779,10 +825,18 @@ impl LangGraphBuilder {
 
     pub fn build(mut self) -> LangGraphDefinition {
         // Materialize the implicit entry node so the executor can find it.
-        if !self.definition.nodes.iter().any(|n| n.id == self.definition.entry_point) {
+        if !self
+            .definition
+            .nodes
+            .iter()
+            .any(|n| n.id == self.definition.entry_point)
+        {
             let entry = self.definition.entry_point.clone();
-            self.definition
-                .add_node(LangGraphNode::new(entry, "Start".to_string(), LangGraphNodeType::Start));
+            self.definition.add_node(LangGraphNode::new(
+                entry,
+                "Start".to_string(),
+                LangGraphNodeType::Start,
+            ));
         }
 
         // Materialize an implicit "end" node when an edge references it.
@@ -813,13 +867,22 @@ mod tests {
     #[test]
     fn test_langgraph_builder() {
         let graph = LangGraphBuilder::new("Test Graph".to_string(), "start".to_string())
-            .add_llm_node("llm1".to_string(), "LLM Call".to_string(), "Generate code".to_string())
-            .add_tool_node("tool1".to_string(), "Format Code".to_string(), "formatter".to_string(), serde_json::json!({}))
+            .add_llm_node(
+                "llm1".to_string(),
+                "LLM Call".to_string(),
+                "Generate code".to_string(),
+            )
+            .add_tool_node(
+                "tool1".to_string(),
+                "Format Code".to_string(),
+                "formatter".to_string(),
+                serde_json::json!({}),
+            )
             .add_sequential_edge("start".to_string(), "llm1".to_string())
             .add_sequential_edge("llm1".to_string(), "tool1".to_string())
             .add_sequential_edge("tool1".to_string(), "end".to_string())
             .build();
-        
+
         assert_eq!(graph.nodes.len(), 4); // start, llm1, tool1, end (implicit)
         assert_eq!(graph.edges.len(), 3);
     }
@@ -827,8 +890,13 @@ mod tests {
     #[test]
     fn test_langgraph_state() {
         let mut state = LangGraphState::default();
-        state.variables.insert("key".to_string(), serde_json::json!("value"));
-        assert_eq!(state.variables.get("key"), Some(&serde_json::json!("value")));
+        state
+            .variables
+            .insert("key".to_string(), serde_json::json!("value"));
+        assert_eq!(
+            state.variables.get("key"),
+            Some(&serde_json::json!("value"))
+        );
     }
 
     #[test]

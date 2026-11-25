@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -166,7 +165,11 @@ impl DiagnosticEngine {
     }
 
     /// Diagnosticar un error dado su output y contexto
-    pub async fn diagnose(&self, error_output: &str, context: DiagnosticContext) -> Result<DiagnosticResult> {
+    pub async fn diagnose(
+        &self,
+        error_output: &str,
+        context: DiagnosticContext,
+    ) -> Result<DiagnosticResult> {
         let start = Instant::now();
         let mut diagnoses = Vec::new();
 
@@ -182,7 +185,9 @@ impl DiagnosticEngine {
 
         // 3. Análisis de dependencias
         if self.config.analyze_dependencies {
-            let dep_diagnoses = self.analyze_dependency_errors(error_output, &context).await?;
+            let dep_diagnoses = self
+                .analyze_dependency_errors(error_output, &context)
+                .await?;
             diagnoses.extend(dep_diagnoses);
         }
 
@@ -192,7 +197,11 @@ impl DiagnosticEngine {
 
         // 5. Filtrar y ordenar por confianza
         diagnoses.retain(|d| d.confidence >= self.config.confidence_threshold);
-        diagnoses.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        diagnoses.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         diagnoses.truncate(self.config.max_candidates);
 
         // Identificar causa raíz
@@ -208,16 +217,40 @@ impl DiagnosticEngine {
     }
 
     /// Analizar error de sintaxis
-    async fn analyze_syntax_error(&self, error: &str, context: &DiagnosticContext) -> Result<Vec<Diagnosis>> {
+    async fn analyze_syntax_error(
+        &self,
+        error: &str,
+        context: &DiagnosticContext,
+    ) -> Result<Vec<Diagnosis>> {
         let mut diagnoses = Vec::new();
 
         // Patrones comunes de errores de sintaxis
         let patterns = [
-            (r"SyntaxError|syntax error", FailureCategory::SyntaxError, Severity::High),
-            (r"IndentationError", FailureCategory::SyntaxError, Severity::High),
-            (r"unexpected EOF", FailureCategory::SyntaxError, Severity::High),
-            (r"invalid syntax", FailureCategory::SyntaxError, Severity::High),
-            (r"unexpected token", FailureCategory::SyntaxError, Severity::High),
+            (
+                r"SyntaxError|syntax error",
+                FailureCategory::SyntaxError,
+                Severity::High,
+            ),
+            (
+                r"IndentationError",
+                FailureCategory::SyntaxError,
+                Severity::High,
+            ),
+            (
+                r"unexpected EOF",
+                FailureCategory::SyntaxError,
+                Severity::High,
+            ),
+            (
+                r"invalid syntax",
+                FailureCategory::SyntaxError,
+                Severity::High,
+            ),
+            (
+                r"unexpected token",
+                FailureCategory::SyntaxError,
+                Severity::High,
+            ),
         ];
 
         for (pattern, category, severity) in patterns {
@@ -227,7 +260,7 @@ impl DiagnosticEngine {
                     category,
                     severity,
                     message: format!("Syntax error detected: {}", pattern),
-                    location: self.extract_location(error, &context),
+                    location: self.extract_location(error, context),
                     root_cause: Some("Invalid syntax in source code".to_string()),
                     suggested_fix: Some("Check syntax around the reported line".to_string()),
                     confidence: 0.9,
@@ -241,26 +274,94 @@ impl DiagnosticEngine {
     }
 
     /// Analizar error semántico
-    async fn analyze_semantic_error(&self, error: &str, context: &DiagnosticContext) -> Result<Vec<Diagnosis>> {
+    async fn analyze_semantic_error(
+        &self,
+        error: &str,
+        _context: &DiagnosticContext,
+    ) -> Result<Vec<Diagnosis>> {
         let mut diagnoses = Vec::new();
 
         let patterns = [
-            (r"TypeError|type error", FailureCategory::TypeError, Severity::High),
-            (r"NameError|name '.*' is not defined", FailureCategory::TypeError, Severity::High),
-            (r"AttributeError|'.*' object has no attribute", FailureCategory::TypeError, Severity::High),
-            (r"KeyError|key.*not found", FailureCategory::RuntimeError, Severity::Medium),
-            (r"IndexError|index.*out of range", FailureCategory::RuntimeError, Severity::Medium),
-            (r"ValueError|value error", FailureCategory::RuntimeError, Severity::Medium),
-            (r"ZeroDivisionError", FailureCategory::RuntimeError, Severity::Medium),
-            (r"ImportError|ModuleNotFoundError", FailureCategory::DependencyError, Severity::High),
-            (r"FileNotFoundError", FailureCategory::RuntimeError, Severity::Medium),
-            (r"PermissionError", FailureCategory::RuntimeError, Severity::Medium),
-            (r"MemoryError|OutOfMemory", FailureCategory::ResourceLeak, Severity::Critical),
-            (r"TimeoutError|timeout", FailureCategory::PerformanceIssue, Severity::High),
-            (r"RecursionError|maximum recursion depth", FailureCategory::LogicError, Severity::High),
-            (r"deadlock|Deadlock", FailureCategory::ConcurrencyIssue, Severity::Critical),
-            (r"race condition|RaceCondition", FailureCategory::ConcurrencyIssue, Severity::Critical),
-            (r"SQL injection|XSS|CSRF", FailureCategory::SecurityVulnerability, Severity::Critical),
+            (
+                r"TypeError|type error",
+                FailureCategory::TypeError,
+                Severity::High,
+            ),
+            (
+                r"NameError|name '.*' is not defined",
+                FailureCategory::TypeError,
+                Severity::High,
+            ),
+            (
+                r"AttributeError|'.*' object has no attribute",
+                FailureCategory::TypeError,
+                Severity::High,
+            ),
+            (
+                r"KeyError|key.*not found",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"IndexError|index.*out of range",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"ValueError|value error",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"ZeroDivisionError",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"ImportError|ModuleNotFoundError",
+                FailureCategory::DependencyError,
+                Severity::High,
+            ),
+            (
+                r"FileNotFoundError",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"PermissionError",
+                FailureCategory::RuntimeError,
+                Severity::Medium,
+            ),
+            (
+                r"MemoryError|OutOfMemory",
+                FailureCategory::ResourceLeak,
+                Severity::Critical,
+            ),
+            (
+                r"TimeoutError|timeout",
+                FailureCategory::PerformanceIssue,
+                Severity::High,
+            ),
+            (
+                r"RecursionError|maximum recursion depth",
+                FailureCategory::LogicError,
+                Severity::High,
+            ),
+            (
+                r"deadlock|Deadlock",
+                FailureCategory::ConcurrencyIssue,
+                Severity::Critical,
+            ),
+            (
+                r"race condition|RaceCondition",
+                FailureCategory::ConcurrencyIssue,
+                Severity::Critical,
+            ),
+            (
+                r"SQL injection|XSS|CSRF",
+                FailureCategory::SecurityVulnerability,
+                Severity::Critical,
+            ),
         ];
 
         for (pattern, category, severity) in patterns {
@@ -285,10 +386,18 @@ impl DiagnosticEngine {
     }
 
     /// Analizar errores de dependencias
-    async fn analyze_dependency_errors(&self, error: &str, context: &DiagnosticContext) -> Result<Vec<Diagnosis>> {
+    async fn analyze_dependency_errors(
+        &self,
+        error: &str,
+        _context: &DiagnosticContext,
+    ) -> Result<Vec<Diagnosis>> {
         let mut diagnoses = Vec::new();
 
-        if error.contains("ImportError") || error.contains("ModuleNotFoundError") || error.contains("Cargo.toml") || error.contains("package.json") {
+        if error.contains("ImportError")
+            || error.contains("ModuleNotFoundError")
+            || error.contains("Cargo.toml")
+            || error.contains("package.json")
+        {
             diagnoses.push(Diagnosis {
                 id: uuid::Uuid::new_v4().to_string(),
                 category: FailureCategory::DependencyError,
@@ -332,7 +441,11 @@ impl DiagnosticEngine {
     }
 
     /// Extraer ubicación del error
-    fn extract_location(&self, error: &str, context: &DiagnosticContext) -> Option<FailureLocation> {
+    fn extract_location(
+        &self,
+        error: &str,
+        context: &DiagnosticContext,
+    ) -> Option<FailureLocation> {
         // Intentar extraer archivo y línea del error
         let re_file_line = regex::Regex::new(r#"File "([^"]+)", line (\d+)"#).unwrap();
         if let Some(caps) = re_file_line.captures(error) {
@@ -394,14 +507,14 @@ pub async fn diagnose_error(
 ) -> Diagnosis {
     let config = DiagnosticConfig::default();
     let engine = DiagnosticEngine::new(working_dir.to_path_buf(), config).unwrap();
-    
+
     let mut diag_context = DiagnosticContext::default();
     if let Some(ctx) = context {
         diag_context.related_files.push(ctx.to_string());
     }
-    
+
     let result = engine.diagnose(error_message, diag_context).await.unwrap();
-    
+
     // Return the first (highest confidence) diagnosis
     result.diagnoses.into_iter().next().unwrap_or(Diagnosis {
         id: uuid::Uuid::new_v4().to_string(),
@@ -438,7 +551,10 @@ mod tests {
         let engine = DiagnosticEngine::new(temp_dir.path().to_path_buf(), config).unwrap();
 
         let error = "NameError: name 'undefined_var' is not defined";
-        let result = engine.diagnose(error, DiagnosticContext::default()).await.unwrap();
+        let result = engine
+            .diagnose(error, DiagnosticContext::default())
+            .await
+            .unwrap();
 
         assert!(!result.diagnoses.is_empty());
         assert_eq!(result.diagnoses[0].category, FailureCategory::TypeError);

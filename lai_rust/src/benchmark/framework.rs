@@ -1,18 +1,20 @@
 /// Benchmark Framework for lai Capabilities
-/// 
+///
 /// Provides standardized benchmarking for all capabilities to ensure
 /// measurable improvements and reproducible comparisons.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::benchmark::contracts::{CapabilityAdapter, ExecutionRequest, ExecutionResult, ExecutionBudget, ExecutionContext, SecurityContext, ResultStatus, ResourceRequirements};
+use crate::benchmark::contracts::{
+    CapabilityAdapter, ExecutionBudget, ExecutionContext, ExecutionRequest, ExecutionResult,
+    ResourceRequirements, ResultStatus, SecurityContext,
+};
 
 /// CLI commands for benchmark
 #[derive(clap::Subcommand, Debug, Clone)]
@@ -257,10 +259,10 @@ pub struct BenchmarkComparison {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComparisonRecommendation {
-    Adopt,        // Significant improvement
-    Consider,     // Improvement but not significant
-    Reject,       // No improvement or regression
-    Investigate,  // Mixed results
+    Adopt,       // Significant improvement
+    Consider,    // Improvement but not significant
+    Reject,      // No improvement or regression
+    Investigate, // Mixed results
 }
 
 /// Benchmark runner
@@ -293,10 +295,10 @@ impl BenchmarkRunner {
 
         // Actual benchmark runs
         let mut all_results = Vec::new();
-        
+
         for test_case in &self.config.test_cases {
             let mut test_results = Vec::new();
-            
+
             for iteration in 0..self.config.iterations {
                 let result = self.run_single_test(test_case).await?;
                 test_results.push(IterationResult {
@@ -305,14 +307,20 @@ impl BenchmarkRunner {
                     cpu_time_ms: result.metrics.cpu_time_ms,
                     memory_mb: result.metrics.peak_memory_mb,
                     status: result.status,
-                    error: if result.status == ResultStatus::Error || result.status == ResultStatus::Failed {
-                        result.output.get("error").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    error: if result.status == ResultStatus::Error
+                        || result.status == ResultStatus::Failed
+                    {
+                        result
+                            .output
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     },
                 });
             }
-            
+
             // Aggregate iterations for this test case
             let aggregated = self.aggregate_iterations(test_case, &test_results);
             all_results.push(aggregated);
@@ -362,9 +370,12 @@ impl BenchmarkRunner {
     }
 
     /// Run a single test case
-    async fn run_single_test(&self, test_case: &BenchmarkTestCase) -> Result<ExecutionResult, BenchmarkError> {
+    async fn run_single_test(
+        &self,
+        test_case: &BenchmarkTestCase,
+    ) -> Result<ExecutionResult, BenchmarkError> {
         let execution_id = Uuid::new_v4().to_string();
-        
+
         let request = ExecutionRequest {
             execution_id: execution_id.clone(),
             task_id: format!("benchmark-{}", test_case.test_id),
@@ -392,20 +403,26 @@ impl BenchmarkRunner {
         };
 
         // Preflight check
-        let preflight = self.adapter.preflight(&request).await
+        let preflight = self
+            .adapter
+            .preflight(&request)
+            .await
             .map_err(|e| BenchmarkError::PreflightFailed(e.to_string()))?;
-        
+
         if !preflight.allowed {
             return Err(BenchmarkError::PreflightFailed(
-                preflight.reason.unwrap_or_else(|| "Preflight check failed".to_string())
+                preflight
+                    .reason
+                    .unwrap_or_else(|| "Preflight check failed".to_string()),
             ));
         }
 
         // Execute with timeout
         let execution_future = self.adapter.execute(request);
         let timeout_duration = Duration::from_secs(test_case.timeout_seconds);
-        
-        let result = tokio::time::timeout(timeout_duration, execution_future).await
+
+        let result = tokio::time::timeout(timeout_duration, execution_future)
+            .await
             .map_err(|_| BenchmarkError::Timeout(test_case.test_id.clone()))?
             .map_err(|e| BenchmarkError::ExecutionFailed(e.to_string()))?;
 
@@ -413,7 +430,12 @@ impl BenchmarkRunner {
         let validation = self.adapter.validate(&result).await;
         if !validation.valid {
             return Err(BenchmarkError::ValidationFailed(
-                validation.issues.iter().map(|i| i.message.clone()).collect::<Vec<_>>().join(", ")
+                validation
+                    .issues
+                    .iter()
+                    .map(|i| i.message.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ));
         }
 
@@ -421,50 +443,99 @@ impl BenchmarkRunner {
     }
 
     /// Aggregate multiple iterations
-    fn aggregate_iterations(&self, test_case: &BenchmarkTestCase, iterations: &[IterationResult]) -> TestCaseResult {
-        let successful: Vec<_> = iterations.iter().filter(|i| i.status.is_success()).collect();
-        let failed: Vec<_> = iterations.iter().filter(|i| i.status.is_failure()).collect();
-        let timeouts: Vec<_> = iterations.iter().filter(|i| i.status == ResultStatus::Timeout).collect();
-        let errors: Vec<_> = iterations.iter().filter(|i| i.status == ResultStatus::Error).collect();
+    fn aggregate_iterations(
+        &self,
+        test_case: &BenchmarkTestCase,
+        iterations: &[IterationResult],
+    ) -> TestCaseResult {
+        let successful: Vec<_> = iterations
+            .iter()
+            .filter(|i| i.status.is_success())
+            .collect();
+        let failed: Vec<_> = iterations
+            .iter()
+            .filter(|i| i.status.is_failure())
+            .collect();
+        let timeouts: Vec<_> = iterations
+            .iter()
+            .filter(|i| i.status == ResultStatus::Timeout)
+            .collect();
+        let errors: Vec<_> = iterations
+            .iter()
+            .filter(|i| i.status == ResultStatus::Error)
+            .collect();
 
         let latencies: Vec<u64> = successful.iter().map(|i| i.latency_ms).collect();
-        let avg_latency = if latencies.is_empty() { 0 } else { latencies.iter().sum::<u64>() / latencies.len() as u64 };
-        
+        let avg_latency = if latencies.is_empty() {
+            0
+        } else {
+            latencies.iter().sum::<u64>() / latencies.len() as u64
+        };
+
         let sorted_latencies = {
             let mut l = latencies.clone();
             l.sort();
             l
         };
-        
-        let median_latency = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[sorted_latencies.len() / 2] };
+
+        let _median_latency = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[sorted_latencies.len() / 2]
+        };
         let p95_idx = (sorted_latencies.len() as f64 * 0.95).ceil() as usize;
-        let p95_latency = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[p95_idx.min(sorted_latencies.len() - 1)] };
+        let _p95_latency = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[p95_idx.min(sorted_latencies.len() - 1)]
+        };
         let p99_idx = (sorted_latencies.len() as f64 * 0.99).ceil() as usize;
-        let p99_latency = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[p99_idx.min(sorted_latencies.len() - 1)] };
+        let _p99_latency = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[p99_idx.min(sorted_latencies.len() - 1)]
+        };
 
         let cpu_times: Vec<u64> = successful.iter().map(|i| i.cpu_time_ms).collect();
-        let avg_cpu_time = if cpu_times.is_empty() { 0 } else { cpu_times.iter().sum::<u64>() / cpu_times.len() as u64 };
-        
+        let avg_cpu_time = if cpu_times.is_empty() {
+            0
+        } else {
+            cpu_times.iter().sum::<u64>() / cpu_times.len() as u64
+        };
+
         let memories: Vec<u64> = successful.iter().map(|i| i.memory_mb).collect();
-        let avg_memory = if memories.is_empty() { 0 } else { memories.iter().sum::<u64>() / memories.len() as u64 };
+        let _avg_memory = if memories.is_empty() {
+            0
+        } else {
+            memories.iter().sum::<u64>() / memories.len() as u64
+        };
         let peak_memory = memories.iter().max().copied().unwrap_or(0);
 
         // Calculate std dev
-        let std_dev = if latencies.len() > 1 {
+        let _std_dev = if latencies.len() > 1 {
             let mean = avg_latency as f64;
-            let variance = latencies.iter()
+            let variance = latencies
+                .iter()
                 .map(|&x| (x as f64 - mean).powi(2))
-                .sum::<f64>() / (latencies.len() - 1) as f64;
+                .sum::<f64>()
+                / (latencies.len() - 1) as f64;
             variance.sqrt()
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         TestCaseResult {
             test_id: test_case.test_id.clone(),
             execution_id: Uuid::new_v4().to_string(),
-            status: if successful.len() == iterations.len() { ResultStatus::Passed } 
-                    else if failed.len() > 0 { ResultStatus::Failed }
-                    else if timeouts.len() > 0 { ResultStatus::Timeout }
-                    else { ResultStatus::Error },
+            status: if successful.len() == iterations.len() {
+                ResultStatus::Passed
+            } else if !failed.is_empty() {
+                ResultStatus::Failed
+            } else if !timeouts.is_empty() {
+                ResultStatus::Timeout
+            } else {
+                ResultStatus::Error
+            },
             latency_ms: avg_latency,
             cpu_time_ms: avg_cpu_time,
             peak_memory_mb: peak_memory,
@@ -482,19 +553,37 @@ impl BenchmarkRunner {
         let total = results.len();
         let passed = results.iter().filter(|r| r.status.is_success()).count();
         let failed = results.iter().filter(|r| r.status.is_failure()).count();
-        let timeouts = results.iter().filter(|r| r.status == ResultStatus::Timeout).count();
-        let errors = results.iter().filter(|r| r.status == ResultStatus::Error).count();
+        let timeouts = results
+            .iter()
+            .filter(|r| r.status == ResultStatus::Timeout)
+            .count();
+        let errors = results
+            .iter()
+            .filter(|r| r.status == ResultStatus::Error)
+            .count();
 
         let latencies: Vec<u64> = results.iter().map(|r| r.latency_ms).collect();
         let avg_latency = latencies.iter().sum::<u64>() as f64 / total.max(1) as f64;
-        
+
         let mut sorted_latencies = latencies.clone();
         sorted_latencies.sort();
-        let median = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[sorted_latencies.len() / 2] };
+        let median = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[sorted_latencies.len() / 2]
+        };
         let p95_idx = (sorted_latencies.len() as f64 * 0.95).ceil() as usize;
-        let p95 = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[p95_idx.min(sorted_latencies.len() - 1)] };
+        let p95 = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[p95_idx.min(sorted_latencies.len() - 1)]
+        };
         let p99_idx = (sorted_latencies.len() as f64 * 0.99).ceil() as usize;
-        let p99 = if sorted_latencies.is_empty() { 0 } else { sorted_latencies[p99_idx.min(sorted_latencies.len() - 1)] };
+        let p99 = if sorted_latencies.is_empty() {
+            0
+        } else {
+            sorted_latencies[p99_idx.min(sorted_latencies.len() - 1)]
+        };
 
         let cpu_times: Vec<u64> = results.iter().map(|r| r.cpu_time_ms).collect();
         let avg_cpu = cpu_times.iter().sum::<u64>() as f64 / total.max(1) as f64;
@@ -507,11 +596,15 @@ impl BenchmarkRunner {
 
         // Std dev
         let std_dev = if total > 1 {
-            let variance = latencies.iter()
+            let variance = latencies
+                .iter()
                 .map(|&x| (x as f64 - avg_latency).powi(2))
-                .sum::<f64>() / (total - 1) as f64;
+                .sum::<f64>()
+                / (total - 1) as f64;
             variance.sqrt()
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         AggregateMetrics {
             total_tests: total,
@@ -536,39 +629,62 @@ impl BenchmarkRunner {
     }
 
     /// Compare with baseline
-    fn compare_with_baseline(&self, current: &AggregateMetrics, baseline: &BenchmarkBaseline) -> Result<BenchmarkComparison, BenchmarkError> {
+    fn compare_with_baseline(
+        &self,
+        current: &AggregateMetrics,
+        baseline: &BenchmarkBaseline,
+    ) -> Result<BenchmarkComparison, BenchmarkError> {
         let baseline_results = &baseline.results;
-        
+
         if baseline_results.is_empty() {
             return Err(BenchmarkError::BaselineEmpty);
         }
 
-        let baseline_success_rate = baseline_results.iter().filter(|r| r.status.is_success()).count() as f64 / baseline_results.len().max(1) as f64;
-        let baseline_avg_latency = baseline_results.iter().map(|r| r.latency_ms).sum::<u64>() as f64 / baseline_results.len().max(1) as f64;
-        let baseline_avg_memory = baseline_results.iter().map(|r| r.peak_memory_mb).sum::<u64>() as f64 / baseline_results.len().max(1) as f64;
-        
-        let latency_change = ((current.avg_latency_ms - baseline_avg_latency) / baseline_avg_latency.max(0.001)) * 100.0;
-        let memory_change = ((current.avg_memory_mb - baseline_avg_memory) / baseline_avg_memory.max(0.001)) * 100.0;
-        let success_rate_change = ((current.success_rate - baseline_success_rate) / baseline_success_rate.max(0.001)) * 100.0;
-        
+        let baseline_success_rate = baseline_results
+            .iter()
+            .filter(|r| r.status.is_success())
+            .count() as f64
+            / baseline_results.len().max(1) as f64;
+        let baseline_avg_latency = baseline_results.iter().map(|r| r.latency_ms).sum::<u64>()
+            as f64
+            / baseline_results.len().max(1) as f64;
+        let baseline_avg_memory = baseline_results
+            .iter()
+            .map(|r| r.peak_memory_mb)
+            .sum::<u64>() as f64
+            / baseline_results.len().max(1) as f64;
+
+        let latency_change = ((current.avg_latency_ms - baseline_avg_latency)
+            / baseline_avg_latency.max(0.001))
+            * 100.0;
+        let memory_change = ((current.avg_memory_mb - baseline_avg_memory)
+            / baseline_avg_memory.max(0.001))
+            * 100.0;
+        let success_rate_change = ((current.success_rate - baseline_success_rate)
+            / baseline_success_rate.max(0.001))
+            * 100.0;
+
         // Simple t-test for statistical significance (simplified)
         let p_value = self.calculate_p_value(current, baseline_results);
         let statistically_significant = p_value < self.config.statistical_significance;
-        
+
         // Effect size (Cohen's d)
         let effect_size = if current.std_dev_latency_ms > 0.0 {
             (current.avg_latency_ms - baseline_avg_latency) / current.std_dev_latency_ms
-        } else { 0.0 };
-
-        let recommendation = if statistically_significant && latency_change < 0.0 && success_rate_change >= 0.0 {
-            ComparisonRecommendation::Adopt
-        } else if latency_change < 0.0 && success_rate_change >= 0.0 {
-            ComparisonRecommendation::Consider
-        } else if latency_change > 10.0 || success_rate_change < -5.0 {
-            ComparisonRecommendation::Reject
         } else {
-            ComparisonRecommendation::Investigate
+            0.0
         };
+
+        let recommendation =
+            if statistically_significant && latency_change < 0.0 && success_rate_change >= 0.0 {
+                ComparisonRecommendation::Adopt
+            } else if latency_change < 0.0 && success_rate_change >= 0.0 {
+                ComparisonRecommendation::Consider
+            } else if latency_change > 10.0 || success_rate_change < -5.0 {
+                ComparisonRecommendation::Reject
+            } else {
+                ComparisonRecommendation::Investigate
+            };
 
         Ok(BenchmarkComparison {
             baseline_id: baseline.baseline_id.clone(),
@@ -585,68 +701,113 @@ impl BenchmarkRunner {
     }
 
     /// Simplified p-value calculation (Welch's t-test approximation)
-    fn calculate_p_value(&self, current: &AggregateMetrics, baseline_results: &[TestCaseResult]) -> f64 {
-        let baseline_latencies: Vec<f64> = baseline_results.iter().map(|r| r.latency_ms as f64).collect();
-        let current_latencies: Vec<f64> = self.results.blocking_read().iter()
+    fn calculate_p_value(
+        &self,
+        _current: &AggregateMetrics,
+        baseline_results: &[TestCaseResult],
+    ) -> f64 {
+        let baseline_latencies: Vec<f64> = baseline_results
+            .iter()
+            .map(|r| r.latency_ms as f64)
+            .collect();
+        let current_latencies: Vec<f64> = self
+            .results
+            .blocking_read()
+            .iter()
             .flat_map(|r| r.iterations.iter().map(|i| i.latency_ms as f64))
             .collect();
-        
+
         if baseline_latencies.is_empty() || current_latencies.is_empty() {
             return 1.0;
         }
 
-        let baseline_mean = baseline_latencies.iter().sum::<f64>() / baseline_latencies.len() as f64;
+        let baseline_mean =
+            baseline_latencies.iter().sum::<f64>() / baseline_latencies.len() as f64;
         let current_mean = current_latencies.iter().sum::<f64>() / current_latencies.len() as f64;
-        
-        let baseline_var = baseline_latencies.iter()
+
+        let baseline_var = baseline_latencies
+            .iter()
             .map(|&x| (x - baseline_mean).powi(2))
-            .sum::<f64>() / (baseline_latencies.len() - 1).max(1) as f64;
-        let current_var = current_latencies.iter()
+            .sum::<f64>()
+            / (baseline_latencies.len() - 1).max(1) as f64;
+        let current_var = current_latencies
+            .iter()
             .map(|&x| (x - current_mean).powi(2))
-            .sum::<f64>() / (current_latencies.len() - 1).max(1) as f64;
+            .sum::<f64>()
+            / (current_latencies.len() - 1).max(1) as f64;
 
         // Welch's t-test
-        let t = (current_mean - baseline_mean) / 
-            ((baseline_var / baseline_latencies.len() as f64 + current_var / current_latencies.len() as f64).sqrt());
-        
+        let t = (current_mean - baseline_mean)
+            / ((baseline_var / baseline_latencies.len() as f64
+                + current_var / current_latencies.len() as f64)
+                .sqrt());
+
         // Approximate p-value from t-statistic
-        if t.abs() > 2.0 { 0.05 } else if t.abs() > 1.5 { 0.15 } else { 0.5 }
+        if t.abs() > 2.0 {
+            0.05
+        } else if t.abs() > 1.5 {
+            0.15
+        } else {
+            0.5
+        }
     }
 
     /// Evaluate success criteria
-    fn evaluate_success(&self, aggregate: &AggregateMetrics, comparison: Option<&BenchmarkComparison>) -> (bool, String) {
+    fn evaluate_success(
+        &self,
+        aggregate: &AggregateMetrics,
+        comparison: Option<&BenchmarkComparison>,
+    ) -> (bool, String) {
         let mut checks = Vec::new();
         let mut details = Vec::new();
 
         // Success rate check
         if aggregate.success_rate >= self.config.success_criteria.min_success_rate {
             checks.push(true);
-            details.push(format!("Success rate: {:.1}% (threshold: {:.1}%)", 
-                aggregate.success_rate * 100.0, self.config.success_criteria.min_success_rate * 100.0));
+            details.push(format!(
+                "Success rate: {:.1}% (threshold: {:.1}%)",
+                aggregate.success_rate * 100.0,
+                self.config.success_criteria.min_success_rate * 100.0
+            ));
         } else {
             checks.push(false);
-            details.push(format!("FAIL: Success rate: {:.1}% (threshold: {:.1}%)", 
-                aggregate.success_rate * 100.0, self.config.success_criteria.min_success_rate * 100.0));
+            details.push(format!(
+                "FAIL: Success rate: {:.1}% (threshold: {:.1}%)",
+                aggregate.success_rate * 100.0,
+                self.config.success_criteria.min_success_rate * 100.0
+            ));
         }
 
         // Latency checks
         if let Some(max_avg) = self.config.success_criteria.max_avg_latency_ms {
             if aggregate.avg_latency_ms <= max_avg as f64 {
                 checks.push(true);
-                details.push(format!("Avg latency: {:.0}ms (threshold: {}ms)", aggregate.avg_latency_ms, max_avg));
+                details.push(format!(
+                    "Avg latency: {:.0}ms (threshold: {}ms)",
+                    aggregate.avg_latency_ms, max_avg
+                ));
             } else {
                 checks.push(false);
-                details.push(format!("FAIL: Avg latency: {:.0}ms (threshold: {}ms)", aggregate.avg_latency_ms, max_avg));
+                details.push(format!(
+                    "FAIL: Avg latency: {:.0}ms (threshold: {}ms)",
+                    aggregate.avg_latency_ms, max_avg
+                ));
             }
         }
 
         if let Some(max_p95) = self.config.success_criteria.max_p95_latency_ms {
             if aggregate.p95_latency_ms <= max_p95 as f64 {
                 checks.push(true);
-                details.push(format!("P95 latency: {:.0}ms (threshold: {}ms)", aggregate.p95_latency_ms, max_p95));
+                details.push(format!(
+                    "P95 latency: {:.0}ms (threshold: {}ms)",
+                    aggregate.p95_latency_ms, max_p95
+                ));
             } else {
                 checks.push(false);
-                details.push(format!("FAIL: P95 latency: {:.0}ms (threshold: {}ms)", aggregate.p95_latency_ms, max_p95));
+                details.push(format!(
+                    "FAIL: P95 latency: {:.0}ms (threshold: {}ms)",
+                    aggregate.p95_latency_ms, max_p95
+                ));
             }
         }
 
@@ -654,26 +815,42 @@ impl BenchmarkRunner {
         if let Some(max_mem) = self.config.success_criteria.max_memory_mb {
             if aggregate.avg_memory_mb <= max_mem as f64 {
                 checks.push(true);
-                details.push(format!("Avg memory: {:.0}MB (threshold: {}MB)", aggregate.avg_memory_mb, max_mem));
+                details.push(format!(
+                    "Avg memory: {:.0}MB (threshold: {}MB)",
+                    aggregate.avg_memory_mb, max_mem
+                ));
             } else {
                 checks.push(false);
-                details.push(format!("FAIL: Avg memory: {:.0}MB (threshold: {}MB)", aggregate.avg_memory_mb, max_mem));
+                details.push(format!(
+                    "FAIL: Avg memory: {:.0}MB (threshold: {}MB)",
+                    aggregate.avg_memory_mb, max_mem
+                ));
             }
         }
 
         // Error rate check
         if aggregate.error_rate <= self.config.success_criteria.max_error_rate {
             checks.push(true);
-            details.push(format!("Error rate: {:.1}% (threshold: {:.1}%)", 
-                aggregate.error_rate * 100.0, self.config.success_criteria.max_error_rate * 100.0));
+            details.push(format!(
+                "Error rate: {:.1}% (threshold: {:.1}%)",
+                aggregate.error_rate * 100.0,
+                self.config.success_criteria.max_error_rate * 100.0
+            ));
         } else {
             checks.push(false);
-            details.push(format!("FAIL: Error rate: {:.1}% (threshold: {:.1}%)", 
-                aggregate.error_rate * 100.0, self.config.success_criteria.max_error_rate * 100.0));
+            details.push(format!(
+                "FAIL: Error rate: {:.1}% (threshold: {:.1}%)",
+                aggregate.error_rate * 100.0,
+                self.config.success_criteria.max_error_rate * 100.0
+            ));
         }
 
         // Statistical significance check
-        if self.config.success_criteria.require_statistical_significance {
+        if self
+            .config
+            .success_criteria
+            .require_statistical_significance
+        {
             if let Some(comp) = comparison {
                 if comp.statistically_significant {
                     checks.push(true);
@@ -704,7 +881,11 @@ impl BenchmarkRunner {
     }
 
     /// Export results
-    async fn export_results(&self, result: &BenchmarkResult, path: &PathBuf) -> Result<(), BenchmarkError> {
+    async fn export_results(
+        &self,
+        result: &BenchmarkResult,
+        path: &PathBuf,
+    ) -> Result<(), BenchmarkError> {
         let content = match self.config.output_format {
             OutputFormat::Json => serde_json::to_string_pretty(result)?,
             OutputFormat::Csv => self.export_csv(result)?,
@@ -713,7 +894,8 @@ impl BenchmarkRunner {
             OutputFormat::Prometheus => self.export_prometheus(result)?,
         };
 
-        tokio::fs::write(path, content).await
+        tokio::fs::write(path, content)
+            .await
             .map_err(|e| BenchmarkError::ExportFailed(e.to_string()))?;
 
         Ok(())
@@ -722,60 +904,115 @@ impl BenchmarkRunner {
     pub fn export_csv(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut csv = String::new();
         csv.push_str("test_id,status,latency_ms,cpu_time_ms,memory_mb,tokens,success\n");
-        
+
         for test in &result.test_results {
             csv.push_str(&format!(
                 "{},{:?},{},{},{},{},{}\n",
-                test.test_id, test.status, test.latency_ms, test.cpu_time_ms,
-                test.peak_memory_mb, test.tokens_used, test.status.is_success()
+                test.test_id,
+                test.status,
+                test.latency_ms,
+                test.cpu_time_ms,
+                test.peak_memory_mb,
+                test.tokens_used,
+                test.status.is_success()
             ));
         }
-        
+
         Ok(csv)
     }
 
     pub fn export_markdown(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut md = String::new();
-        md.push_str(&format!("# Benchmark Results: {}\n\n", result.benchmark_name));
-        md.push_str(&format!("**Capability**: {} v{}  \n", result.capability_id, result.capability_version));
+        md.push_str(&format!(
+            "# Benchmark Results: {}\n\n",
+            result.benchmark_name
+        ));
+        md.push_str(&format!(
+            "**Capability**: {} v{}  \n",
+            result.capability_id, result.capability_version
+        ));
         md.push_str(&format!("**Date**: {:?}  \n", result.started_at));
-        md.push_str(&format!("**Duration**: {}ms  \n\n", result.total_duration_ms));
-        
+        md.push_str(&format!(
+            "**Duration**: {}ms  \n\n",
+            result.total_duration_ms
+        ));
+
         md.push_str("## Aggregate Metrics\n\n");
-        md.push_str(&format!("| Metric | Value |\n"));
+        md.push_str("| Metric | Value |\n");
         md.push_str("|--------|-------|\n");
-        md.push_str(&format!("| Success Rate | {:.1}% |\n", result.aggregate_metrics.success_rate * 100.0));
-        md.push_str(&format!("| Avg Latency | {:.0}ms |\n", result.aggregate_metrics.avg_latency_ms));
-        md.push_str(&format!("| P95 Latency | {:.0}ms |\n", result.aggregate_metrics.p95_latency_ms));
-        md.push_str(&format!("| P99 Latency | {:.0}ms |\n", result.aggregate_metrics.p99_latency_ms));
-        md.push_str(&format!("| Avg Memory | {:.0}MB |\n", result.aggregate_metrics.avg_memory_mb));
-        md.push_str(&format!("| Peak Memory | {}MB |\n", result.aggregate_metrics.peak_memory_mb));
-        md.push_str(&format!("| Error Rate | {:.1}% |\n", result.aggregate_metrics.error_rate * 100.0));
-        md.push_str(&format!("| Std Dev Latency | {:.0}ms |\n\n", result.aggregate_metrics.std_dev_latency_ms));
-        
+        md.push_str(&format!(
+            "| Success Rate | {:.1}% |\n",
+            result.aggregate_metrics.success_rate * 100.0
+        ));
+        md.push_str(&format!(
+            "| Avg Latency | {:.0}ms |\n",
+            result.aggregate_metrics.avg_latency_ms
+        ));
+        md.push_str(&format!(
+            "| P95 Latency | {:.0}ms |\n",
+            result.aggregate_metrics.p95_latency_ms
+        ));
+        md.push_str(&format!(
+            "| P99 Latency | {:.0}ms |\n",
+            result.aggregate_metrics.p99_latency_ms
+        ));
+        md.push_str(&format!(
+            "| Avg Memory | {:.0}MB |\n",
+            result.aggregate_metrics.avg_memory_mb
+        ));
+        md.push_str(&format!(
+            "| Peak Memory | {}MB |\n",
+            result.aggregate_metrics.peak_memory_mb
+        ));
+        md.push_str(&format!(
+            "| Error Rate | {:.1}% |\n",
+            result.aggregate_metrics.error_rate * 100.0
+        ));
+        md.push_str(&format!(
+            "| Std Dev Latency | {:.0}ms |\n\n",
+            result.aggregate_metrics.std_dev_latency_ms
+        ));
+
         if let Some(comp) = &result.comparison {
             md.push_str("## Comparison with Baseline\n\n");
             md.push_str(&format!("**Baseline**: {}  \n", comp.baseline_name));
-            md.push_str(&format!("| Metric | Change |\n"));
+            md.push_str("| Metric | Change |\n");
             md.push_str("|--------|--------|\n");
             md.push_str(&format!("| Latency | {:+.1}% |\n", comp.latency_change_pct));
             md.push_str(&format!("| Memory | {:+.1}% |\n", comp.memory_change_pct));
-            md.push_str(&format!("| Success Rate | {:+.1}% |\n", comp.success_rate_change_pct));
-            md.push_str(&format!("| Statistically Significant | {} |\n", comp.statistically_significant));
-            md.push_str(&format!("| P-value | {:.4} |\n", comp.p_value.unwrap_or(0.0)));
-            md.push_str(&format!("| Effect Size | {:.2} |\n", comp.effect_size.unwrap_or(0.0)));
-            md.push_str(&format!("| Recommendation | {:?} |\n\n", comp.recommendation));
+            md.push_str(&format!(
+                "| Success Rate | {:+.1}% |\n",
+                comp.success_rate_change_pct
+            ));
+            md.push_str(&format!(
+                "| Statistically Significant | {} |\n",
+                comp.statistically_significant
+            ));
+            md.push_str(&format!(
+                "| P-value | {:.4} |\n",
+                comp.p_value.unwrap_or(0.0)
+            ));
+            md.push_str(&format!(
+                "| Effect Size | {:.2} |\n",
+                comp.effect_size.unwrap_or(0.0)
+            ));
+            md.push_str(&format!(
+                "| Recommendation | {:?} |\n\n",
+                comp.recommendation
+            ));
         }
-        
+
         md.push_str("## Test Results\n\n");
         md.push_str("| Test | Status | Latency (ms) | Memory (MB) |\n");
         md.push_str("|------|--------|--------------|-------------|\n");
-        
+
         for test in &result.test_results {
-            md.push_str(&format!("| {} | {:?} | {} | {} |\n", 
-                test.test_id, test.status, test.latency_ms, test.peak_memory_mb));
+            md.push_str(&format!(
+                "| {} | {:?} | {} | {} |\n",
+                test.test_id, test.status, test.latency_ms, test.peak_memory_mb
+            ));
         }
-        
+
         Ok(md)
     }
 
@@ -794,24 +1031,40 @@ impl BenchmarkRunner {
     pub fn export_prometheus(&self, result: &BenchmarkResult) -> Result<String, BenchmarkError> {
         let mut prom = String::new();
         let m = &result.aggregate_metrics;
-        
-        prom.push_str(&format!("lai_benchmark_success_rate {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.success_rate));
-        prom.push_str(&format!("lai_benchmark_avg_latency_ms {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.avg_latency_ms));
-        prom.push_str(&format!("lai_benchmark_p95_latency_ms {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.p95_latency_ms));
-        prom.push_str(&format!("lai_benchmark_p99_latency_ms {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.p99_latency_ms));
-        prom.push_str(&format!("lai_benchmark_avg_memory_mb {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.avg_memory_mb));
-        prom.push_str(&format!("lai_benchmark_peak_memory_mb {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.peak_memory_mb));
-        prom.push_str(&format!("lai_benchmark_error_rate {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.error_rate));
-        prom.push_str(&format!("lai_benchmark_std_dev_latency_ms {{capability=\"{}\"}} {}\n", 
-            result.capability_id, m.std_dev_latency_ms));
-        
+
+        prom.push_str(&format!(
+            "lai_benchmark_success_rate {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.success_rate
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_avg_latency_ms {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.avg_latency_ms
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_p95_latency_ms {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.p95_latency_ms
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_p99_latency_ms {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.p99_latency_ms
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_avg_memory_mb {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.avg_memory_mb
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_peak_memory_mb {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.peak_memory_mb
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_error_rate {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.error_rate
+        ));
+        prom.push_str(&format!(
+            "lai_benchmark_std_dev_latency_ms {{capability=\"{}\"}} {}\n",
+            result.capability_id, m.std_dev_latency_ms
+        ));
+
         Ok(prom)
     }
 }
@@ -900,7 +1153,9 @@ pub mod standard_benchmarks {
         BenchmarkConfig {
             benchmark_id: "hybrid-rag-retrieval".to_string(),
             name: "Hybrid RAG Retrieval Benchmark".to_string(),
-            description: "Measures retrieval quality and latency for hybrid lexical+semantic search".to_string(),
+            description:
+                "Measures retrieval quality and latency for hybrid lexical+semantic search"
+                    .to_string(),
             capability_id: "lai.retrieval.hybrid".to_string(),
             test_cases: vec![
                 BenchmarkTestCase {
@@ -947,7 +1202,8 @@ pub mod standard_benchmarks {
         BenchmarkConfig {
             benchmark_id: "joern-cpg-analysis".to_string(),
             name: "Joern CPG Analysis Benchmark".to_string(),
-            description: "Measures code property graph generation and query performance".to_string(),
+            description: "Measures code property graph generation and query performance"
+                .to_string(),
             capability_id: "lai.code_analysis.cpg".to_string(),
             test_cases: vec![
                 BenchmarkTestCase {
@@ -994,21 +1250,20 @@ pub mod standard_benchmarks {
         BenchmarkConfig {
             benchmark_id: "hypothesis-property-testing".to_string(),
             name: "Hypothesis Property Testing Benchmark".to_string(),
-            description: "Measures property-based testing effectiveness and performance".to_string(),
+            description: "Measures property-based testing effectiveness and performance"
+                .to_string(),
             capability_id: "lai.testing.property".to_string(),
-            test_cases: vec![
-                BenchmarkTestCase {
-                    test_id: "idempotence_test".to_string(),
-                    name: "Idempotence Property".to_string(),
-                    description: "Test f(f(x)) == f(x) for normalizer".to_string(),
-                    input: serde_json::json!({"property": "idempotence", "function": "normalize_path"}),
-                    parameters: HashMap::new(),
-                    expected_status: Some(ResultStatus::Passed),
-                    expected_output: None,
-                    timeout_seconds: 60,
-                    tags: vec!["property".to_string(), "idempotence".to_string()],
-                },
-            ],
+            test_cases: vec![BenchmarkTestCase {
+                test_id: "idempotence_test".to_string(),
+                name: "Idempotence Property".to_string(),
+                description: "Test f(f(x)) == f(x) for normalizer".to_string(),
+                input: serde_json::json!({"property": "idempotence", "function": "normalize_path"}),
+                parameters: HashMap::new(),
+                expected_status: Some(ResultStatus::Passed),
+                expected_output: None,
+                timeout_seconds: 60,
+                tags: vec!["property".to_string(), "idempotence".to_string()],
+            }],
             baseline: None,
             success_criteria: SuccessCriteria {
                 min_success_rate: 0.95,
@@ -1058,8 +1313,14 @@ mod tests {
     fn test_standard_benchmarks() {
         let benchmarks = standard_benchmarks::all_benchmarks();
         assert_eq!(benchmarks.len(), 3);
-        assert!(benchmarks.iter().any(|b| b.capability_id == "lai.retrieval.hybrid"));
-        assert!(benchmarks.iter().any(|b| b.capability_id == "lai.code_analysis.cpg"));
-        assert!(benchmarks.iter().any(|b| b.capability_id == "lai.testing.property"));
+        assert!(benchmarks
+            .iter()
+            .any(|b| b.capability_id == "lai.retrieval.hybrid"));
+        assert!(benchmarks
+            .iter()
+            .any(|b| b.capability_id == "lai.code_analysis.cpg"));
+        assert!(benchmarks
+            .iter()
+            .any(|b| b.capability_id == "lai.testing.property"));
     }
 }

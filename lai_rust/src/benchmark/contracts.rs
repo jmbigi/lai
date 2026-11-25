@@ -1,52 +1,51 @@
 /// Mandatory Contracts for lai Tool Adapters
-/// 
+///
 /// This module defines the mandatory contracts that all external tool
 /// integrations must implement to ensure security, verifiability,
 /// and measurable performance.
-
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Execution contract - must be implemented by every adapter
 #[async_trait::async_trait]
 pub trait CapabilityAdapter: Send + Sync {
     /// Unique identifier for this capability
     fn capability_id(&self) -> String;
-    
+
     /// Human-readable name
     fn capability_name(&self) -> String;
-    
+
     /// Version of the adapter implementation
     fn adapter_version(&self) -> String;
-    
+
     /// Version of the underlying tool
     fn tool_version(&self) -> String;
-    
+
     /// Tool definition fingerprint (SHA-256)
     fn definition_hash(&self) -> String;
-    
+
     /// Check if tool is available and healthy
     async fn health_check(&self) -> HealthCheckResult;
-    
+
     /// Pre-flight checks before execution
-    async fn preflight(&self, request: &ExecutionRequest) -> Result<PreflightResult, ContractError>;
-    
+    async fn preflight(&self, request: &ExecutionRequest)
+        -> Result<PreflightResult, ContractError>;
+
     /// Execute the capability
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, ContractError>;
-    
+
     /// Validate execution result
     async fn validate(&self, result: &ExecutionResult) -> ValidationResult;
-    
+
     /// Get execution metrics
     async fn get_metrics(&self, execution_id: &str) -> Option<ExecutionMetrics>;
-    
+
     /// Get supported features
     fn supported_features(&self) -> AdapterFeatures;
-    
+
     /// Get resource requirements
     fn resource_requirements(&self) -> ResourceRequirements;
 }
@@ -196,13 +195,22 @@ impl ResultStatus {
     pub fn is_success(&self) -> bool {
         matches!(self, ResultStatus::Verified | ResultStatus::Passed)
     }
-    
+
     pub fn is_failure(&self) -> bool {
-        matches!(self, ResultStatus::Failed | ResultStatus::CounterexampleFound)
+        matches!(
+            self,
+            ResultStatus::Failed | ResultStatus::CounterexampleFound
+        )
     }
-    
+
     pub fn is_inconclusive(&self) -> bool {
-        matches!(self, ResultStatus::Partial | ResultStatus::Unknown | ResultStatus::Timeout | ResultStatus::ResourceLimit)
+        matches!(
+            self,
+            ResultStatus::Partial
+                | ResultStatus::Unknown
+                | ResultStatus::Timeout
+                | ResultStatus::ResourceLimit
+        )
     }
 }
 
@@ -273,7 +281,12 @@ pub struct ExecutionMetrics {
 }
 
 impl ExecutionMetrics {
-    pub fn new(execution_id: String, capability_id: String, tool_version: String, definition_hash: String) -> Self {
+    pub fn new(
+        execution_id: String,
+        capability_id: String,
+        tool_version: String,
+        definition_hash: String,
+    ) -> Self {
         Self {
             execution_id,
             capability_id,
@@ -429,16 +442,16 @@ pub enum ContractError {
 pub trait IntegrityContract {
     /// Verify tool identity
     fn verify_identity(&self) -> Result<IdentityVerification, ContractError>;
-    
+
     /// Verify definition fingerprint
     fn verify_definition(&self, expected_hash: &str) -> Result<bool, ContractError>;
-    
+
     /// Verify executable/image hash
     fn verify_executable(&self, expected_hash: &str) -> Result<bool, ContractError>;
-    
+
     /// Verify dependency versions
     fn verify_dependencies(&self) -> Result<DependencyVerification, ContractError>;
-    
+
     /// Verify provenance
     fn verify_provenance(&self) -> Result<ProvenanceVerification, ContractError>;
 }
@@ -487,13 +500,13 @@ pub struct ProvenanceVerification {
 pub trait MeasurementContract {
     /// Record a metric
     fn record_metric(&self, name: &str, value: f64, labels: HashMap<String, String>);
-    
+
     /// Record a histogram
     fn record_histogram(&self, name: &str, value: f64, labels: HashMap<String, String>);
-    
+
     /// Get current metrics snapshot
     fn get_metrics(&self) -> MetricsSnapshot;
-    
+
     /// Export metrics in Prometheus format
     fn export_prometheus(&self) -> String;
 }

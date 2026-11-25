@@ -1,13 +1,11 @@
 //! memory_store.rs - 4-tier memory system with provenance, invalidation, scope-aware reranking (v5.0)
 //! Principles: Provenance tracking, tool-change invalidation, scope-aware reranking, confidence scoring
 
-use crate::telemetry::{record_policy_decision, task_span, end_task_span};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 #[derive(clap::Subcommand, Debug, Clone, Serialize, Deserialize)]
@@ -62,10 +60,10 @@ pub enum MemoryCommands {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MemoryType {
-    Semantic,      // Facts, patterns, learned knowledge
-    Episodic,      // Specific task executions, tool results
-    Working,       // Current task context, temporary
-    Documentary,   // Documentation, specs, decisions
+    Semantic,    // Facts, patterns, learned knowledge
+    Episodic,    // Specific task executions, tool results
+    Working,     // Current task context, temporary
+    Documentary, // Documentation, specs, decisions
 }
 
 impl MemoryType {
@@ -98,12 +96,12 @@ pub struct MemoryEntry {
     pub tool_name: Option<String>,
     pub tool_definition_hash: Option<String>,
     pub tags: Vec<String>,
-    pub confidence: f32,           // 0.0 - 1.0
-    pub relevance_score: f32,      // Computed at query time
+    pub confidence: f32,      // 0.0 - 1.0
+    pub relevance_score: f32, // Computed at query time
     pub created_at: String,
     pub last_accessed: String,
     pub access_count: u32,
-    pub invalidated_by: Option<String>,  // tool_definition_hash that invalidated this
+    pub invalidated_by: Option<String>, // tool_definition_hash that invalidated this
     pub invalidated_at: Option<String>,
     pub task_id: Option<String>,
     pub metadata: HashMap<String, serde_json::Value>,
@@ -186,7 +184,7 @@ impl MemoryStore {
         let store = Self {
             conn,
             working_dir: working_dir.to_path_buf(),
-            embedding_dim: 384,  // For local embeddings if enabled
+            embedding_dim: 384, // For local embeddings if enabled
         };
 
         store.init_schema()?;
@@ -251,7 +249,8 @@ impl MemoryStore {
             CREATE INDEX IF NOT EXISTS idx_memory_links_from ON memory_links(from_id);
             CREATE INDEX IF NOT EXISTS idx_memory_links_to ON memory_links(to_id);
             "#,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -288,7 +287,8 @@ impl MemoryStore {
                 entry.task_id,
                 metadata_json,
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(entry.id)
     }
@@ -314,7 +314,7 @@ impl MemoryStore {
             "SELECT id, memory_type, content, source, tool_name, tool_definition_hash,
                     tags, confidence, relevance_score, created_at, last_accessed,
                     access_count, invalidated_by, invalidated_at, task_id, metadata
-             FROM memories WHERE 1=1"
+             FROM memories WHERE 1=1",
         );
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -337,10 +337,13 @@ impl MemoryStore {
         sql.push_str(" ORDER BY confidence DESC, last_accessed DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(&params_refs[..], |row| self.row_to_entry(row)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(&params_refs[..], |row| self.row_to_entry(row))
+            .map_err(|e| e.to_string())?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -355,18 +358,33 @@ impl MemoryStore {
         }
 
         // Sort by relevance score (hybrid: confidence * keyword_match * recency)
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(results)
     }
 
-    pub fn search_semantic(&self, query: &str, memory_type: Option<MemoryType>, limit: usize) -> Result<Vec<SearchResult>, String> {
+    pub fn search_semantic(
+        &self,
+        query: &str,
+        memory_type: Option<MemoryType>,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, String> {
         // For now, fall back to keyword search
         // When embeddings are enabled, this would use vector similarity
         self.search(query, memory_type, limit, false)
     }
 
-    pub fn search_hybrid(&self, query: &str, memory_type: Option<MemoryType>, limit: usize, scope: SearchScope) -> Result<Vec<SearchResult>, String> {
+    pub fn search_hybrid(
+        &self,
+        query: &str,
+        memory_type: Option<MemoryType>,
+        limit: usize,
+        scope: SearchScope,
+    ) -> Result<Vec<SearchResult>, String> {
         let keyword_results = self.search(query, memory_type.clone(), limit * 2, false)?;
         let semantic_results = self.search_semantic(query, memory_type, limit * 2)?;
 
@@ -375,31 +393,44 @@ impl MemoryStore {
 
         for (rank, result) in keyword_results.iter().enumerate() {
             let rrf_score = 1.0 / (60.0 + rank as f32 + 1.0);
-            scores.entry(result.entry.id.clone())
+            scores
+                .entry(result.entry.id.clone())
                 .and_modify(|(s, _, _)| *s += rrf_score)
                 .or_insert((rrf_score, result.entry.clone(), result.match_type.clone()));
         }
 
         for (rank, result) in semantic_results.iter().enumerate() {
             let rrf_score = 1.0 / (60.0 + rank as f32 + 1.0);
-            scores.entry(result.entry.id.clone())
+            scores
+                .entry(result.entry.id.clone())
                 .and_modify(|(s, _, _)| *s += rrf_score)
                 .or_insert((rrf_score, result.entry.clone(), result.match_type.clone()));
         }
 
-        let mut combined: Vec<SearchResult> = scores.into_values()
-            .map(|(score, entry, match_type)| SearchResult { entry, score, match_type })
+        let mut combined: Vec<SearchResult> = scores
+            .into_values()
+            .map(|(score, entry, match_type)| SearchResult {
+                entry,
+                score,
+                match_type,
+            })
             .collect();
 
         // Apply scope-aware reranking
         // Per shelfmark evidence: reranking helps code but HURTS memory retrieval (-10.5 pp)
         // So we do NOT rerank for memory scope
         if scope != SearchScope::Memory {
-            combined.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            combined.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
             // For memory, use original order (confidence + recency)
             combined.sort_by(|a, b| {
-                b.entry.confidence.partial_cmp(&a.entry.confidence)
+                b.entry
+                    .confidence
+                    .partial_cmp(&a.entry.confidence)
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| b.entry.last_accessed.cmp(&a.entry.last_accessed))
             });
@@ -439,7 +470,8 @@ impl MemoryStore {
 
         // Recency boost (exponential decay over 30 days)
         if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&entry.created_at) {
-            let age_days = (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_days() as f32;
+            let age_days =
+                (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_days() as f32;
             if age_days < 30.0 {
                 score += 0.1 * (1.0 - age_days / 30.0);
             }
@@ -472,19 +504,24 @@ impl MemoryStore {
     pub fn get(&self, id: &str) -> Result<Option<MemoryEntry>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, memory_type, content, source, tool_name, tool_definition_hash,
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_type, content, source, tool_name, tool_definition_hash,
                     tags, confidence, relevance_score, created_at, last_accessed,
                     access_count, invalidated_by, invalidated_at, task_id, metadata
-             FROM memories WHERE id = ?"
-        ).map_err(|e| e.to_string())?;
+             FROM memories WHERE id = ?",
+            )
+            .map_err(|e| e.to_string())?;
 
-        let entry = stmt.query_row([id], |row| self.row_to_entry(row)).optional().map_err(|e| e.to_string())?;
+        let entry = stmt
+            .query_row([id], |row| self.row_to_entry(row))
+            .optional()
+            .map_err(|e| e.to_string())?;
 
         // Update access count
         if entry.is_some() {
             let now_str = chrono::Utc::now().to_rfc3339();
-                conn.execute(
+            conn.execute(
                 "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
                 [&now_str, id],
             ).map_err(|e| e.to_string())?;
@@ -522,7 +559,8 @@ impl MemoryStore {
                 metadata_json,
                 entry.id,
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -542,9 +580,13 @@ impl MemoryStore {
     pub fn register_tool_definition(&self, tool_def: ToolDefinition) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
 
-        let input_schema = serde_json::to_string(&tool_def.input_schema).map_err(|e| e.to_string())?;
-        let output_schema = serde_json::to_string(&tool_def.output_schema).map_err(|e| e.to_string())?;
-        let annotations = tool_def.annotations.map(|a| serde_json::to_string(&a).unwrap_or_default());
+        let input_schema =
+            serde_json::to_string(&tool_def.input_schema).map_err(|e| e.to_string())?;
+        let output_schema =
+            serde_json::to_string(&tool_def.output_schema).map_err(|e| e.to_string())?;
+        let annotations = tool_def
+            .annotations
+            .map(|a| serde_json::to_string(&a).unwrap_or_default());
 
         conn.execute(
             r#"
@@ -565,7 +607,8 @@ impl MemoryStore {
                 chrono::Utc::now().to_rfc3339(),
                 chrono::Utc::now().to_rfc3339(),
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -573,23 +616,31 @@ impl MemoryStore {
     pub fn verify_tool_definition(&self, definition_hash: &str) -> Result<bool, String> {
         let conn = self.conn.lock().unwrap();
 
-        let is_valid: bool = conn.query_row(
-            "SELECT is_valid FROM tool_definitions WHERE definition_hash = ?",
-            [definition_hash],
-            |row| row.get(0),
-        ).optional().map_err(|e| e.to_string())?.unwrap_or(false);
+        let is_valid: bool = conn
+            .query_row(
+                "SELECT is_valid FROM tool_definitions WHERE definition_hash = ?",
+                [definition_hash],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or(false);
 
         Ok(is_valid)
     }
 
-    pub fn list_memories(&self, memory_type: Option<MemoryType>, limit: usize) -> Result<Vec<MemoryEntry>, String> {
+    pub fn list_memories(
+        &self,
+        memory_type: Option<MemoryType>,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>, String> {
         let conn = self.conn.lock().unwrap();
 
         let mut sql = String::from(
             "SELECT id, memory_type, content, source, tool_name, tool_definition_hash,
                     tags, confidence, relevance_score, created_at, last_accessed,
                     access_count, invalidated_by, invalidated_at, task_id, metadata
-             FROM memories WHERE invalidated_by IS NULL"
+             FROM memories WHERE invalidated_by IS NULL",
         );
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -602,10 +653,13 @@ impl MemoryStore {
         sql.push_str(" ORDER BY last_accessed DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(&params_refs[..], |row| self.row_to_entry(row)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(&params_refs[..], |row| self.row_to_entry(row))
+            .map_err(|e| e.to_string())?;
 
         let mut entries = Vec::new();
         for row in rows {
@@ -621,10 +675,12 @@ impl MemoryStore {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
         let cutoff_str = cutoff.to_rfc3339();
 
-        let rows = conn.execute(
-            "DELETE FROM memories WHERE memory_type = 'working' AND created_at < ?",
-            [cutoff_str],
-        ).map_err(|e| e.to_string())?;
+        let rows = conn
+            .execute(
+                "DELETE FROM memories WHERE memory_type = 'working' AND created_at < ?",
+                [cutoff_str],
+            )
+            .map_err(|e| e.to_string())?;
 
         Ok(rows as u64)
     }
@@ -635,7 +691,8 @@ impl MemoryStore {
         let metadata_json: String = row.get(15)?;
 
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-        let metadata: HashMap<String, serde_json::Value> = serde_json::from_str(&metadata_json).unwrap_or_default();
+        let metadata: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&metadata_json).unwrap_or_default();
 
         Ok(MemoryEntry {
             id: row.get(0)?,
@@ -672,13 +729,15 @@ impl MemoryStore {
     pub fn get_links(&self, id: &str) -> Result<Vec<(String, String, String)>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let mut stmt = conn.prepare(
-            "SELECT from_id, to_id, link_type FROM memory_links WHERE from_id = ? OR to_id = ?"
-        ).map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT from_id, to_id, link_type FROM memory_links WHERE from_id = ? OR to_id = ?",
+            )
+            .map_err(|e| e.to_string())?;
 
-        let rows = stmt.query_map([id, id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        }).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([id, id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| e.to_string())?;
 
         let mut links = Vec::new();
         for row in rows {
@@ -698,7 +757,7 @@ pub struct ToolDefinition {
     pub annotations: Option<serde_json::Value>,
     pub provider_identity: String,
     pub pinned_version: String,
-    pub scope_expiry: String,  // RFC3339
+    pub scope_expiry: String, // RFC3339
 }
 
 impl ToolDefinition {
@@ -708,7 +767,7 @@ impl ToolDefinition {
         output_schema: &serde_json::Value,
         annotations: &Option<serde_json::Value>,
     ) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(tool_name.as_bytes());
         hasher.update(serde_json::to_vec(input_schema).unwrap_or_default());

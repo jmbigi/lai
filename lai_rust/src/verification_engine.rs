@@ -1,14 +1,12 @@
 //! verification_engine.rs - Multi-level verification engine (v5.0)
 //! Principles: Bounded verdicts (SUCCESS, SUCCESS_WITH_DECLARED_GAPS, BLOCKED), honest reporting
 
-use crate::telemetry::{record_verification, record_policy_decision};
 use crate::planner::{VerificationLevel, VerificationScope};
+use crate::telemetry::record_verification;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VerificationVerdict {
@@ -54,7 +52,10 @@ impl VerificationReport {
                 has_in_scope = true;
                 if !result.passed {
                     all_in_scope_passed = false;
-                    if matches!(result.level, VerificationLevel::Syntax | VerificationLevel::TypeCheck) {
+                    if matches!(
+                        result.level,
+                        VerificationLevel::Syntax | VerificationLevel::TypeCheck
+                    ) {
                         // Critical levels: failure blocks
                         blocked = true;
                     }
@@ -78,14 +79,21 @@ impl VerificationReport {
         self.summary = match self.overall_verdict {
             VerificationVerdict::Success => "All in-scope verifications passed".to_string(),
             VerificationVerdict::SuccessWithDeclaredGaps => {
-                let gaps: Vec<String> = self.results.iter()
+                let gaps: Vec<String> = self
+                    .results
+                    .iter()
                     .filter(|r| !r.in_scope)
                     .map(|r| format!("Level {} ({})", r.level.as_u32(), r.level.name()))
                     .collect();
-                format!("In-scope verifications passed. Gaps declared: {}", gaps.join(", "))
+                format!(
+                    "In-scope verifications passed. Gaps declared: {}",
+                    gaps.join(", ")
+                )
             }
             VerificationVerdict::Blocked => {
-                let failed: Vec<String> = self.results.iter()
+                let failed: Vec<String> = self
+                    .results
+                    .iter()
                     .filter(|r| r.in_scope && !r.passed)
                     .map(|r| format!("Level {} ({})", r.level.as_u32(), r.level.name()))
                     .collect();
@@ -149,12 +157,15 @@ impl VerificationEngine {
         // Determine which levels to execute
         let levels_to_check: Vec<VerificationLevel> = (1..=8)
             .filter_map(VerificationLevel::from_u32)
-            .filter(|l| verification_scope.in_scope.contains(l) || verification_scope.out_of_scope.contains(l))
+            .filter(|l| {
+                verification_scope.in_scope.contains(l)
+                    || verification_scope.out_of_scope.contains(l)
+            })
             .collect();
 
         for level in levels_to_check {
             let in_scope = verification_scope.in_scope.contains(&level);
-            let out_of_scope = verification_scope.out_of_scope.contains(&level);
+            let _out_of_scope = verification_scope.out_of_scope.contains(&level);
 
             let result = self.verify_level(task_id, level, in_scope).await;
             results.push(result);
@@ -197,7 +208,7 @@ impl VerificationEngine {
         let duration = level_start.elapsed();
         let level_name = format!("{:?}", level);
         let level_num = level.as_u32();
-        
+
         let details_for_telemetry = details.clone();
         let result = VerificationResult {
             level,
@@ -210,7 +221,14 @@ impl VerificationEngine {
             in_scope,
         };
 
-        record_verification(task_id, &level_name, level_num, passed, details_for_telemetry, vec![]);
+        record_verification(
+            task_id,
+            &level_name,
+            level_num,
+            passed,
+            details_for_telemetry,
+            vec![],
+        );
 
         result
     }
@@ -228,11 +246,16 @@ impl VerificationEngine {
             match output {
                 Ok(out) => {
                     let success = out.status.success();
-                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let _stdout = String::from_utf8_lossy(&out.stdout);
                     let stderr = String::from_utf8_lossy(&out.stderr);
 
                     if success {
-                        (true, 100.0, "Syntax check passed (cargo check)".to_string(), vec![])
+                        (
+                            true,
+                            100.0,
+                            "Syntax check passed (cargo check)".to_string(),
+                            vec![],
+                        )
                     } else {
                         (false, 0.0, format!("Syntax errors: {}", stderr), vec![])
                     }
@@ -241,7 +264,9 @@ impl VerificationEngine {
             }
         }
         // Python
-        else if self.working_dir.join("pyproject.toml").exists() || self.working_dir.join("setup.py").exists() {
+        else if self.working_dir.join("pyproject.toml").exists()
+            || self.working_dir.join("setup.py").exists()
+        {
             let output = Command::new("python3")
                 .args(["-m", "py_compile"])
                 .arg(".")
@@ -255,7 +280,12 @@ impl VerificationEngine {
                     let success = out.status.success();
                     let stderr = String::from_utf8_lossy(&out.stderr);
                     if success {
-                        (true, 100.0, "Syntax check passed (py_compile)".to_string(), vec![])
+                        (
+                            true,
+                            100.0,
+                            "Syntax check passed (py_compile)".to_string(),
+                            vec![],
+                        )
                     } else {
                         (false, 0.0, format!("Syntax errors: {}", stderr), vec![])
                     }
@@ -328,7 +358,12 @@ impl VerificationEngine {
                 Err(e) => (false, 0.0, format!("go build failed: {}", e), vec![]),
             }
         } else {
-            (true, 100.0, "No syntax checker available for project type".to_string(), vec![])
+            (
+                true,
+                100.0,
+                "No syntax checker available for project type".to_string(),
+                vec![],
+            )
         }
     }
 
@@ -350,10 +385,10 @@ impl VerificationEngine {
 
                     for line in stdout.lines() {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                            if json["reason"] == "compiler-message" {
-                                if json["message"]["level"] == "warning" {
-                                    warnings += 1;
-                                }
+                            if json["reason"] == "compiler-message"
+                                && json["message"]["level"] == "warning"
+                            {
+                                warnings += 1;
                             }
                         }
                     }
@@ -361,8 +396,17 @@ impl VerificationEngine {
                     if success && warnings == 0 {
                         (true, 100.0, "No lint warnings (clippy)".to_string(), vec![])
                     } else {
-                        let score = if warnings <= self.config.max_lint_warnings { 100.0 } else { 50.0 };
-                        (warnings <= self.config.max_lint_warnings, score, format!("{} lint warnings", warnings), vec![])
+                        let score = if warnings <= self.config.max_lint_warnings {
+                            100.0
+                        } else {
+                            50.0
+                        };
+                        (
+                            warnings <= self.config.max_lint_warnings,
+                            score,
+                            format!("{} lint warnings", warnings),
+                            vec![],
+                        )
                     }
                 }
                 Err(e) => (false, 0.0, format!("clippy failed: {}", e), vec![]),
@@ -383,7 +427,13 @@ impl VerificationEngine {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
                         let count = json.as_array().map(|a| a.len()).unwrap_or(0) as u32;
                         let success = count <= self.config.max_lint_warnings;
-                        let score = if count == 0 { 100.0 } else if count <= self.config.max_lint_warnings { 80.0 } else { 30.0 };
+                        let score = if count == 0 {
+                            100.0
+                        } else if count <= self.config.max_lint_warnings {
+                            80.0
+                        } else {
+                            30.0
+                        };
                         (success, score, format!("{} ruff findings", count), vec![])
                     } else {
                         (true, 100.0, "Ruff check passed".to_string(), vec![])
@@ -405,13 +455,29 @@ impl VerificationEngine {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                        let total_errors: u32 = json.as_array().map(|arr| {
-                            arr.iter().map(|f| f["errorCount"].as_u64().unwrap_or(0) as u32).sum()
-                        }).unwrap_or(0);
+                        let total_errors: u32 = json
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .map(|f| f["errorCount"].as_u64().unwrap_or(0) as u32)
+                                    .sum()
+                            })
+                            .unwrap_or(0);
 
                         let success = total_errors <= self.config.max_lint_warnings;
-                        let score = if total_errors == 0 { 100.0 } else if total_errors <= self.config.max_lint_warnings { 80.0 } else { 30.0 };
-                        (success, score, format!("{} ESLint errors", total_errors), vec![])
+                        let score = if total_errors == 0 {
+                            100.0
+                        } else if total_errors <= self.config.max_lint_warnings {
+                            80.0
+                        } else {
+                            30.0
+                        };
+                        (
+                            success,
+                            score,
+                            format!("{} ESLint errors", total_errors),
+                            vec![],
+                        )
                     } else {
                         (true, 100.0, "ESLint passed".to_string(), vec![])
                     }
@@ -419,7 +485,12 @@ impl VerificationEngine {
                 Err(e) => (false, 0.0, format!("eslint failed: {}", e), vec![]),
             }
         } else {
-            (true, 100.0, "No linter available for project type".to_string(), vec![])
+            (
+                true,
+                100.0,
+                "No linter available for project type".to_string(),
+                vec![],
+            )
         }
     }
 
@@ -427,7 +498,12 @@ impl VerificationEngine {
         // Rust: cargo check already covers types
         if self.working_dir.join("Cargo.toml").exists() {
             // Already done in syntax check
-            return (true, 100.0, "Type check covered by cargo check".to_string(), vec![]);
+            return (
+                true,
+                100.0,
+                "Type check covered by cargo check".to_string(),
+                vec![],
+            );
         }
 
         // Python: mypy
@@ -441,19 +517,33 @@ impl VerificationEngine {
 
             match output {
                 Ok(out) => {
-                    let success = out.status.success();
+                    let _success = out.status.success();
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    let error_count = stderr.lines().filter(|l| l.contains("error:")).count() as u32;
+                    let error_count =
+                        stderr.lines().filter(|l| l.contains("error:")).count() as u32;
 
                     let success = error_count <= self.config.max_type_errors;
-                    let score = if error_count == 0 { 100.0 } else if error_count <= self.config.max_type_errors { 70.0 } else { 20.0 };
-                    (success, score, format!("{} mypy errors", error_count), vec![])
+                    let score = if error_count == 0 {
+                        100.0
+                    } else if error_count <= self.config.max_type_errors {
+                        70.0
+                    } else {
+                        20.0
+                    };
+                    (
+                        success,
+                        score,
+                        format!("{} mypy errors", error_count),
+                        vec![],
+                    )
                 }
                 Err(e) => (false, 0.0, format!("mypy failed: {}", e), vec![]),
             }
         }
         // TypeScript: tsc
-        else if self.working_dir.join("package.json").exists() && self.working_dir.join("tsconfig.json").exists() {
+        else if self.working_dir.join("package.json").exists()
+            && self.working_dir.join("tsconfig.json").exists()
+        {
             let output = Command::new("npx")
                 .args(["tsc", "--noEmit"])
                 .current_dir(&self.working_dir)
@@ -463,18 +553,35 @@ impl VerificationEngine {
 
             match output {
                 Ok(out) => {
-                    let success = out.status.success();
+                    let _success = out.status.success();
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    let error_count = stderr.lines().filter(|l| l.contains("error TS")).count() as u32;
+                    let error_count =
+                        stderr.lines().filter(|l| l.contains("error TS")).count() as u32;
 
                     let success = error_count <= self.config.max_type_errors;
-                    let score = if error_count == 0 { 100.0 } else if error_count <= self.config.max_type_errors { 70.0 } else { 20.0 };
-                    (success, score, format!("{} TypeScript errors", error_count), vec![])
+                    let score = if error_count == 0 {
+                        100.0
+                    } else if error_count <= self.config.max_type_errors {
+                        70.0
+                    } else {
+                        20.0
+                    };
+                    (
+                        success,
+                        score,
+                        format!("{} TypeScript errors", error_count),
+                        vec![],
+                    )
                 }
                 Err(e) => (false, 0.0, format!("tsc failed: {}", e), vec![]),
             }
         } else {
-            (true, 100.0, "No type checker available for project type".to_string(), vec![])
+            (
+                true,
+                100.0,
+                "No type checker available for project type".to_string(),
+                vec![],
+            )
         }
     }
 
@@ -508,7 +615,12 @@ impl VerificationEngine {
                     if total > 0 {
                         let rate = (passed as f64 / total as f64) * 100.0;
                         let success = rate >= self.config.min_test_pass_rate;
-                        (success, rate, format!("{}/{} tests passed ({:.1}%)", passed, total, rate), vec![])
+                        (
+                            success,
+                            rate,
+                            format!("{}/{} tests passed ({:.1}%)", passed, total, rate),
+                            vec![],
+                        )
                     } else {
                         (true, 100.0, "No tests found".to_string(), vec![])
                     }
@@ -517,9 +629,18 @@ impl VerificationEngine {
             }
         }
         // Python
-        else if self.working_dir.join("pyproject.toml").exists() || self.working_dir.join("pytest.ini").exists() {
+        else if self.working_dir.join("pyproject.toml").exists()
+            || self.working_dir.join("pytest.ini").exists()
+        {
             let output = Command::new("python3")
-                .args(["-m", "pytest", "--tb=no", "-q", "--json-report", "--json-report-file=/tmp/pytest_report.json"])
+                .args([
+                    "-m",
+                    "pytest",
+                    "--tb=no",
+                    "-q",
+                    "--json-report",
+                    "--json-report-file=/tmp/pytest_report.json",
+                ])
                 .current_dir(&self.working_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -534,12 +655,22 @@ impl VerificationEngine {
                             if total > 0 {
                                 let rate = (passed as f64 / total as f64) * 100.0;
                                 let success = rate >= self.config.min_test_pass_rate;
-                                (success, rate, format!("{}/{} tests passed ({:.1}%)", passed, total, rate), vec![])
+                                (
+                                    success,
+                                    rate,
+                                    format!("{}/{} tests passed ({:.1}%)", passed, total, rate),
+                                    vec![],
+                                )
                             } else {
                                 (true, 100.0, "No tests found".to_string(), vec![])
                             }
                         } else {
-                            (true, 100.0, "Tests passed (no JSON report)".to_string(), vec![])
+                            (
+                                true,
+                                100.0,
+                                "Tests passed (no JSON report)".to_string(),
+                                vec![],
+                            )
                         }
                     } else {
                         (true, 100.0, "Tests passed".to_string(), vec![])
@@ -566,19 +697,34 @@ impl VerificationEngine {
                         if total > 0 {
                             let rate = (passed as f64 / total as f64) * 100.0;
                             let success = rate >= self.config.min_test_pass_rate;
-                            (success, rate, format!("{}/{} tests passed ({:.1}%)", passed, total, rate), vec![])
+                            (
+                                success,
+                                rate,
+                                format!("{}/{} tests passed ({:.1}%)", passed, total, rate),
+                                vec![],
+                            )
                         } else {
                             (true, 100.0, "No tests found".to_string(), vec![])
                         }
                     } else {
                         let success = out.status.success();
-                        (success, if success { 100.0 } else { 0.0 }, "Tests completed".to_string(), vec![])
+                        (
+                            success,
+                            if success { 100.0 } else { 0.0 },
+                            "Tests completed".to_string(),
+                            vec![],
+                        )
                     }
                 }
                 Err(e) => (false, 0.0, format!("npm test failed: {}", e), vec![]),
             }
         } else {
-            (true, 100.0, "No test runner available for project type".to_string(), vec![])
+            (
+                true,
+                100.0,
+                "No test runner available for project type".to_string(),
+                vec![],
+            )
         }
     }
 
@@ -594,14 +740,24 @@ impl VerificationEngine {
         if let Some(store) = baseline_store {
             if let Ok(baselines) = store.list(1) {
                 if let Some(baseline) = baselines.first() {
-                    if let Ok(current_metrics) = crate::baseline::collect_current_metrics(&self.working_dir).await {
+                    if let Ok(current_metrics) =
+                        crate::baseline::collect_current_metrics(&self.working_dir).await
+                    {
                         if let Ok(report) = store.compare(&baseline.id, &current_metrics) {
-                            let critical_regressions = report.regressions.iter()
-                                .filter(|r| r.severity == crate::baseline::RegressionSeverity::Critical)
+                            let critical_regressions = report
+                                .regressions
+                                .iter()
+                                .filter(|r| {
+                                    r.severity == crate::baseline::RegressionSeverity::Critical
+                                })
                                 .count();
 
                             let success = critical_regressions == 0;
-                            let score = if report.regressions.is_empty() { 100.0 } else { 50.0 };
+                            let score = if report.regressions.is_empty() {
+                                100.0
+                            } else {
+                                50.0
+                            };
                             return (success, score, report.summary, vec![]);
                         }
                     }
@@ -609,7 +765,12 @@ impl VerificationEngine {
             }
         }
 
-        (true, 100.0, "No baseline for regression comparison".to_string(), vec![])
+        (
+            true,
+            100.0,
+            "No baseline for regression comparison".to_string(),
+            vec![],
+        )
     }
 
     async fn verify_security(&self) -> (bool, f64, String, Vec<String>) {
@@ -626,10 +787,18 @@ impl VerificationEngine {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                        let vuln_count = json["vulnerabilities"].as_array().map(|a| a.len()).unwrap_or(0);
+                        let vuln_count = json["vulnerabilities"]
+                            .as_array()
+                            .map(|a| a.len())
+                            .unwrap_or(0);
                         let success = vuln_count == 0;
                         let score = if vuln_count == 0 { 100.0 } else { 0.0 };
-                        (success, score, format!("{} vulnerabilities found", vuln_count), vec![])
+                        (
+                            success,
+                            score,
+                            format!("{} vulnerabilities found", vuln_count),
+                            vec![],
+                        )
                     } else {
                         (true, 100.0, "Security audit passed".to_string(), vec![])
                     }
@@ -653,7 +822,12 @@ impl VerificationEngine {
                         let findings = json["results"].as_array().map(|a| a.len()).unwrap_or(0);
                         let success = findings == 0;
                         let score = if findings == 0 { 100.0 } else { 50.0 };
-                        (success, score, format!("{} security findings", findings), vec![])
+                        (
+                            success,
+                            score,
+                            format!("{} security findings", findings),
+                            vec![],
+                        )
                     } else {
                         (true, 100.0, "Security scan passed".to_string(), vec![])
                     }
@@ -674,10 +848,17 @@ impl VerificationEngine {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                        let vuln_count = json["metadata"]["vulnerabilities"]["total"].as_u64().unwrap_or(0);
+                        let vuln_count = json["metadata"]["vulnerabilities"]["total"]
+                            .as_u64()
+                            .unwrap_or(0);
                         let success = vuln_count == 0;
                         let score = if vuln_count == 0 { 100.0 } else { 50.0 };
-                        (success, score, format!("{} vulnerabilities found", vuln_count), vec![])
+                        (
+                            success,
+                            score,
+                            format!("{} vulnerabilities found", vuln_count),
+                            vec![],
+                        )
                     } else {
                         (true, 100.0, "Security audit passed".to_string(), vec![])
                     }
@@ -685,12 +866,22 @@ impl VerificationEngine {
                 Err(e) => (false, 0.0, format!("npm audit failed: {}", e), vec![]),
             }
         } else {
-            (true, 100.0, "No security scanner available for project type".to_string(), vec![])
+            (
+                true,
+                100.0,
+                "No security scanner available for project type".to_string(),
+                vec![],
+            )
         }
     }
 
     async fn verify_performance(&self) -> (bool, f64, String, Vec<String>) {
         // Placeholder for performance benchmarks
-        (true, 100.0, "Performance benchmarks not configured".to_string(), vec![])
+        (
+            true,
+            100.0,
+            "Performance benchmarks not configured".to_string(),
+            vec![],
+        )
     }
 }

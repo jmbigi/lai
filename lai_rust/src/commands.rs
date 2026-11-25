@@ -1,9 +1,7 @@
 //! commands.rs - CLI command implementations with quality cycles
 
-use crate::benchmark::framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat};
-use crate::benchmark::standard_benchmarks;
-use crate::context::{ContextAnalyzer, format_context_for_llm};
-use crate::llm::{LlmClient, Message, ToolCall};
+use crate::context::{format_context_for_llm, ContextAnalyzer};
+use crate::llm::{LlmClient, Message};
 use crate::services::Services;
 use crate::tools::ToolRegistry;
 use serde_json::Value;
@@ -24,12 +22,21 @@ macro_rules! hashmap {
 /// Analyze project context by reading README, AGENTS.md, CLAUDE.md, key files, and structure
 fn analyze_project_context(cwd: &Path) -> String {
     let mut parts: Vec<String> = Vec::new();
-    parts.push(format!("=== PROJECT CONTEXT: {} ===", cwd.file_name().unwrap_or_default().to_string_lossy()));
+    parts.push(format!(
+        "=== PROJECT CONTEXT: {} ===",
+        cwd.file_name().unwrap_or_default().to_string_lossy()
+    ));
     parts.push(format!("Path: {}", cwd.display()));
     parts.push(String::new());
 
     // Read README files
-    let readme_files = ["README.md", "README.txt", "README.rst", "readme.md", "readme.txt"];
+    let readme_files = [
+        "README.md",
+        "README.txt",
+        "README.rst",
+        "readme.md",
+        "readme.txt",
+    ];
     for readme in readme_files {
         let readme_path = cwd.join(readme);
         if readme_path.exists() {
@@ -67,11 +74,21 @@ fn analyze_project_context(cwd: &Path) -> String {
 
     // Get key project files
     let key_files = [
-        "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
-        "Cargo.toml", "go.mod", "package.json", "pom.xml",
-        "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
-        "Makefile", "makefile",
-        ".gitignore", ".env.example",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "requirements.txt",
+        "Cargo.toml",
+        "go.mod",
+        "package.json",
+        "pom.xml",
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "Makefile",
+        "makefile",
+        ".gitignore",
+        ".env.example",
     ];
 
     parts.push("=== KEY PROJECT FILES ===".to_string());
@@ -94,7 +111,9 @@ fn analyze_project_context(cwd: &Path) -> String {
         sorted.sort_by_key(|e| e.file_name());
         for entry in sorted {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
             let full = entry.path();
             if full.is_dir() {
                 // Count Python/Rust files in directory (non-recursive to avoid build artifacts)
@@ -103,7 +122,9 @@ fn analyze_project_context(cwd: &Path) -> String {
                     for e in dir_entries.filter_map(|e| e.ok()) {
                         if e.path().is_file() {
                             if let Some(ext) = e.path().extension().and_then(|s| s.to_str()) {
-                                if ext == "py" || ext == "rs" { count += 1; }
+                                if ext == "py" || ext == "rs" {
+                                    count += 1;
+                                }
                             }
                         }
                     }
@@ -124,21 +145,28 @@ fn analyze_project_context(cwd: &Path) -> String {
 pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_remote: bool) {
     let llm = LlmClient::new(base_url.to_string(), model.to_string());
     let prompt_str = prompt.join(" ");
-    
+
     // Load project context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let analyzer = ContextAnalyzer::new(cwd.clone());
-    let project_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&cwd));
-    
+    let project_context = analyzer
+        .analyze()
+        .map(|ctx| format_context_for_llm(&ctx))
+        .unwrap_or_else(|_| analyze_project_context(&cwd));
+
     // Get tool schemas
     let tools = ToolRegistry::new();
-    let tool_schemas: Vec<serde_json::Value> = tools.get_tools_schema().into_iter().map(|s| {
-        serde_json::json!({
-            "type": "function",
-            "function": serde_json::to_value(s).unwrap()
+    let tool_schemas: Vec<serde_json::Value> = tools
+        .get_tools_schema()
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
+                "type": "function",
+                "function": serde_json::to_value(s).unwrap()
+            })
         })
-    }).collect();
-    
+        .collect();
+
     // If prompt is provided, use non-interactive mode with tool calling
     if !prompt_str.is_empty() {
         // Build messages with system context
@@ -158,7 +186,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
                 name: None,
             },
         ];
-        
+
         // Tool calling loop
         let mut max_rounds = 15;
         loop {
@@ -167,35 +195,37 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
                 eprintln!("\n⚠️  Max tool rounds reached");
                 break;
             }
-            
-            let result = llm.chat_with_tools(
-                messages.clone(),
-                Some(tool_schemas.clone()),
-                Some("auto".to_string()),
-            ).await;
-            
+
+            let result = llm
+                .chat_with_tools(
+                    messages.clone(),
+                    Some(tool_schemas.clone()),
+                    Some("auto".to_string()),
+                )
+                .await;
+
             match result {
                 Ok(msg) => {
                     if !msg.content.is_empty() {
                         println!("{}", strip_think_tags(&msg.content));
                     }
-                    
+
                     // Add assistant message to history
                     messages.push(msg.clone());
-                    
+
                     // Check for tool calls
                     if let Some(tool_calls) = msg.tool_calls {
                         if tool_calls.is_empty() {
                             // No tool calls, we're done
                             break;
                         }
-                        
+
                         // Execute tool calls
                         for call in tool_calls {
                             let name = call.function.name;
-                            let arguments: HashMap<String, serde_json::Value> = 
+                            let arguments: HashMap<String, serde_json::Value> =
                                 serde_json::from_str(&call.function.arguments).unwrap_or_default();
-                            
+
                             // Execute tool
                             let tool_result = if let Some(func) = tools.tools.get(&name) {
                                 match func(arguments).await {
@@ -205,7 +235,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
                             } else {
                                 format!("Unknown tool: {}", name)
                             };
-                            
+
                             // Add tool result to messages
                             messages.push(Message {
                                 role: "tool".into(),
@@ -228,14 +258,17 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
         }
         return;
     }
-    
+
     // Interactive mode
     println!("Interactive mode - type 'exit' or 'quit' to quit");
     println!("Type 'clear' to clear conversation history");
     println!("Type 'context' to show project context");
     println!("Type 'analyze' to re-analyze project");
-    println!("\n📁 Project context loaded ({} chars)", project_context.len());
-    
+    println!(
+        "\n📁 Project context loaded ({} chars)",
+        project_context.len()
+    );
+
     let mut history: Vec<Message> = vec![];
     // Inject project context as system message
     history.push(Message {
@@ -245,7 +278,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
         tool_call_id: None,
         name: None,
     });
-    
+
     loop {
         print!("You: ");
         let _ = std::io::stdout().flush();
@@ -276,17 +309,31 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
             continue;
         }
         if input == "context" {
-            println!("{}", &project_context[..std::cmp::min(3000, project_context.len())]);
+            println!(
+                "{}",
+                &project_context[..std::cmp::min(3000, project_context.len())]
+            );
             if project_context.len() > 3000 {
                 println!("... (truncated, total {} chars)", project_context.len());
             }
             continue;
         }
-        if input == "analyze" || input == "analizar" || input == "analizar proyecto" || input == "analyze project" {
+        if input == "analyze"
+            || input == "analizar"
+            || input == "analizar proyecto"
+            || input == "analyze project"
+        {
             println!("🔍 Re-analyzing project...");
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let analyzer = ContextAnalyzer::new(cwd);
-            let new_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))));
+            let new_context = analyzer
+                .analyze()
+                .map(|ctx| format_context_for_llm(&ctx))
+                .unwrap_or_else(|_| {
+                    analyze_project_context(
+                        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                    )
+                });
             // Update the system message with fresh context
             history[0] = Message {
                 role: "system".into(),
@@ -310,43 +357,45 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
         // Tool calling loop for interactive
         let mut messages = history.clone();
         let mut max_rounds = 15;
-        
+
         loop {
             max_rounds -= 1;
             if max_rounds == 0 {
                 eprintln!("\n⚠️  Max tool rounds reached");
                 break;
             }
-            
-            let result = llm.chat_with_tools(
-                messages.clone(),
-                Some(tool_schemas.clone()),
-                Some("auto".to_string()),
-            ).await;
-            
+
+            let result = llm
+                .chat_with_tools(
+                    messages.clone(),
+                    Some(tool_schemas.clone()),
+                    Some("auto".to_string()),
+                )
+                .await;
+
             match result {
                 Ok(msg) => {
                     let content = strip_think_tags(&msg.content);
                     if !content.is_empty() {
                         println!("{}", content);
                     }
-                    
+
                     // Add assistant message to history
                     messages.push(msg.clone());
-                    
+
                     // Check for tool calls
                     if let Some(tool_calls) = msg.tool_calls {
                         if tool_calls.is_empty() {
                             // No tool calls, we're done
                             break;
                         }
-                        
+
                         // Execute tool calls
                         for call in tool_calls {
                             let name = call.function.name;
-                            let arguments: HashMap<String, serde_json::Value> = 
+                            let arguments: HashMap<String, serde_json::Value> =
                                 serde_json::from_str(&call.function.arguments).unwrap_or_default();
-                            
+
                             // Execute tool
                             let tool_result = if let Some(func) = tools.tools.get(&name) {
                                 match func(arguments).await {
@@ -356,7 +405,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
                             } else {
                                 format!("Unknown tool: {}", name)
                             };
-                            
+
                             // Add tool result to messages
                             messages.push(Message {
                                 role: "tool".into(),
@@ -377,7 +426,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
                 }
             }
         }
-        
+
         // Update history with the final messages
         history = messages;
         println!();
@@ -447,14 +496,21 @@ pub async fn cmd_code(
                 } else {
                     extract_code(&content)
                 };
-                
+
                 // For existing files, validate the new method syntax by embedding in a minimal class
                 let test_code = if file_exists {
-                    format!("class Test:\n{}", new_method.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n"))
+                    format!(
+                        "class Test:\n{}",
+                        new_method
+                            .lines()
+                            .map(|l| format!("    {}", l))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
                 } else {
                     new_method.clone()
                 };
-                
+
                 match validate_code(&test_code) {
                     Ok(()) => {
                         println!("Validation passed.");
@@ -490,7 +546,7 @@ pub async fn cmd_code(
         if file_exists {
             // Insert new method before the last line of the class (before the closing)
             let mut lines: Vec<String> = existing_content.lines().map(|s| s.to_string()).collect();
-            
+
             // Find the last non-empty line that's not just whitespace (end of class)
             let mut insert_idx = lines.len();
             for (i, line) in lines.iter().enumerate().rev() {
@@ -500,9 +556,10 @@ pub async fn cmd_code(
                     break;
                 }
             }
-            
+
             // Normalize indentation: first line (def) gets 4 spaces, body gets 8 spaces
-            let indented_method: Vec<String> = new_method.lines()
+            let indented_method: Vec<String> = new_method
+                .lines()
                 .enumerate()
                 .map(|(i, l)| {
                     let trimmed = l.trim();
@@ -517,34 +574,34 @@ pub async fn cmd_code(
                     }
                 })
                 .collect();
-            
+
             // Insert blank line before new method if needed
             if insert_idx > 0 && !lines[insert_idx - 1].trim().is_empty() {
                 lines.insert(insert_idx, String::new());
                 insert_idx += 1;
             }
-            
+
             // Insert the new method lines
             for (i, method_line) in indented_method.into_iter().enumerate() {
                 lines.insert(insert_idx + i, method_line);
             }
-            
+
             let new_content = lines.join("\n");
-            
+
             // Write the updated file
             let args = serde_json::json!({
                 "path": filename,
                 "content": new_content
             });
             if let Some(func) = tools.tools.get("write_file") {
-                let args_map: HashMap<String, Value> = serde_json::from_value(args).unwrap_or_default();
+                let args_map: HashMap<String, Value> =
+                    serde_json::from_value(args).unwrap_or_default();
                 match func(args_map).await {
                     Ok(result) => {
                         println!("{}", result);
                     }
                     Err(e) => {
                         eprintln!("Error writing file: {}", e);
-                        return;
                     }
                 }
             } else {
@@ -557,14 +614,14 @@ pub async fn cmd_code(
                 "content": new_method
             });
             if let Some(func) = tools.tools.get("write_file") {
-                let args_map: HashMap<String, Value> = serde_json::from_value(args).unwrap_or_default();
+                let args_map: HashMap<String, Value> =
+                    serde_json::from_value(args).unwrap_or_default();
                 match func(args_map).await {
                     Ok(result) => {
                         println!("{}", result);
                     }
                     Err(e) => {
                         eprintln!("Error writing file: {}", e);
-                        return;
                     }
                 }
             } else {
@@ -572,26 +629,28 @@ pub async fn cmd_code(
             }
         }
     } else {
-        eprintln!("Failed to generate valid code after {} iterations", max_iterations);
+        eprintln!(
+            "Failed to generate valid code after {} iterations",
+            max_iterations
+        );
     }
 }
 
 fn compute_unified_diff(old: &str, new: &str, filename: &str) -> String {
     use std::process::Command;
-    use std::io::Write;
-    
+
     // Write temp files
     let old_file = format!("/tmp/{}.old", filename.replace('/', "_"));
     let new_file = format!("/tmp/{}.new", filename.replace('/', "_"));
-    
+
     if let (Ok(_), Ok(_)) = (fs::write(&old_file, old), fs::write(&new_file, new)) {
         let output = Command::new("diff")
             .args(["-u", &old_file, &new_file])
             .output();
-        
+
         let _ = fs::remove_file(&old_file);
         let _ = fs::remove_file(&new_file);
-        
+
         if let Ok(out) = output {
             let diff = String::from_utf8_lossy(&out.stdout).to_string();
             // Fix the header lines to use proper paths
@@ -615,7 +674,16 @@ pub async fn cmd_status() {
     let client = reqwest::Client::new();
     crate::services::check_all_services_async(&services, &client).await;
     for (name, svc) in services.list() {
-        println!("  {}: {} (Port {})", name, if svc.is_running() { "Running" } else { "Stopped" }, svc.port);
+        println!(
+            "  {}: {} (Port {})",
+            name,
+            if svc.is_running() {
+                "Running"
+            } else {
+                "Stopped"
+            },
+            svc.port
+        );
     }
 }
 
@@ -626,7 +694,7 @@ fn extract_code(response: &str) -> String {
     if let Some(start) = content_between(response, "```\n", "\n```") {
         return start.to_string();
     }
-    let mut lines: Vec<&str> = response.lines().collect();
+    let lines: Vec<&str> = response.lines().collect();
     let mut start_idx = 0;
     for (i, line) in lines.iter().enumerate() {
         let stripped = line.trim();
@@ -658,7 +726,7 @@ fn validate_code(code: &str) -> Result<(), String> {
     if code.trim().is_empty() {
         return Err("Empty code".to_string());
     }
-    use std::process::Command;
+
     use std::process::Stdio;
     let child = std::process::Command::new("python3")
         .arg("-c")
@@ -667,7 +735,9 @@ fn validate_code(code: &str) -> Result<(), String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn error: {}", e))?;
-    let output = child.wait_with_output().map_err(|e| format!("wait error: {}", e))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("wait error: {}", e))?;
     if output.status.success() {
         Ok(())
     } else {
@@ -678,41 +748,39 @@ fn validate_code(code: &str) -> Result<(), String> {
 
 // ===== Missing command stubs =====
 
-
-
 fn strip_think_tags(content: &str) -> String {
     let mut r = content.to_string();
-    
+
     // Handle <thinking>...</thinking> tags (including multiline)
     r = regex::Regex::new(r"(?s)<thinking>.*?</thinking>")
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Handle ```thinking...``` code blocks
     r = regex::Regex::new(r"(?s)```thinking.*?```")
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Handle ```think...``` code blocks
     r = regex::Regex::new(r"(?s)```think.*?```")
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Handle any remaining <think>...</think> tags
     r = regex::Regex::new(r"(?s)<think>.*?</think>")
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Clean up leftover ``` markers that might be orphaned
     r = regex::Regex::new(r"(?m)^```\s*$")
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Clean up leading/trailing whitespace including newlines
     r = regex::Regex::new(r"^\s+")
         .unwrap()
@@ -722,7 +790,7 @@ fn strip_think_tags(content: &str) -> String {
         .unwrap()
         .replace_all(&r, "")
         .to_string();
-    
+
     // Aggressively collapse multiple consecutive newlines at start
     r = regex::Regex::new(r"^\n+")
         .unwrap()
@@ -733,11 +801,18 @@ fn strip_think_tags(content: &str) -> String {
         .unwrap()
         .replace_all(&r, "\n\n")
         .to_string();
-    
+
     r.trim().to_string()
 }
 
-pub async fn cmd_auto(task: &str, max_iterations: u32, output: Option<&str>, model: &str, base_url: &str, _allow_remote: bool) {
+pub async fn cmd_auto(
+    task: &str,
+    max_iterations: u32,
+    output: Option<&str>,
+    model: &str,
+    base_url: &str,
+    _allow_remote: bool,
+) {
     println!("🤖 Auto mode: {}", task);
     println!("   Max iterations: {}", max_iterations);
     if let Some(out) = output {
@@ -745,19 +820,22 @@ pub async fn cmd_auto(task: &str, max_iterations: u32, output: Option<&str>, mod
     }
     println!("   Model: {}", model);
     println!("   Base URL: {}", base_url);
-    
+
     // Load project context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let analyzer = ContextAnalyzer::new(cwd.clone());
-    let project_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&cwd));
-    
-    let llm = LlmClient::new(base_url.to_string(), model.to_string());
+    let project_context = analyzer
+        .analyze()
+        .map(|ctx| format_context_for_llm(&ctx))
+        .unwrap_or_else(|_| analyze_project_context(&cwd));
+
+    let _llm = LlmClient::new(base_url.to_string(), model.to_string());
     let tools = ToolRegistry::new();
-    
+
     // Build tool schema descriptions for the system prompt
     let tool_schemas = tools.get_tools_schema();
     let tools_description = build_tools_description(&tool_schemas);
-    
+
     let system_prompt = format!(
         r#"You are an AI assistant with access to tools. You can use tools by responding with JSON in a code block.
 
@@ -836,10 +914,10 @@ EXAMPLE - Reading a file:
 
 If the user asks you to create a file, your FIRST tool call MUST be "write_file"."#
     );
-    
+
     let llm = LlmClient::new(base_url.to_string(), model.to_string());
     let tools = ToolRegistry::new();
-    
+
     let mut messages = vec![
         crate::llm::Message {
             role: "system".into(),
@@ -856,17 +934,19 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
             name: None,
         },
     ];
-    
+
     for iteration in 1..=max_iterations {
         println!("\n--- Iteration {} of {} ---", iteration, max_iterations);
-        
+
         // Use regular chat (no native tool calling)
-        let result = llm.chat_with_tools(
-            messages.clone(),
-            None,  // No native tool schemas
-            None,  // No tool_choice
-        ).await;
-        
+        let result = llm
+            .chat_with_tools(
+                messages.clone(),
+                None, // No native tool schemas
+                None, // No tool_choice
+            )
+            .await;
+
         match result {
             Ok(msg) => {
                 let content = strip_think_tags(&msg.content);
@@ -874,33 +954,34 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                     println!("{}", content);
                 }
                 messages.push(msg.clone());
-                
+
                 // Parse simulated tool calls from JSON code blocks
                 let tool_calls = parse_simulated_tool_calls(&msg.content);
-                
+
                 if tool_calls.is_empty() {
                     println!("✅ Task completed (no tool calls requested)");
                     break;
                 }
-                
+
                 println!("🔧 Executing {} tool call(s)...", tool_calls.len());
-                
+
                 for call in tool_calls {
                     let name = &call["tool"];
                     let name_str = name.as_str().unwrap_or("");
-                    let mut arguments = call["arguments"].as_object()
+                    let mut arguments = call["arguments"]
+                        .as_object()
                         .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                         .unwrap_or_default();
-                    
+
                     // Fix common model mistakes
                     arguments = normalize_tool_arguments(name_str, arguments);
-                    
+
                     // Check for normalization errors (e.g., shell command passed to run_python)
                     if let Some(error) = arguments.get("_error") {
                         let error_msg = error.as_str().unwrap_or("Unknown error");
                         println!("  ✗ Validation Error: {}", error_msg);
                         let tool_result = error_msg.to_string();
-                        
+
                         messages.push(crate::llm::Message {
                             role: "tool".into(),
                             content: tool_result,
@@ -910,9 +991,13 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                         });
                         continue;
                     }
-                    
-                    println!("  → {} ({})", name_str, serde_json::to_string(&arguments).unwrap_or_default());
-                    
+
+                    println!(
+                        "  → {} ({})",
+                        name_str,
+                        serde_json::to_string(&arguments).unwrap_or_default()
+                    );
+
                     let tool_result = if let Some(func) = tools.tools.get(name_str) {
                         match func(arguments).await {
                             Ok(r) => {
@@ -928,7 +1013,7 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                         println!("  ✗ Unknown tool: {}", name_str);
                         format!("Unknown tool: {}", name_str)
                     };
-                    
+
                     messages.push(crate::llm::Message {
                         role: "tool".into(),
                         content: tool_result,
@@ -960,7 +1045,7 @@ fn build_tools_description(schemas: &[crate::tools::ToolSchema]) -> String {
 fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
     let mut calls = Vec::new();
     let mut search_start = 0;
-    
+
     while let Some(start) = response[search_start..].find("```json") {
         let abs_start = search_start + start + 7; // skip ```json
         if let Some(end) = response[abs_start..].find("```") {
@@ -978,7 +1063,7 @@ fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
             break;
         }
     }
-    
+
     calls
 }
 
@@ -990,15 +1075,16 @@ fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap
                 // Check if it's a shell command (starts with python, ls, cat, etc.)
                 if let Some(code_str) = code.as_str() {
                     let trimmed = code_str.trim();
-                    if trimmed.starts_with("python ") 
-                        || trimmed.starts_with("ls ") 
+                    if trimmed.starts_with("python ")
+                        || trimmed.starts_with("ls ")
                         || trimmed.starts_with("cat ")
                         || trimmed.starts_with("echo ")
                         || trimmed.starts_with("cd ")
                         || trimmed.starts_with("mkdir ")
                         || trimmed.starts_with("rm ")
                         || trimmed.starts_with("cp ")
-                        || trimmed.starts_with("mv ") {
+                        || trimmed.starts_with("mv ")
+                    {
                         // This is a shell command, not Python code!
                         // Return error by putting it in a special key that will be caught
                         return hashmap!["_error".to_string() => Value::String(format!(
@@ -1013,15 +1099,16 @@ fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap
                 // Check if it's a shell command
                 if let Some(cmd_str) = cmd.as_str() {
                     let trimmed = cmd_str.trim();
-                    if trimmed.starts_with("python ") 
-                        || trimmed.starts_with("ls ") 
+                    if trimmed.starts_with("python ")
+                        || trimmed.starts_with("ls ")
                         || trimmed.starts_with("cat ")
                         || trimmed.starts_with("echo ")
                         || trimmed.starts_with("cd ")
                         || trimmed.starts_with("mkdir ")
                         || trimmed.starts_with("rm ")
                         || trimmed.starts_with("cp ")
-                        || trimmed.starts_with("mv ") {
+                        || trimmed.starts_with("mv ")
+                    {
                         return hashmap!["_error".to_string() => Value::String(format!(
                             "ERROR: '{}' is a shell command, not Python code. Use 'run_command' tool instead with 'command' argument.",
                             trimmed
@@ -1062,8 +1149,6 @@ fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap
         _ => args,
     }
 }
-
-
 
 pub async fn cmd_repomap(path: Option<&str>, file: Option<&str>) {
     println!("📦 RepoMap");
@@ -1120,17 +1205,21 @@ pub async fn cmd_metrics() {
 }
 
 pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
-    use crate::benchmark::framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat};
+    use crate::benchmark::framework::{BenchmarkRunner, OutputFormat};
     use crate::benchmark::standard_benchmarks;
     use std::sync::Arc;
 
     match command {
-        crate::benchmark::BenchCommands::All { output, format, iterations } => {
+        crate::benchmark::BenchCommands::All {
+            output,
+            format,
+            iterations,
+        } => {
             println!("🏃 Running all standard benchmarks...");
-            
+
             let benchmarks = standard_benchmarks::all_benchmarks();
             let mut all_results = Vec::new();
-            
+
             for mut config in benchmarks {
                 if let Some(iters) = iterations {
                     config.iterations = iters;
@@ -1148,15 +1237,17 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                 if let Some(ref out) = output {
                     config.output_path = Some(out.into());
                 }
-                
+
                 // Use a mock adapter for now - real adapters would be registered
                 let adapter = Arc::new(MockBenchmarkAdapter::new(config.capability_id.clone()));
                 let runner = BenchmarkRunner::new(config, adapter);
-                
+
                 match runner.run().await {
                     Ok(result) => {
-                        println!("✅ {} - Success: {} - Details: {}", 
-                            result.benchmark_name, result.success, result.success_details);
+                        println!(
+                            "✅ {} - Success: {} - Details: {}",
+                            result.benchmark_name, result.success, result.success_details
+                        );
                         all_results.push(result);
                     }
                     Err(e) => {
@@ -1164,14 +1255,22 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                     }
                 }
             }
-            
+
             println!("\n📊 All benchmarks completed. {} run.", all_results.len());
         }
-        crate::benchmark::BenchCommands::Run { capability, output, format, iterations } => {
+        crate::benchmark::BenchCommands::Run {
+            capability,
+            output,
+            format,
+            iterations,
+        } => {
             println!("🏃 Running benchmark for capability: {}", capability);
-            
+
             let benchmarks = standard_benchmarks::all_benchmarks();
-            if let Some(config) = benchmarks.into_iter().find(|b| b.capability_id == capability) {
+            if let Some(config) = benchmarks
+                .into_iter()
+                .find(|b| b.capability_id == capability)
+            {
                 let mut config = config;
                 if let Some(iters) = iterations {
                     config.iterations = iters;
@@ -1189,21 +1288,26 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                 if let Some(ref out) = output {
                     config.output_path = Some(out.into());
                 }
-                
+
                 let adapter = Arc::new(MockBenchmarkAdapter::new(config.capability_id.clone()));
                 let runner = BenchmarkRunner::new(config, adapter);
-                
+
                 match runner.run().await {
                     Ok(result) => {
-                        println!("✅ {} - Success: {} - Details: {}", 
-                            result.benchmark_name, result.success, result.success_details);
+                        println!(
+                            "✅ {} - Success: {} - Details: {}",
+                            result.benchmark_name, result.success, result.success_details
+                        );
                     }
                     Err(e) => {
                         eprintln!("❌ Benchmark failed: {}", e);
                     }
                 }
             } else {
-                eprintln!("❌ Unknown capability: {}. Use 'lai bench list' to see available.", capability);
+                eprintln!(
+                    "❌ Unknown capability: {}. Use 'lai bench list' to see available.",
+                    capability
+                );
             }
         }
         crate::benchmark::BenchCommands::List => {
@@ -1213,7 +1317,10 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                 println!("    {}", b.description);
             }
         }
-        crate::benchmark::BenchCommands::Compare { capability, baseline } => {
+        crate::benchmark::BenchCommands::Compare {
+            capability,
+            baseline,
+        } => {
             println!("📊 Comparing {} against baseline: {}", capability, baseline);
             println!("   (Baseline comparison functionality to be implemented)");
         }
@@ -1221,8 +1328,8 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
 }
 
 // Mock adapter for benchmark testing - replace with real adapters when available
-use async_trait::async_trait;
 use crate::benchmark::contracts::*;
+use async_trait::async_trait;
 use std::time::SystemTime;
 
 struct MockBenchmarkAdapter {
@@ -1237,12 +1344,22 @@ impl MockBenchmarkAdapter {
 
 #[async_trait]
 impl CapabilityAdapter for MockBenchmarkAdapter {
-    fn capability_id(&self) -> String { self.capability_id.clone() }
-    fn capability_name(&self) -> String { "Mock Adapter".to_string() }
-    fn adapter_version(&self) -> String { "1.0.0".to_string() }
-    fn tool_version(&self) -> String { "1.0.0".to_string() }
-    fn definition_hash(&self) -> String { "mock_hash".to_string() }
-    
+    fn capability_id(&self) -> String {
+        self.capability_id.clone()
+    }
+    fn capability_name(&self) -> String {
+        "Mock Adapter".to_string()
+    }
+    fn adapter_version(&self) -> String {
+        "1.0.0".to_string()
+    }
+    fn tool_version(&self) -> String {
+        "1.0.0".to_string()
+    }
+    fn definition_hash(&self) -> String {
+        "mock_hash".to_string()
+    }
+
     async fn health_check(&self) -> HealthCheckResult {
         HealthCheckResult {
             healthy: true,
@@ -1252,8 +1369,11 @@ impl CapabilityAdapter for MockBenchmarkAdapter {
             timestamp: SystemTime::now(),
         }
     }
-    
-    async fn preflight(&self, request: &ExecutionRequest) -> Result<PreflightResult, ContractError> {
+
+    async fn preflight(
+        &self,
+        _request: &ExecutionRequest,
+    ) -> Result<PreflightResult, ContractError> {
         Ok(PreflightResult {
             allowed: true,
             reason: None,
@@ -1267,14 +1387,14 @@ impl CapabilityAdapter for MockBenchmarkAdapter {
             required_permissions: vec![],
         })
     }
-    
+
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, ContractError> {
         // Simulate work
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         let execution_id = request.execution_id.clone();
         let capability_id = request.capability_id.clone();
-        
+
         Ok(ExecutionResult {
             execution_id: execution_id.clone(),
             capability_id: capability_id.clone(),
@@ -1303,7 +1423,7 @@ impl CapabilityAdapter for MockBenchmarkAdapter {
             completed_at: SystemTime::now(),
         })
     }
-    
+
     async fn validate(&self, _result: &ExecutionResult) -> ValidationResult {
         ValidationResult {
             valid: true,
@@ -1312,15 +1432,15 @@ impl CapabilityAdapter for MockBenchmarkAdapter {
             recommendations: vec![],
         }
     }
-    
+
     async fn get_metrics(&self, _execution_id: &str) -> Option<ExecutionMetrics> {
         None
     }
-    
+
     fn supported_features(&self) -> AdapterFeatures {
         AdapterFeatures::default()
     }
-    
+
     fn resource_requirements(&self) -> ResourceRequirements {
         ResourceRequirements {
             min_cpu_cores: 1.0,

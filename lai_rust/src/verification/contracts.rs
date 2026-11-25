@@ -1,11 +1,10 @@
 /// Verification contracts and proof obligations for formal verification
-/// 
+///
 /// This module defines the core types for formal verification in lai,
 /// including verification contracts, proof obligations, and verification results.
-
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Supported verification languages/tools
@@ -234,7 +233,12 @@ impl ContractVerificationResult {
         }
     }
 
-    pub fn add_result(&mut self, result: ProofResult, language: VerificationLanguage, version: String) {
+    pub fn add_result(
+        &mut self,
+        result: ProofResult,
+        language: VerificationLanguage,
+        version: String,
+    ) {
         match result.status {
             VerificationStatus::Verified => self.verified_count += 1,
             VerificationStatus::Falsified => self.falsified_count += 1,
@@ -273,8 +277,14 @@ pub trait VerificationAdapter: Send + Sync {
     fn version(&self) -> String;
     fn is_available(&self) -> bool;
 
-    async fn verify_obligation(&self, obligation: &ProofObligation) -> Result<ProofResult, VerificationError>;
-    async fn verify_contract(&self, contract: &VerificationContract) -> Result<ContractVerificationResult, VerificationError>;
+    async fn verify_obligation(
+        &self,
+        obligation: &ProofObligation,
+    ) -> Result<ProofResult, VerificationError>;
+    async fn verify_contract(
+        &self,
+        contract: &VerificationContract,
+    ) -> Result<ContractVerificationResult, VerificationError>;
 
     fn supported_features(&self) -> VerificationFeatures;
 }
@@ -343,7 +353,7 @@ mod tests {
             "1.0.0".to_string(),
             "Math utilities verification".to_string(),
         );
-        
+
         let formula = LogicFormula::new(
             VerificationLanguage::Dafny,
             "ensures result >= 0".to_string(),
@@ -354,7 +364,7 @@ mod tests {
             formula,
         );
         contract.add_obligation(obligation);
-        
+
         assert_eq!(contract.obligations.len(), 1);
     }
 
@@ -372,7 +382,7 @@ mod tests {
         contract.add_obligation(obligation.clone());
 
         let mut result = ContractVerificationResult::new(&contract);
-        
+
         let proof_result = ProofResult {
             obligation_id: obligation.id,
             status: VerificationStatus::Verified,
@@ -383,9 +393,9 @@ mod tests {
             timestamp: SystemTime::now(),
             metadata: HashMap::new(),
         };
-        
+
         result.add_result(proof_result, VerificationLanguage::Dafny, "4.0".to_string());
-        
+
         assert_eq!(result.verified_count, 1);
         assert_eq!(result.overall_status, VerificationStatus::Verified);
     }

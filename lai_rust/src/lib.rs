@@ -1,5 +1,5 @@
 //! lai - Local AI Code Assistant Library
-//! 
+//!
 //! v5.0 Architecture: Deterministic engineering, controlled autonomy, supply-chain security, bounded verifiability, measured efficiency.
 
 pub mod baseline;

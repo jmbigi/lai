@@ -1,12 +1,12 @@
 //! planner.rs - DAG-based planner with SPEC.md generation (v5.0)
 //! Principles: Determinism, Verification scope explicit, SPEC.md immutable after approval
 
-use crate::telemetry::{record_policy_decision, task_span, end_task_span};
+use crate::telemetry::{end_task_span, task_span};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use uuid::Uuid;
 
 #[derive(clap::Subcommand, Debug, Clone, Serialize, Deserialize)]
@@ -187,9 +187,13 @@ impl Spec {
         md.push_str(&format!("**Version**: {}\n", self.version));
         md.push_str(&format!("**Created**: {}\n", self.created_at));
         if let Some(approved_at) = &self.approved_at {
-            md.push_str(&format!("**Approved**: {} by {}\n", approved_at, self.approved_by.as_deref().unwrap_or("unknown")));
+            md.push_str(&format!(
+                "**Approved**: {} by {}\n",
+                approved_at,
+                self.approved_by.as_deref().unwrap_or("unknown")
+            ));
         }
-        md.push_str("\n");
+        md.push('\n');
 
         md.push_str("## Acceptance Criteria\n\n");
         if self.acceptance_criteria.is_empty() {
@@ -198,26 +202,39 @@ impl Spec {
             for (i, criterion) in self.acceptance_criteria.iter().enumerate() {
                 md.push_str(&format!("{}. {}\n", i + 1, criterion));
             }
-            md.push_str("\n");
+            md.push('\n');
         }
 
         md.push_str("## Verification Scope\n\n");
         md.push_str("### In Scope\n\n");
         for level in &self.verification_scope.in_scope {
-            md.push_str(&format!("- **Level {} - {}**: {}\n", level.as_u32(), level.name(), level.description()));
+            md.push_str(&format!(
+                "- **Level {} - {}**: {}\n",
+                level.as_u32(),
+                level.name(),
+                level.description()
+            ));
         }
         md.push_str("\n### Out of Scope\n\n");
         for level in &self.verification_scope.out_of_scope {
-            md.push_str(&format!("- **Level {} - {}**: {}\n", level.as_u32(), level.name(), level.description()));
+            md.push_str(&format!(
+                "- **Level {} - {}**: {}\n",
+                level.as_u32(),
+                level.name(),
+                level.description()
+            ));
         }
-        md.push_str(&format!("\n**Rationale**: {}\n\n", self.verification_scope.rationale));
+        md.push_str(&format!(
+            "\n**Rationale**: {}\n\n",
+            self.verification_scope.rationale
+        ));
 
         if !self.constraints.is_empty() {
             md.push_str("## Constraints\n\n");
             for constraint in &self.constraints {
                 md.push_str(&format!("- {}\n", constraint));
             }
-            md.push_str("\n");
+            md.push('\n');
         }
 
         if !self.assumptions.is_empty() {
@@ -225,7 +242,7 @@ impl Spec {
             for assumption in &self.assumptions {
                 md.push_str(&format!("- {}\n", assumption));
             }
-            md.push_str("\n");
+            md.push('\n');
         }
 
         md.push_str("---\n");
@@ -288,35 +305,66 @@ No markdown, no explanations, only JSON."#,
         let client = crate::llm::LlmClient::new(self.llm_base_url.clone(), self.llm_model.clone());
         let response = client.chat(&prompt).await.map_err(|e| e.to_string())?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_str(&response)
+            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
         let mut spec = Spec::new(task);
         spec.acceptance_criteria = parsed["acceptance_criteria"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if let Some(scope) = parsed["verification_scope"].as_object() {
             let in_scope = scope["in_scope"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_u64().and_then(|n| VerificationLevel::from_u32(n as u32))).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            v.as_u64()
+                                .and_then(|n| VerificationLevel::from_u32(n as u32))
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let out_of_scope = scope["out_of_scope"]
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_u64().and_then(|n| VerificationLevel::from_u32(n as u32))).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            v.as_u64()
+                                .and_then(|n| VerificationLevel::from_u32(n as u32))
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let rationale = scope["rationale"].as_str().unwrap_or("").to_string();
-            spec.verification_scope = VerificationScope { in_scope, out_of_scope, rationale };
+            spec.verification_scope = VerificationScope {
+                in_scope,
+                out_of_scope,
+                rationale,
+            };
         }
 
         spec.constraints = parsed["constraints"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         spec.assumptions = parsed["assumptions"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Ok(spec)
@@ -371,27 +419,47 @@ No markdown, no explanations, only JSON."#,
         let client = crate::llm::LlmClient::new(self.llm_base_url.clone(), self.llm_model.clone());
         let response = client.chat(&prompt).await.map_err(|e| e.to_string())?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_str(&response)
+            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
         let mut steps = Vec::new();
         let mut total_tokens = 0u32;
 
         if let Some(steps_arr) = parsed["steps"].as_array() {
             for step_val in steps_arr {
-                let verification_scope = if let Some(scope) = step_val["verification_scope"].as_object() {
-                    let in_scope = scope["in_scope"]
-                        .as_array()
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().and_then(|n| VerificationLevel::from_u32(n as u32))).collect())
-                        .unwrap_or_default();
-                    let out_of_scope = scope["out_of_scope"]
-                        .as_array()
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().and_then(|n| VerificationLevel::from_u32(n as u32))).collect())
-                        .unwrap_or_default();
-                    let rationale = scope["rationale"].as_str().unwrap_or("").to_string();
-                    VerificationScope { in_scope, out_of_scope, rationale }
-                } else {
-                    VerificationScope::default()
-                };
+                let verification_scope =
+                    if let Some(scope) = step_val["verification_scope"].as_object() {
+                        let in_scope = scope["in_scope"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| {
+                                        v.as_u64()
+                                            .and_then(|n| VerificationLevel::from_u32(n as u32))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let out_of_scope = scope["out_of_scope"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| {
+                                        v.as_u64()
+                                            .and_then(|n| VerificationLevel::from_u32(n as u32))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let rationale = scope["rationale"].as_str().unwrap_or("").to_string();
+                        VerificationScope {
+                            in_scope,
+                            out_of_scope,
+                            rationale,
+                        }
+                    } else {
+                        VerificationScope::default()
+                    };
 
                 let step = PlanStep {
                     id: step_val["id"].as_str().unwrap_or("").to_string(),
@@ -401,11 +469,18 @@ No markdown, no explanations, only JSON."#,
                     arguments: step_val["arguments"].clone(),
                     depends_on: step_val["depends_on"]
                         .as_array()
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     verification_scope,
                     estimated_tokens: step_val["estimated_tokens"].as_u64().unwrap_or(1000) as u32,
-                    risk_level: step_val["risk_level"].as_str().unwrap_or("medium").to_string(),
+                    risk_level: step_val["risk_level"]
+                        .as_str()
+                        .unwrap_or("medium")
+                        .to_string(),
                 };
                 total_tokens += step.estimated_tokens;
                 steps.push(step);
@@ -433,7 +508,10 @@ No markdown, no explanations, only JSON."#,
         for step in &plan.steps {
             for dep in &step.depends_on {
                 if !step_ids.contains(dep) {
-                    return Err(format!("Step {} depends on non-existent step {}", step.id, dep));
+                    return Err(format!(
+                        "Step {} depends on non-existent step {}",
+                        step.id, dep
+                    ));
                 }
             }
         }
@@ -454,7 +532,11 @@ No markdown, no explanations, only JSON."#,
             }
         }
 
-        let mut queue: Vec<String> = in_degree.iter().filter(|(_, &d)| d == 0).map(|(k, _)| k.clone()).collect();
+        let mut queue: Vec<String> = in_degree
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(k, _)| k.clone())
+            .collect();
         let mut processed = 0;
 
         while let Some(node) = queue.pop() {
@@ -491,7 +573,11 @@ No markdown, no explanations, only JSON."#,
             }
         }
 
-        let mut queue: Vec<String> = in_degree.iter().filter(|(_, &d)| d == 0).map(|(k, _)| k.clone()).collect();
+        let mut queue: Vec<String> = in_degree
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(k, _)| k.clone())
+            .collect();
         let mut result = Vec::new();
 
         while let Some(node) = queue.pop() {
@@ -528,7 +614,7 @@ pub async fn create_plan_from_task(
     working_dir: &Path,
 ) -> Result<(Spec, Plan), String> {
     let task_id = format!("plan-{}", Uuid::new_v4());
-    let _span = task_span(&task_id, "plan_generation", task);
+    task_span(&task_id, "plan_generation", task);
     let start = Instant::now();
 
     let planner = Planner::new(llm_base_url, llm_model, working_dir);
@@ -558,12 +644,19 @@ pub async fn create_plan_from_task(
 
     // Save plan
     let plan_path = working_dir.join("PLAN.json");
-    planner.save_plan(&plan, &plan_path).map_err(|e| e.to_string())?;
+    planner
+        .save_plan(&plan, &plan_path)
+        .map_err(|e| e.to_string())?;
 
     // Update SPEC with plan_id
     spec.save(&spec_path).map_err(|e| e.to_string())?;
 
-    end_task_span(&task_id, true, start.elapsed(), &format!("Generated plan with {} steps", plan.steps.len()));
+    end_task_span(
+        &task_id,
+        true,
+        start.elapsed(),
+        &format!("Generated plan with {} steps", plan.steps.len()),
+    );
 
     Ok((spec, plan))
 }
@@ -576,7 +669,11 @@ fn build_project_context(working_dir: &Path) -> String {
         let path = working_dir.join(readme);
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                parts.push(format!("=== {} ===\n{}", readme, content.chars().take(5000).collect::<String>()));
+                parts.push(format!(
+                    "=== {} ===\n{}",
+                    readme,
+                    content.chars().take(5000).collect::<String>()
+                ));
                 break;
             }
         }
@@ -586,20 +683,32 @@ fn build_project_context(working_dir: &Path) -> String {
     let agents_path = working_dir.join("AGENTS.md");
     if agents_path.exists() {
         if let Ok(content) = fs::read_to_string(&agents_path) {
-            parts.push(format!("=== AGENTS.md ===\n{}", content.chars().take(5000).collect::<String>()));
+            parts.push(format!(
+                "=== AGENTS.md ===\n{}",
+                content.chars().take(5000).collect::<String>()
+            ));
         }
     }
 
     // Key files
     let key_files = [
-        "Cargo.toml", "pyproject.toml", "package.json", "go.mod",
-        "Dockerfile", "Makefile", ".gitignore",
+        "Cargo.toml",
+        "pyproject.toml",
+        "package.json",
+        "go.mod",
+        "Dockerfile",
+        "Makefile",
+        ".gitignore",
     ];
     for kf in key_files {
         let path = working_dir.join(kf);
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                parts.push(format!("=== {} ===\n{}", kf, content.chars().take(2000).collect::<String>()));
+                parts.push(format!(
+                    "=== {} ===\n{}",
+                    kf,
+                    content.chars().take(2000).collect::<String>()
+                ));
             }
         }
     }
@@ -610,7 +719,9 @@ fn build_project_context(working_dir: &Path) -> String {
         let mut files = Vec::new();
         for entry in entries.filter_map(|e| e.ok()) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
             if entry.path().is_dir() {
                 dirs.push(name);
             } else {
@@ -619,7 +730,11 @@ fn build_project_context(working_dir: &Path) -> String {
         }
         dirs.sort();
         files.sort();
-        parts.push(format!("=== STRUCTURE ===\nDirs: {}\nFiles: {}", dirs.join(", "), files.join(", ")));
+        parts.push(format!(
+            "=== STRUCTURE ===\nDirs: {}\nFiles: {}",
+            dirs.join(", "),
+            files.join(", ")
+        ));
     }
 
     parts.join("\n\n")

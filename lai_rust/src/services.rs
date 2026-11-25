@@ -60,9 +60,7 @@ impl Services {
             gateway: ServiceInfo {
                 port: 8081,
                 health_path: "/health".into(),
-                script: Some(
-                    "/home/kubuntu/curso-ia/modelo-local/gateway-go/gateway".into(),
-                ),
+                script: Some("/home/kubuntu/curso-ia/modelo-local/gateway-go/gateway".into()),
                 args: vec![],
                 cwd: Some("/home/kubuntu/curso-ia/modelo-local/gateway-go".into()),
                 running: AtomicBool::new(false),
@@ -123,10 +121,7 @@ fn check_service(port: u16, health_path: &str) -> bool {
     // Prefer the HTTP health endpoint. A TCP-only fallback would report
     // unrelated processes (for example a web server on port 8080) as healthy.
     if !health_path.is_empty() {
-        return match reqwest::blocking::get(format!(
-            "http://127.0.0.1:{}{}",
-            port, health_path
-        )) {
+        return match reqwest::blocking::get(format!("http://127.0.0.1:{}{}", port, health_path)) {
             Ok(resp) => resp.status().is_success(),
             Err(_) => false,
         };
@@ -199,9 +194,15 @@ pub async fn check_service_async(client: &Client, port: u16, health_path: &str) 
 }
 
 pub async fn check_all_services_async(services: &Services, client: &Client) {
-    services.llama.set_running(check_service_async(client, services.llama.port, &services.llama.health_path).await);
-    services.gateway.set_running(check_service_async(client, services.gateway.port, &services.gateway.health_path).await);
-    services.ollama.set_running(check_service_async(client, services.ollama.port, &services.ollama.health_path).await);
+    services.llama.set_running(
+        check_service_async(client, services.llama.port, &services.llama.health_path).await,
+    );
+    services.gateway.set_running(
+        check_service_async(client, services.gateway.port, &services.gateway.health_path).await,
+    );
+    services.ollama.set_running(
+        check_service_async(client, services.ollama.port, &services.ollama.health_path).await,
+    );
 }
 
 /// Regla 9 - Supervivencia: verifica que al menos un modelo local esté disponible.
@@ -211,11 +212,11 @@ pub fn ensure_local_model_available(services: &Services) -> Result<(), String> {
     let llama_ok = check_service(services.llama.port, &services.llama.health_path);
     let gateway_ok = check_service(services.gateway.port, &services.gateway.health_path);
     let ollama_ok = check_service(services.ollama.port, &services.ollama.health_path);
-    
+
     services.llama.set_running(llama_ok);
     services.gateway.set_running(gateway_ok);
     services.ollama.set_running(ollama_ok);
-    
+
     let has_local = llama_ok || gateway_ok || ollama_ok;
     if !has_local {
         return Err(
@@ -232,7 +233,10 @@ pub fn ensure_local_model_available(services: &Services) -> Result<(), String> {
 }
 
 /// Versión async para uso en comandos async.
-pub async fn ensure_local_model_available_async(services: &Services, client: &Client) -> Result<(), String> {
+pub async fn ensure_local_model_available_async(
+    services: &Services,
+    client: &Client,
+) -> Result<(), String> {
     check_all_services_async(services, client).await;
     let has_local = services.list().iter().any(|(_, s)| s.is_running());
     if !has_local {

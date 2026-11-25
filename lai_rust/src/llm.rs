@@ -3,7 +3,6 @@
 //! --allow-remote is set.
 
 use anyhow::Result;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -131,9 +130,11 @@ impl LlmClient {
         }
 
         let data: ChatResponse = resp.json().await?;
-        let choice = data.choices.first().cloned().ok_or_else(|| {
-            anyhow::anyhow!("No choices in response")
-        })?;
+        let choice = data
+            .choices
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
         Ok(choice.message.content)
     }
@@ -169,9 +170,11 @@ impl LlmClient {
         }
 
         let data: ChatResponse = resp.json().await?;
-        let choice = data.choices.first().cloned().ok_or_else(|| {
-            anyhow::anyhow!("No choices in response")
-        })?;
+        let choice = data
+            .choices
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
         Ok(choice.message)
     }

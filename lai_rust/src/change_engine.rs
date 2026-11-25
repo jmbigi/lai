@@ -115,8 +115,12 @@ impl ChangeEngine {
         if config.checkpoint_dir.is_relative() {
             config.checkpoint_dir = workspace_root.join(&config.checkpoint_dir);
         }
-        fs::create_dir_all(&config.checkpoint_dir)
-            .with_context(|| format!("creating checkpoint dir {}", config.checkpoint_dir.display()))?;
+        fs::create_dir_all(&config.checkpoint_dir).with_context(|| {
+            format!(
+                "creating checkpoint dir {}",
+                config.checkpoint_dir.display()
+            )
+        })?;
 
         Ok(Self {
             workspace_root,
@@ -130,7 +134,11 @@ impl ChangeEngine {
     pub fn add_change(&self, change: FileChange) -> Result<()> {
         if let Some(diff) = &change.diff {
             if diff.len() > self.config.max_diff_size {
-                return Err(anyhow::anyhow!("Diff too large: {} bytes (max: {})", diff.len(), self.config.max_diff_size));
+                return Err(anyhow::anyhow!(
+                    "Diff too large: {} bytes (max: {})",
+                    diff.len(),
+                    self.config.max_diff_size
+                ));
             }
         }
         self.pending_changes.write().unwrap().push(change);
@@ -196,7 +204,10 @@ impl ChangeEngine {
         match change.change_type {
             ChangeType::Create => {
                 if full_path.exists() {
-                    return Err(anyhow::anyhow!("File already exists: {}", change.file_path.display()));
+                    return Err(anyhow::anyhow!(
+                        "File already exists: {}",
+                        change.file_path.display()
+                    ));
                 }
                 if let Some(parent) = full_path.parent() {
                     fs::create_dir_all(parent)?;
@@ -207,7 +218,10 @@ impl ChangeEngine {
             }
             ChangeType::Update => {
                 if !full_path.exists() {
-                    return Err(anyhow::anyhow!("File does not exist: {}", change.file_path.display()));
+                    return Err(anyhow::anyhow!(
+                        "File does not exist: {}",
+                        change.file_path.display()
+                    ));
                 }
                 if let Some(content) = &change.new_content {
                     fs::write(&full_path, content)?;
@@ -285,7 +299,10 @@ impl ChangeEngine {
             },
         };
 
-        self.checkpoints.write().unwrap().insert(checkpoint_id.clone(), checkpoint);
+        self.checkpoints
+            .write()
+            .unwrap()
+            .insert(checkpoint_id.clone(), checkpoint);
 
         // Limpiar checkpoints antiguos si excede el máximo
         self.cleanup_old_checkpoints()?;
@@ -295,7 +312,12 @@ impl ChangeEngine {
 
     /// Rollback a un checkpoint específico
     pub fn rollback(&self, checkpoint_id: &str) -> Result<()> {
-        let checkpoint = self.checkpoints.read().unwrap().get(checkpoint_id).cloned()
+        let checkpoint = self
+            .checkpoints
+            .read()
+            .unwrap()
+            .get(checkpoint_id)
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("Checkpoint not found: {}", checkpoint_id))?;
 
         // Remove files that did not exist before the changeset.
@@ -318,7 +340,7 @@ impl ChangeEngine {
 
         // Eliminar checkpoint después de rollback
         self.checkpoints.write().unwrap().remove(checkpoint_id);
-        
+
         Ok(())
     }
 
@@ -331,9 +353,12 @@ impl ChangeEngine {
     fn cleanup_old_checkpoints(&self) -> Result<()> {
         let mut checkpoints = self.checkpoints.write().unwrap();
         if checkpoints.len() > self.config.max_checkpoints {
-            let mut sorted: Vec<_> = checkpoints.iter().map(|(k, v)| (k.clone(), v.timestamp.clone())).collect();
+            let mut sorted: Vec<_> = checkpoints
+                .iter()
+                .map(|(k, v)| (k.clone(), v.timestamp.clone()))
+                .collect();
             sorted.sort_by(|a, b| a.1.cmp(&b.1));
-            
+
             let to_remove = sorted.len() - self.config.max_checkpoints;
             for (id, _) in sorted.iter().take(to_remove) {
                 checkpoints.remove(id);
@@ -356,13 +381,13 @@ impl ChangeEngine {
 /// Generar diff entre dos contenidos
 pub fn generate_diff(old: &str, new: &str, file_path: &Path) -> String {
     use difference::{Changeset, Difference};
-    
+
     let changeset = Changeset::new(old, new, "\n");
     let mut output = String::new();
-    
+
     output.push_str(&format!("--- a/{}\n", file_path.display()));
     output.push_str(&format!("+++ b/{}\n", file_path.display()));
-    
+
     for diff in changeset.diffs {
         match diff {
             Difference::Same(text) => {
@@ -397,13 +422,15 @@ mod tests {
         let engine = ChangeEngine::new(temp_dir.path().to_path_buf(), config).unwrap();
 
         // Test create
-        engine.add_change(FileChange {
-            change_type: ChangeType::Create,
-            file_path: PathBuf::from("test.txt"),
-            old_content: None,
-            new_content: Some("Hello World".to_string()),
-            diff: None,
-        }).unwrap();
+        engine
+            .add_change(FileChange {
+                change_type: ChangeType::Create,
+                file_path: PathBuf::from("test.txt"),
+                old_content: None,
+                new_content: Some("Hello World".to_string()),
+                diff: None,
+            })
+            .unwrap();
 
         let changeset = engine.apply_changes("Create test file").unwrap();
         assert_eq!(changeset.changes.len(), 1);
@@ -412,7 +439,7 @@ mod tests {
         // Test rollback
         let checkpoints = engine.list_checkpoints();
         assert!(!checkpoints.is_empty());
-        
+
         let checkpoint_id = checkpoints[0].id.clone();
         engine.rollback(&checkpoint_id).unwrap();
         assert!(!temp_dir.path().join("test.txt").exists());

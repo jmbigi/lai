@@ -1,7 +1,14 @@
 use regex::Regex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Language { Python, Rust, JavaScript, Go, Shell, Unknown }
+pub enum Language {
+    Python,
+    Rust,
+    JavaScript,
+    Go,
+    Shell,
+    Unknown,
+}
 
 #[derive(Debug, Clone)]
 pub struct Check {
@@ -12,10 +19,18 @@ pub struct Check {
 
 impl Check {
     pub fn ok(id: &'static str, detail: impl Into<String>) -> Self {
-        Self { id, passed: true, detail: detail.into() }
+        Self {
+            id,
+            passed: true,
+            detail: detail.into(),
+        }
     }
     pub fn fail(id: &'static str, detail: impl Into<String>) -> Self {
-        Self { id, passed: false, detail: detail.into() }
+        Self {
+            id,
+            passed: false,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -48,7 +63,10 @@ pub struct Verifier {
 
 impl Verifier {
     pub fn new(language: Language, description: &str) -> Self {
-        Self { language, description: description.to_string() }
+        Self {
+            language,
+            description: description.to_string(),
+        }
     }
 
     pub async fn verify_static(&self, code: &str, _run_lint: bool) -> VerificationReport {
@@ -115,7 +133,7 @@ impl Verifier {
             .stderr(Stdio::piped())
             .spawn()
         {
-            Ok(mut child) => match child.wait_with_output() {
+            Ok(child) => match child.wait_with_output() {
                 Ok(out) => (true, out.status.success()),
                 Err(_) => (false, false),
             },
@@ -126,6 +144,6 @@ impl Verifier {
 
 impl Default for Verifier {
     fn default() -> Self {
-        Self::new(Language::Unknown, "default".into())
+        Self::new(Language::Unknown, "default")
     }
 }

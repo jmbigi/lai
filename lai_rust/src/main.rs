@@ -23,9 +23,9 @@ mod verification_engine;
 
 // Re-export command enums from their modules
 pub use baseline::BaselineCommands;
+pub use benchmark::{standard_benchmarks, BenchCommands};
 pub use memory_store::{CheckpointCommands, MemoryCommands};
 pub use planner::PlanCommands;
-pub use benchmark::{standard_benchmarks, BenchCommands};
 
 use clap::Parser;
 
@@ -149,13 +149,33 @@ async fn main() {
             filename,
             yolo,
         }) => {
-            commands::cmd_code(&description, &filename, yolo, &cli.model, &cli.base_url, cli.allow_remote).await;
+            commands::cmd_code(
+                &description,
+                &filename,
+                yolo,
+                &cli.model,
+                &cli.base_url,
+                cli.allow_remote,
+            )
+            .await;
         }
         Some(Commands::Status) => {
             commands::cmd_status().await;
         }
-        Some(Commands::Auto { task, max_iterations, output }) => {
-            commands::cmd_auto(&task, max_iterations, output.as_deref(), &cli.model, &cli.base_url, cli.allow_remote).await;
+        Some(Commands::Auto {
+            task,
+            max_iterations,
+            output,
+        }) => {
+            commands::cmd_auto(
+                &task,
+                max_iterations,
+                output.as_deref(),
+                &cli.model,
+                &cli.base_url,
+                cli.allow_remote,
+            )
+            .await;
         }
         Some(Commands::RepoMap { path, file }) => {
             commands::cmd_repomap(path.as_deref(), file.as_deref()).await;
@@ -169,7 +189,11 @@ async fn main() {
         Some(Commands::Diagnose { input, root }) => {
             commands::cmd_diagnose(&input, root.as_deref()).await;
         }
-        Some(Commands::Repair { file, error, max_attempts }) => {
+        Some(Commands::Repair {
+            file,
+            error,
+            max_attempts,
+        }) => {
             commands::cmd_repair(&file, error.as_deref(), max_attempts).await;
         }
         Some(Commands::Checkpoint { command }) => {

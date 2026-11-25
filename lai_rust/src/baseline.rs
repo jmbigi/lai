@@ -1,12 +1,11 @@
 //! baseline.rs - Baseline tracking with regression detection (v5.0)
 //! Principles: Measurable quality gates, regression alerts, SQLite persistence
 
-use crate::telemetry::{record_policy_decision, task_span, end_task_span};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::path::Path;
+use std::time::Instant;
 use uuid::Uuid;
 
 #[derive(clap::Subcommand, Debug, Clone, Serialize, Deserialize)]
@@ -137,9 +136,9 @@ pub struct RegressionAlert {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RegressionSeverity {
-    Info,      // < 1% change
-    Warning,   // 1-5% change
-    Critical,  // > 5% change
+    Info,     // < 1% change
+    Warning,  // 1-5% change
+    Critical, // > 5% change
 }
 
 impl RegressionSeverity {
@@ -195,8 +194,9 @@ impl BaselineStore {
     }
 
     fn init_schema(&self) -> Result<(), String> {
-        self.conn.execute_batch(
-            r#"
+        self.conn
+            .execute_batch(
+                r#"
             CREATE TABLE IF NOT EXISTS baselines (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -231,7 +231,8 @@ impl BaselineStore {
             CREATE INDEX IF NOT EXISTS idx_alerts_metric ON regression_alerts(metric);
             CREATE INDEX IF NOT EXISTS idx_alerts_severity ON regression_alerts(severity);
             "#,
-        ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -267,7 +268,10 @@ impl BaselineStore {
              FROM baselines WHERE id = ?"
         ).map_err(|e| e.to_string())?;
 
-        let baseline = stmt.query_row([id], |row| self.row_to_baseline(row)).optional().map_err(|e| e.to_string())?;
+        let baseline = stmt
+            .query_row([id], |row| self.row_to_baseline(row))
+            .optional()
+            .map_err(|e| e.to_string())?;
         Ok(baseline)
     }
 
@@ -277,7 +281,10 @@ impl BaselineStore {
              FROM baselines WHERE name = ? ORDER BY created_at DESC LIMIT 1"
         ).map_err(|e| e.to_string())?;
 
-        let baseline = stmt.query_row([name], |row| self.row_to_baseline(row)).optional().map_err(|e| e.to_string())?;
+        let baseline = stmt
+            .query_row([name], |row| self.row_to_baseline(row))
+            .optional()
+            .map_err(|e| e.to_string())?;
         Ok(baseline)
     }
 
@@ -287,7 +294,9 @@ impl BaselineStore {
              FROM baselines ORDER BY created_at DESC LIMIT ?"
         ).map_err(|e| e.to_string())?;
 
-        let rows = stmt.query_map([limit], |row| self.row_to_baseline(row)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([limit], |row| self.row_to_baseline(row))
+            .map_err(|e| e.to_string())?;
 
         let mut baselines = Vec::new();
         for row in rows {
@@ -297,8 +306,13 @@ impl BaselineStore {
         Ok(baselines)
     }
 
-    pub fn compare(&self, baseline_id: &str, current_metrics: &HashMap<BaselineMetric, f64>) -> Result<ComparisonReport, String> {
-        let baseline = self.get(baseline_id)?
+    pub fn compare(
+        &self,
+        baseline_id: &str,
+        current_metrics: &HashMap<BaselineMetric, f64>,
+    ) -> Result<ComparisonReport, String> {
+        let baseline = self
+            .get(baseline_id)?
             .ok_or_else(|| format!("Baseline not found: {}", baseline_id))?;
 
         let current_commit = get_git_commit(Path::new(&baseline.project_path))?;
@@ -338,10 +352,16 @@ impl BaselineStore {
                 // For most metrics: higher is better (pass rate, coverage, performance)
                 // For some: lower is better (compile time, binary size, warnings, errors)
                 let is_regression = match metric {
-                    BaselineMetric::TestPassRate | BaselineMetric::Coverage | BaselineMetric::PerformanceScore => delta < 0.0,
+                    BaselineMetric::TestPassRate
+                    | BaselineMetric::Coverage
+                    | BaselineMetric::PerformanceScore => delta < 0.0,
                     BaselineMetric::TestCount => delta < 0.0,
-                    BaselineMetric::CompileTime | BaselineMetric::BinarySize | BaselineMetric::LintWarnings | BaselineMetric::TypeErrors | BaselineMetric::SecurityFindings => delta > 0.0,
-                    BaselineMetric::Custom(_) => delta < 0.0,  // Default: higher is better
+                    BaselineMetric::CompileTime
+                    | BaselineMetric::BinarySize
+                    | BaselineMetric::LintWarnings
+                    | BaselineMetric::TypeErrors
+                    | BaselineMetric::SecurityFindings => delta > 0.0,
+                    BaselineMetric::Custom(_) => delta < 0.0, // Default: higher is better
                 };
 
                 if is_regression && delta_percent.abs() > 0.1 {
@@ -357,7 +377,10 @@ impl BaselineStore {
 
         let summary = format!(
             "Compared {} metrics: {} regressions, {} improvements, {} unchanged",
-            metrics_compared, regressions.len(), improvements.len(), unchanged
+            metrics_compared,
+            regressions.len(),
+            improvements.len(),
+            unchanged
         );
 
         Ok(ComparisonReport {
@@ -396,7 +419,12 @@ impl BaselineStore {
         Ok(())
     }
 
-    pub fn list_alerts(&self, baseline_id: Option<&str>, severity: Option<RegressionSeverity>, limit: usize) -> Result<Vec<RegressionAlert>, String> {
+    pub fn list_alerts(
+        &self,
+        baseline_id: Option<&str>,
+        severity: Option<RegressionSeverity>,
+        limit: usize,
+    ) -> Result<Vec<RegressionAlert>, String> {
         let mut sql = String::from(
             "SELECT id, baseline_id, metric, baseline_value, current_value, delta, delta_percent, severity, detected_at, acknowledged
              FROM regression_alerts WHERE 1=1"
@@ -417,10 +445,13 @@ impl BaselineStore {
         sql.push_str(" ORDER BY detected_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(&params_refs[..], |row| self.row_to_alert(row)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(&params_refs[..], |row| self.row_to_alert(row))
+            .map_err(|e| e.to_string())?;
 
         let mut alerts = Vec::new();
         for row in rows {
@@ -431,10 +462,12 @@ impl BaselineStore {
     }
 
     pub fn acknowledge_alert(&self, alert_id: &str) -> Result<(), String> {
-        self.conn.execute(
-            "UPDATE regression_alerts SET acknowledged = 1 WHERE id = ?",
-            [alert_id],
-        ).map_err(|e| e.to_string())?;
+        self.conn
+            .execute(
+                "UPDATE regression_alerts SET acknowledged = 1 WHERE id = ?",
+                [alert_id],
+            )
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -443,13 +476,15 @@ impl BaselineStore {
         let metrics_json: String = row.get(7)?;
         let metadata_json: String = row.get(8)?;
 
-        let metrics_map: HashMap<String, f64> = serde_json::from_str(&metrics_json).unwrap_or_default();
+        let metrics_map: HashMap<String, f64> =
+            serde_json::from_str(&metrics_json).unwrap_or_default();
         let mut metrics = HashMap::new();
         for (k, v) in metrics_map {
             metrics.insert(BaselineMetric::from_str(&k), v);
         }
 
-        let metadata: HashMap<String, serde_json::Value> = serde_json::from_str(&metadata_json).unwrap_or_default();
+        let metadata: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&metadata_json).unwrap_or_default();
 
         Ok(Baseline {
             id: row.get(0)?,
@@ -488,13 +523,18 @@ impl BaselineStore {
     }
 }
 
-pub async fn collect_current_metrics(project_path: &Path) -> Result<HashMap<BaselineMetric, f64>, String> {
+pub async fn collect_current_metrics(
+    project_path: &Path,
+) -> Result<HashMap<BaselineMetric, f64>, String> {
     let mut metrics = HashMap::new();
 
     // Run tests and get pass rate
     if let Ok((passed, total)) = run_tests(project_path).await {
         if total > 0 {
-            metrics.insert(BaselineMetric::TestPassRate, passed as f64 / total as f64 * 100.0);
+            metrics.insert(
+                BaselineMetric::TestPassRate,
+                passed as f64 / total as f64 * 100.0,
+            );
             metrics.insert(BaselineMetric::TestCount, total as f64);
         }
     }
@@ -568,7 +608,7 @@ async fn run_tests(project_path: &Path) -> Result<(u32, u32), String> {
     // Try pytest for Python
     let pyproject = project_path.join("pyproject.toml");
     if pyproject.exists() {
-        let output = tokio::process::Command::new("python3")
+        let _output = tokio::process::Command::new("python3")
             .arg("-m")
             .arg("pytest")
             .arg("--tb=no")
@@ -656,10 +696,8 @@ async fn get_lint_warnings(project_path: &Path) -> Result<u32, String> {
         let mut warnings = 0;
         for line in stdout.lines() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                if json["reason"] == "compiler-message" {
-                    if json["message"]["level"] == "warning" {
-                        warnings += 1;
-                    }
+                if json["reason"] == "compiler-message" && json["message"]["level"] == "warning" {
+                    warnings += 1;
                 }
             }
         }

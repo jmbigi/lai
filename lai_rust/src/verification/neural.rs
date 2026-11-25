@@ -1,26 +1,20 @@
 /// Neural Network Verification Adapters for lai
-/// 
+///
 /// Provides integration with neural network verification tools:
 /// - α,β-CROWN: Bound propagation and branch-and-bound verification
 /// - Marabou: SMT-based neural network verification
 /// - ERAN: Abstract interpretation for robustness analysis
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 use uuid::Uuid;
 
-use crate::verification::contracts::{
-    VerificationAdapter, VerificationLanguage, VerificationFeatures,
-    VerificationStatus, ProofObligation, ProofResult, VerificationContract,
-    ContractVerificationResult, LogicFormula, VerificationError,
-};
+use crate::verification::contracts::{VerificationAdapter, VerificationError, VerificationStatus};
 
 /// Supported neural verification engines
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -140,8 +134,14 @@ pub trait NeuralVerifierAdapter: Send + Sync {
     fn supported_formats(&self) -> Vec<NeuralModelFormat>;
     fn supported_properties(&self) -> Vec<NeuralPropertyType>;
 
-    async fn verify(&self, config: &NeuralVerificationConfig) -> Result<NeuralVerificationResult, VerificationError>;
-    async fn verify_batch(&self, configs: &[NeuralVerificationConfig]) -> Result<Vec<NeuralVerificationResult>, VerificationError>;
+    async fn verify(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<NeuralVerificationResult, VerificationError>;
+    async fn verify_batch(
+        &self,
+        configs: &[NeuralVerificationConfig],
+    ) -> Result<Vec<NeuralVerificationResult>, VerificationError>;
 }
 
 /// α,β-CROWN Verifier
@@ -162,9 +162,9 @@ impl AlphaBetaCrownVerifier {
         let crown = crown_path.as_ref().to_path_buf();
         let python = python_path.as_ref().to_path_buf();
         let work_dir = working_dir.as_ref().to_path_buf();
-        
+
         let version = Self::get_version(&python, &crown)?;
-        
+
         Ok(Self {
             crown_path: crown,
             python_path: python,
@@ -191,19 +191,22 @@ impl AlphaBetaCrownVerifier {
             .arg(crown_path)
             .arg("--version")
             .output()
-            .map_err(|e| VerificationError::NotAvailable(format!("Failed to run α,β-CROWN: {}", e)))?;
-        
+            .map_err(|e| {
+                VerificationError::NotAvailable(format!("Failed to run α,β-CROWN: {}", e))
+            })?;
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{}\n{}", stdout, stderr);
-        
+
         // Extract version from output
         for line in combined.lines() {
-            if line.contains("version") || line.contains("Version") || line.contains("α,β-CROWN") {
+            if line.contains("version") || line.contains("Version") || line.contains("α,β-CROWN")
+            {
                 return Ok(line.trim().to_string());
             }
         }
-        
+
         Ok("Unknown".to_string())
     }
 
@@ -219,15 +222,16 @@ impl AlphaBetaCrownVerifier {
             "--timeout".to_string(),
             config.timeout_seconds.to_string(),
         ];
-        
+
         if let Some(bounds) = &config.input_bounds {
-            let bounds_str: Vec<String> = bounds.iter()
+            let bounds_str: Vec<String> = bounds
+                .iter()
                 .map(|(min, max)| format!("{}:{}", min, max))
                 .collect();
             args.push("--input-bounds".to_string());
             args.push(bounds_str.join(","));
         }
-        
+
         if config.gpu_enabled {
             args.push("--gpu".to_string());
             if let Some(gpu_id) = config.gpu_id {
@@ -237,14 +241,14 @@ impl AlphaBetaCrownVerifier {
         } else {
             args.push("--cpu".to_string());
         }
-        
+
         if let Some(precision) = &config.precision {
             args.push("--precision".to_string());
             args.push(precision.clone());
         }
-        
+
         args.extend(config.additional_args.clone());
-        
+
         args
     }
 
@@ -253,15 +257,18 @@ impl AlphaBetaCrownVerifier {
         let mut property_satisfied = None;
         let mut counterexample = None;
         let mut bounds = None;
-        
+
         // Parse α,β-CROWN output
         if output.contains("verified") || output.contains("VERIFIED") || output.contains("sat") {
             status = VerificationStatus::Verified;
             property_satisfied = Some(true);
-        } else if output.contains("falsified") || output.contains("FALSIFIED") || output.contains("unsat") {
+        } else if output.contains("falsified")
+            || output.contains("FALSIFIED")
+            || output.contains("unsat")
+        {
             status = VerificationStatus::Falsified;
             property_satisfied = Some(false);
-            
+
             // Try to extract counterexample
             counterexample = Some(NeuralCounterexample {
                 input: vec![],
@@ -269,12 +276,15 @@ impl AlphaBetaCrownVerifier {
                 perturbation: None,
                 property_violated: "Robustness property violated".to_string(),
             });
-        } else if output.contains("timeout") || output.contains("TIMEOUT") || output.contains("time limit") {
+        } else if output.contains("timeout")
+            || output.contains("TIMEOUT")
+            || output.contains("time limit")
+        {
             status = VerificationStatus::Timeout;
         } else if output.contains("error") || output.contains("Error") || output.contains("ERROR") {
             status = VerificationStatus::Error;
         }
-        
+
         // Try to extract bounds
         if output.contains("lower_bound") || output.contains("upper_bound") {
             bounds = Some(NeuralBounds {
@@ -283,7 +293,7 @@ impl AlphaBetaCrownVerifier {
                 output_layer: 0,
             });
         }
-        
+
         NeuralVerificationResult {
             obligation_id,
             engine: NeuralVerifierEngine::AlphaBetaCrown,
@@ -336,12 +346,15 @@ impl NeuralVerifierAdapter for AlphaBetaCrownVerifier {
         ]
     }
 
-    async fn verify(&self, config: &NeuralVerificationConfig) -> Result<NeuralVerificationResult, VerificationError> {
+    async fn verify(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<NeuralVerificationResult, VerificationError> {
         let start = Instant::now();
         let obligation_id = Uuid::new_v4();
-        
+
         let args = self.build_command(config);
-        
+
         let output = TokioCommand::new(&self.python_path)
             .args(&args)
             .current_dir(&self.working_dir)
@@ -349,26 +362,31 @@ impl NeuralVerifierAdapter for AlphaBetaCrownVerifier {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| VerificationError::IoError(e))?;
-        
+            .map_err(VerificationError::IoError)?;
+
         let execution_time = start.elapsed().as_millis() as u64;
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{}\n{}", stdout, stderr);
-        
+
         let mut result = self.parse_output(&combined, obligation_id);
         result.execution_time_ms = execution_time;
-        
+
         if !output.status.success() && result.status == VerificationStatus::Unknown {
             result.status = VerificationStatus::Error;
-            result.metadata.insert("stderr".to_string(), stderr.to_string());
+            result
+                .metadata
+                .insert("stderr".to_string(), stderr.to_string());
         }
-        
+
         Ok(result)
     }
 
-    async fn verify_batch(&self, configs: &[NeuralVerificationConfig]) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
+    async fn verify_batch(
+        &self,
+        configs: &[NeuralVerificationConfig],
+    ) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
         let mut results = Vec::new();
         for config in configs {
             let result = self.verify(config).await?;
@@ -390,9 +408,9 @@ impl MarabouVerifier {
     pub fn new<P: AsRef<Path>>(marabou_path: P, working_dir: P) -> Result<Self, VerificationError> {
         let marabou = marabou_path.as_ref().to_path_buf();
         let work_dir = working_dir.as_ref().to_path_buf();
-        
+
         let version = Self::get_version(&marabou)?;
-        
+
         Ok(Self {
             marabou_path: marabou,
             version,
@@ -401,7 +419,11 @@ impl MarabouVerifier {
         })
     }
 
-    pub fn with_timeout<P: AsRef<Path>>(marabou_path: P, working_dir: P, timeout: Duration) -> Result<Self, VerificationError> {
+    pub fn with_timeout<P: AsRef<Path>>(
+        marabou_path: P,
+        working_dir: P,
+        timeout: Duration,
+    ) -> Result<Self, VerificationError> {
         let mut verifier = Self::new(marabou_path, working_dir)?;
         verifier.timeout = timeout;
         Ok(verifier)
@@ -411,25 +433,30 @@ impl MarabouVerifier {
         let output = Command::new(marabou_path)
             .arg("--version")
             .output()
-            .map_err(|e| VerificationError::NotAvailable(format!("Failed to run Marabou: {}", e)))?;
-        
+            .map_err(|e| {
+                VerificationError::NotAvailable(format!("Failed to run Marabou: {}", e))
+            })?;
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim().to_string())
     }
 
-    fn generate_marabou_query(&self, config: &NeuralVerificationConfig) -> Result<String, VerificationError> {
+    fn generate_marabou_query(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<String, VerificationError> {
         // Generate Marabou query format (SMT-LIB like)
         let mut query = String::new();
         query.push_str("; Marabou query generated by lai\n");
         query.push_str(&format!("; Model: {}\n", config.model_path.display()));
         query.push_str(&format!("; Property: {:?}\n", config.property_type));
-        query.push_str("\n");
-        
+        query.push('\n');
+
         // This would generate proper Marabou input format
         // For now, return a placeholder
         query.push_str("(set-logic QF_NRA)\n");
         query.push_str("(exit)\n");
-        
+
         Ok(query)
     }
 
@@ -437,11 +464,15 @@ impl MarabouVerifier {
         let mut status = VerificationStatus::Unknown;
         let mut property_satisfied = None;
         let mut counterexample = None;
-        
-        if output.contains("UNSAT") || output.contains("unsat") || output.contains("property holds") {
+
+        if output.contains("UNSAT") || output.contains("unsat") || output.contains("property holds")
+        {
             status = VerificationStatus::Verified;
             property_satisfied = Some(true);
-        } else if output.contains("SAT") || output.contains("sat") || output.contains("property violated") {
+        } else if output.contains("SAT")
+            || output.contains("sat")
+            || output.contains("property violated")
+        {
             status = VerificationStatus::Falsified;
             property_satisfied = Some(false);
             counterexample = Some(NeuralCounterexample {
@@ -455,7 +486,7 @@ impl MarabouVerifier {
         } else if output.contains("error") || output.contains("Error") {
             status = VerificationStatus::Error;
         }
-        
+
         NeuralVerificationResult {
             obligation_id,
             engine: NeuralVerifierEngine::Marabou,
@@ -490,10 +521,7 @@ impl NeuralVerifierAdapter for MarabouVerifier {
     }
 
     fn supported_formats(&self) -> Vec<NeuralModelFormat> {
-        vec![
-            NeuralModelFormat::ONNX,
-            NeuralModelFormat::Marabou,
-        ]
+        vec![NeuralModelFormat::ONNX, NeuralModelFormat::Marabou]
     }
 
     fn supported_properties(&self) -> Vec<NeuralPropertyType> {
@@ -506,16 +534,22 @@ impl NeuralVerifierAdapter for MarabouVerifier {
         ]
     }
 
-    async fn verify(&self, config: &NeuralVerificationConfig) -> Result<NeuralVerificationResult, VerificationError> {
+    async fn verify(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<NeuralVerificationResult, VerificationError> {
         let start = Instant::now();
         let obligation_id = Uuid::new_v4();
-        
+
         // Generate query file
         let query = self.generate_marabou_query(config)?;
-        let query_file = self.working_dir.join(format!("marabou_query_{}.txt", obligation_id));
-        tokio::fs::write(&query_file, &query).await
-            .map_err(|e| VerificationError::IoError(e))?;
-        
+        let query_file = self
+            .working_dir
+            .join(format!("marabou_query_{}.txt", obligation_id));
+        tokio::fs::write(&query_file, &query)
+            .await
+            .map_err(VerificationError::IoError)?;
+
         let output = TokioCommand::new(&self.marabou_path)
             .arg("--input-query")
             .arg(&query_file)
@@ -526,28 +560,31 @@ impl NeuralVerifierAdapter for MarabouVerifier {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| VerificationError::IoError(e))?;
-        
+            .map_err(VerificationError::IoError)?;
+
         let execution_time = start.elapsed().as_millis() as u64;
-        
+
         // Cleanup
         let _ = tokio::fs::remove_file(&query_file).await;
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{}\n{}", stdout, stderr);
-        
+
         let mut result = self.parse_output(&combined, obligation_id);
         result.execution_time_ms = execution_time;
-        
+
         if !output.status.success() && result.status == VerificationStatus::Unknown {
             result.status = VerificationStatus::Error;
         }
-        
+
         Ok(result)
     }
 
-    async fn verify_batch(&self, configs: &[NeuralVerificationConfig]) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
+    async fn verify_batch(
+        &self,
+        configs: &[NeuralVerificationConfig],
+    ) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
         let mut results = Vec::new();
         for config in configs {
             let result = self.verify(config).await?;
@@ -575,9 +612,9 @@ impl EranVerifier {
         let eran = eran_path.as_ref().to_path_buf();
         let python = python_path.as_ref().to_path_buf();
         let work_dir = working_dir.as_ref().to_path_buf();
-        
+
         let version = Self::get_version(&python, &eran)?;
-        
+
         Ok(Self {
             eran_path: eran,
             python_path: python,
@@ -604,17 +641,17 @@ impl EranVerifier {
             .arg("--version")
             .output()
             .map_err(|e| VerificationError::NotAvailable(format!("Failed to run ERAN: {}", e)))?;
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{}\n{}", stdout, stderr);
-        
+
         for line in combined.lines() {
             if line.contains("version") || line.contains("Version") || line.contains("ERAN") {
                 return Ok(line.trim().to_string());
             }
         }
-        
+
         Ok("Unknown".to_string())
     }
 
@@ -630,21 +667,22 @@ impl EranVerifier {
             "--timeout".to_string(),
             config.timeout_seconds.to_string(),
         ];
-        
+
         if let Some(bounds) = &config.input_bounds {
-            let bounds_str: Vec<String> = bounds.iter()
+            let bounds_str: Vec<String> = bounds
+                .iter()
                 .map(|(min, max)| format!("{}:{}", min, max))
                 .collect();
             args.push("--input-bounds".to_string());
             args.push(bounds_str.join(","));
         }
-        
+
         // ERAN specific arguments
         args.push("--domain".to_string());
         args.push("deeppoly".to_string()); // Default abstract domain
-        
+
         args.extend(config.additional_args.clone());
-        
+
         args
     }
 
@@ -652,11 +690,14 @@ impl EranVerifier {
         let mut status = VerificationStatus::Unknown;
         let mut property_satisfied = None;
         let mut bounds = None;
-        
+
         if output.contains("verified") || output.contains("VERIFIED") || output.contains("holds") {
             status = VerificationStatus::Verified;
             property_satisfied = Some(true);
-        } else if output.contains("violated") || output.contains("FAILED") || output.contains("counterexample") {
+        } else if output.contains("violated")
+            || output.contains("FAILED")
+            || output.contains("counterexample")
+        {
             status = VerificationStatus::Falsified;
             property_satisfied = Some(false);
         } else if output.contains("timeout") || output.contains("TIMEOUT") {
@@ -664,7 +705,7 @@ impl EranVerifier {
         } else if output.contains("error") || output.contains("Error") {
             status = VerificationStatus::Error;
         }
-        
+
         // ERAN provides bounds
         if output.contains("lower") && output.contains("upper") {
             bounds = Some(NeuralBounds {
@@ -673,7 +714,7 @@ impl EranVerifier {
                 output_layer: 0,
             });
         }
-        
+
         NeuralVerificationResult {
             obligation_id,
             engine: NeuralVerifierEngine::ERAN,
@@ -726,12 +767,15 @@ impl NeuralVerifierAdapter for EranVerifier {
         ]
     }
 
-    async fn verify(&self, config: &NeuralVerificationConfig) -> Result<NeuralVerificationResult, VerificationError> {
+    async fn verify(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<NeuralVerificationResult, VerificationError> {
         let start = Instant::now();
         let obligation_id = Uuid::new_v4();
-        
+
         let args = self.build_command(config);
-        
+
         let output = TokioCommand::new(&self.python_path)
             .args(&args)
             .current_dir(&self.working_dir)
@@ -739,25 +783,28 @@ impl NeuralVerifierAdapter for EranVerifier {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| VerificationError::IoError(e))?;
-        
+            .map_err(VerificationError::IoError)?;
+
         let execution_time = start.elapsed().as_millis() as u64;
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let combined = format!("{}\n{}", stdout, stderr);
-        
+
         let mut result = self.parse_output(&combined, obligation_id);
         result.execution_time_ms = execution_time;
-        
+
         if !output.status.success() && result.status == VerificationStatus::Unknown {
             result.status = VerificationStatus::Error;
         }
-        
+
         Ok(result)
     }
 
-    async fn verify_batch(&self, configs: &[NeuralVerificationConfig]) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
+    async fn verify_batch(
+        &self,
+        configs: &[NeuralVerificationConfig],
+    ) -> Result<Vec<NeuralVerificationResult>, VerificationError> {
         let mut results = Vec::new();
         for config in configs {
             let result = self.verify(config).await?;
@@ -791,30 +838,46 @@ impl NeuralVerificationManager {
         self.verifiers.keys().cloned().collect()
     }
 
-    pub async fn verify(&self, config: &NeuralVerificationConfig) -> Result<NeuralVerificationResult, VerificationError> {
-        let verifier = self.verifiers.get(&config.engine)
-            .ok_or_else(|| VerificationError::NotAvailable(format!("Verifier {:?} not registered", config.engine)))?;
-        
+    pub async fn verify(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> Result<NeuralVerificationResult, VerificationError> {
+        let verifier = self.verifiers.get(&config.engine).ok_or_else(|| {
+            VerificationError::NotAvailable(format!("Verifier {:?} not registered", config.engine))
+        })?;
+
         if !verifier.is_available() {
-            return Err(VerificationError::NotAvailable(format!("Verifier {:?} not available", config.engine)));
+            return Err(VerificationError::NotAvailable(format!(
+                "Verifier {:?} not available",
+                config.engine
+            )));
         }
-        
+
         verifier.verify(config).await
     }
 
-    pub async fn verify_with_all(&self, config: &NeuralVerificationConfig) -> HashMap<NeuralVerifierEngine, Result<NeuralVerificationResult, VerificationError>> {
+    pub async fn verify_with_all(
+        &self,
+        config: &NeuralVerificationConfig,
+    ) -> HashMap<NeuralVerifierEngine, Result<NeuralVerificationResult, VerificationError>> {
         let mut results = HashMap::new();
-        
+
         for (engine, verifier) in &self.verifiers {
             if verifier.is_available() {
                 let mut engine_config = config.clone();
                 engine_config.engine = *engine;
                 results.insert(*engine, verifier.verify(&engine_config).await);
             } else {
-                results.insert(*engine, Err(VerificationError::NotAvailable(format!("{:?} not available", engine))));
+                results.insert(
+                    *engine,
+                    Err(VerificationError::NotAvailable(format!(
+                        "{:?} not available",
+                        engine
+                    ))),
+                );
             }
         }
-        
+
         results
     }
 }
@@ -909,7 +972,7 @@ mod tests {
             .timeout(60)
             .gpu_enabled(true)
             .build();
-        
+
         assert_eq!(config.engine, NeuralVerifierEngine::AlphaBetaCrown);
         assert_eq!(config.model_format, NeuralModelFormat::ONNX);
         assert_eq!(config.property_type, NeuralPropertyType::LocalRobustness);
@@ -931,7 +994,10 @@ mod tests {
 
     #[test]
     fn test_verification_engines() {
-        assert_eq!(NeuralVerifierEngine::AlphaBetaCrown.as_str(), "alpha_beta_crown");
+        assert_eq!(
+            NeuralVerifierEngine::AlphaBetaCrown.as_str(),
+            "alpha_beta_crown"
+        );
         assert_eq!(NeuralVerifierEngine::Marabou.as_str(), "marabou");
         assert_eq!(NeuralVerifierEngine::ERAN.as_str(), "eran");
     }

@@ -1,16 +1,17 @@
 //! RepairEngine - Motor de reparación automática de código.
 //! Implementa aplicación de fixes, validación y rollback seguro.
 
-use anyhow::{Context, Result};
+use crate::change_engine::ChangeEngine;
+use crate::diagnostic_engine::{
+    Diagnosis, DiagnosticContext, DiagnosticEngine, FailureCategory, Severity,
+};
+use crate::verification_engine::VerificationEngine;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use crate::change_engine::ChangeEngine;
-use crate::verification_engine::VerificationEngine;
-use crate::diagnostic_engine::{DiagnosticEngine, Diagnosis, DiagnosticContext, FailureCategory, Severity};
 
 /// Estrategia de reparación
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,10 +149,10 @@ impl RepairEngine {
     /// Reparar basado en diagnóstico
     pub async fn repair(&self, diagnosis_id: &str, context: RepairContext) -> Result<RepairResult> {
         let start = Instant::now();
-        
+
         // Crear plan de reparación
         let plan = self.create_repair_plan(diagnosis_id, &context).await?;
-        
+
         // Verificar si requiere aprobación
         if plan.requires_approval && !self.config.auto_approve_low_risk {
             return Err(anyhow::anyhow!("Repair plan requires manual approval"));
@@ -159,11 +160,23 @@ impl RepairEngine {
 
         // Ejecutar plan de reparación
         let result = self.execute_repair_plan(&plan).await?;
-        
+
         // Verificar después de reparar si está configurado
         if self.config.verify_after_repair && result.success {
-            let verification = self.verification_engine.verify("repair-verify", None, crate::planner::VerificationScope::default()).await.map_err(anyhow::Error::msg)?;
-            if !matches!(verification.overall_verdict, crate::verification_engine::VerificationVerdict::Success | crate::verification_engine::VerificationVerdict::SuccessWithDeclaredGaps) {
+            let verification = self
+                .verification_engine
+                .verify(
+                    "repair-verify",
+                    None,
+                    crate::planner::VerificationScope::default(),
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+            if !matches!(
+                verification.overall_verdict,
+                crate::verification_engine::VerificationVerdict::Success
+                    | crate::verification_engine::VerificationVerdict::SuccessWithDeclaredGaps
+            ) {
                 // Rollback si la verificación falla
                 self.rollback_last_changes()?;
                 return Ok(RepairResult {
@@ -180,24 +193,31 @@ impl RepairEngine {
 
         let mut result = result;
         result.duration_ms = start.elapsed().as_millis() as u64;
-        
+
         // Guardar en historial
         self.repair_history.write().unwrap().push(result.clone());
-        
+
         Ok(result)
     }
 
     /// Crear plan de reparación basado en diagnóstico
-    async fn create_repair_plan(&self, diagnosis_id: &str, context: &RepairContext) -> Result<RepairPlan> {
+    async fn create_repair_plan(
+        &self,
+        diagnosis_id: &str,
+        context: &RepairContext,
+    ) -> Result<RepairPlan> {
         let mut actions = Vec::new();
 
         // Obtener diagnóstico (simplificado - en realidad buscaría por ID)
-        let diagnosis = self.diagnostic_engine.diagnose(&context.error_output, DiagnosticContext::default()).await?;
-        
-        if let Some(root_cause) = &diagnosis.root_cause {
+        let diagnosis = self
+            .diagnostic_engine
+            .diagnose(&context.error_output, DiagnosticContext::default())
+            .await?;
+
+        if let Some(_root_cause) = &diagnosis.root_cause {
             // Generar acciones basadas en la causa raíz
             for diagnosis in &diagnosis.diagnoses {
-                let action = self.create_repair_action(diagnosis, &context).await?;
+                let action = self.create_repair_action(diagnosis, context).await?;
                 actions.push(action);
             }
         }
@@ -230,8 +250,13 @@ impl RepairEngine {
             });
         }
 
-        let estimated_risk = actions.iter().map(|a| a.estimated_risk).max().unwrap_or(RiskLevel::Low);
-        let requires_approval = estimated_risk >= RiskLevel::High && !self.config.auto_approve_low_risk;
+        let estimated_risk = actions
+            .iter()
+            .map(|a| a.estimated_risk)
+            .max()
+            .unwrap_or(RiskLevel::Low);
+        let requires_approval =
+            estimated_risk >= RiskLevel::High && !self.config.auto_approve_low_risk;
 
         Ok(RepairPlan {
             id: uuid::Uuid::new_v4().to_string(),
@@ -244,7 +269,11 @@ impl RepairEngine {
     }
 
     /// Crear acción de reparación para un diagnóstico
-    async fn create_repair_action(&self, diagnosis: &Diagnosis, context: &RepairContext) -> Result<RepairAction> {
+    async fn create_repair_action(
+        &self,
+        diagnosis: &Diagnosis,
+        _context: &RepairContext,
+    ) -> Result<RepairAction> {
         let strategy = match diagnosis.category {
             FailureCategory::SyntaxError => RepairStrategy::ApplySuggestedFix,
             FailureCategory::TypeError => RepairStrategy::ApplySuggestedFix,
@@ -262,7 +291,11 @@ impl RepairEngine {
         // Generar cambios basados en fix sugerido
         let changes = if let Some(fix) = &diagnosis.suggested_fix {
             vec![FileChange {
-                file_path: diagnosis.location.as_ref().map(|l| l.file.clone()).unwrap_or_default(),
+                file_path: diagnosis
+                    .location
+                    .as_ref()
+                    .map(|l| l.file.clone())
+                    .unwrap_or_default(),
                 old_content: String::new(),
                 new_content: fix.clone(),
                 change_type: ChangeType::Replace,
@@ -274,7 +307,11 @@ impl RepairEngine {
         Ok(RepairAction {
             id: uuid::Uuid::new_v4().to_string(),
             strategy,
-            target_file: diagnosis.location.as_ref().map(|l| l.file.clone()).unwrap_or_default(),
+            target_file: diagnosis
+                .location
+                .as_ref()
+                .map(|l| l.file.clone())
+                .unwrap_or_default(),
             description: format!("Fix for: {}", diagnosis.message),
             changes,
             precondition: None,
@@ -291,7 +328,7 @@ impl RepairEngine {
     /// Ejecutar plan de reparación
     async fn execute_repair_plan(&self, plan: &RepairPlan) -> Result<RepairResult> {
         let mut applied_changes = Vec::new();
-        
+
         for action in &plan.actions {
             // Verificar precondición
             if let Some(pre) = &action.precondition {
@@ -311,10 +348,10 @@ impl RepairEngine {
             // Aplicar cambios según estrategia
             let result = match action.strategy {
                 RepairStrategy::ApplySuggestedFix => self.apply_suggested_fix(action).await,
-                RepairStrategy::AutoFixTool => self.run_auto_fix_tools(&action).await,
-                RepairStrategy::RestoreCheckpoint => self.restore_checkpoint(&action).await,
+                RepairStrategy::AutoFixTool => self.run_auto_fix_tools(action).await,
+                RepairStrategy::RestoreCheckpoint => self.restore_checkpoint(action).await,
                 RepairStrategy::RevertLastChange => self.revert_last_change().await,
-                RepairStrategy::RegenerateFromSpec => self.regenerate_from_spec(&action).await,
+                RepairStrategy::RegenerateFromSpec => self.regenerate_from_spec(action).await,
             };
 
             match result {
@@ -367,10 +404,10 @@ impl RepairEngine {
 
     async fn apply_suggested_fix(&self, action: &RepairAction) -> Result<Vec<FileChange>> {
         let mut applied = Vec::new();
-        
+
         for change in &action.changes {
             let full_path = self.workspace_root.join(&change.file_path);
-            
+
             // Backup si está configurado
             if self.config.backup_before_repair && full_path.exists() {
                 let backup = full_path.with_extension("bak");
@@ -394,7 +431,7 @@ impl RepairEngine {
                     // No implementado en este nivel
                 }
             }
-            
+
             applied.push(change.clone());
         }
 
@@ -403,12 +440,12 @@ impl RepairEngine {
 
     async fn run_auto_fix_tools(&self, action: &RepairAction) -> Result<Vec<FileChange>> {
         let mut applied: Vec<FileChange> = Vec::new();
-        
+
         // Ejecutar herramientas de auto-fix según el lenguaje
         let target = &action.target_file;
         let ext = target.extension().and_then(|e| e.to_str()).unwrap_or("");
-        
-        match ext.as_ref() {
+
+        match ext {
             "py" => {
                 // Ruff fix
                 let output = Command::new("ruff")
@@ -476,7 +513,7 @@ impl RepairEngine {
         Ok(applied)
     }
 
-    async fn restore_checkpoint(&self, action: &RepairAction) -> Result<Vec<FileChange>> {
+    async fn restore_checkpoint(&self, _action: &RepairAction) -> Result<Vec<FileChange>> {
         // Usar change_engine para restaurar checkpoint
         let checkpoints = self.change_engine.list_checkpoints();
         if let Some(latest) = checkpoints.first() {
@@ -493,17 +530,17 @@ impl RepairEngine {
         Ok(vec![])
     }
 
-    async fn regenerate_from_spec(&self, action: &RepairAction) -> Result<Vec<FileChange>> {
+    async fn regenerate_from_spec(&self, _action: &RepairAction) -> Result<Vec<FileChange>> {
         // Regenerar código desde SPEC.md si existe
         Ok(vec![])
     }
 
-    async fn check_precondition(&self, precondition: &str) -> Result<bool> {
+    async fn check_precondition(&self, _precondition: &str) -> Result<bool> {
         // Evaluar precondición (simplificado)
         Ok(true)
     }
 
-    async fn check_postcondition(&self, postcondition: &str) -> Result<bool> {
+    async fn check_postcondition(&self, _postcondition: &str) -> Result<bool> {
         // Evaluar postcondición (simplificado)
         Ok(true)
     }
@@ -548,14 +585,20 @@ impl RepairEngine {
         let failed = total - successful;
         let avg_duration = if total > 0 {
             history.iter().map(|r| r.duration_ms).sum::<u64>() / total as u64
-        } else { 0 };
+        } else {
+            0
+        };
 
         RepairStats {
             total_repairs: total,
             successful_repairs: successful,
             failed_repairs: failed,
             average_duration_ms: avg_duration,
-            success_rate: if total > 0 { successful as f64 / total as f64 } else { 0.0 },
+            success_rate: if total > 0 {
+                successful as f64 / total as f64
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -582,24 +625,29 @@ pub struct RepairStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::change_engine::ChangeEngineConfig;
-    use crate::verification_engine::VerificationConfig;
     use crate::diagnostic_engine::DiagnosticConfig;
+    use crate::verification_engine::VerificationConfig;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_repair_engine_basic() {
         let temp_dir = TempDir::new().unwrap();
         let config = RepairConfig::default();
-        
+
         let change_config = ChangeEngineConfig::default();
-        let change_engine = Arc::new(ChangeEngine::new(temp_dir.path().to_path_buf(), change_config).unwrap());
-        
+        let change_engine =
+            Arc::new(ChangeEngine::new(temp_dir.path().to_path_buf(), change_config).unwrap());
+
         let verify_config = VerificationConfig::default();
-        let verification_engine = Arc::new(VerificationEngine::new(temp_dir.path()).with_config(verify_config));
-        
+        let verification_engine =
+            Arc::new(VerificationEngine::new(temp_dir.path()).with_config(verify_config));
+
         let diag_config = DiagnosticConfig::default();
-        let diagnostic_engine = Arc::new(DiagnosticEngine::new(temp_dir.path().to_path_buf(), DiagnosticConfig::default()).unwrap());
+        let diagnostic_engine = Arc::new(
+            DiagnosticEngine::new(temp_dir.path().to_path_buf(), DiagnosticConfig::default())
+                .unwrap(),
+        );
 
         let config = RepairConfig::default();
         let engine = RepairEngine::new(
@@ -608,7 +656,8 @@ mod tests {
             change_engine,
             verification_engine,
             diagnostic_engine,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Test básico
         let context = RepairContext {
