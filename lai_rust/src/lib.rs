@@ -19,6 +19,7 @@ pub mod repair_engine;
 pub mod repomap;
 pub mod services;
 pub mod telemetry;
+pub mod tui;
 pub mod tools;
 pub mod verification;
 pub mod verification_engine;

@@ -9,6 +9,7 @@ use lai::init_wizard::{cmd_doctor, cmd_init};
 use lai::memory_store::{CheckpointCommands, MemoryCommands};
 use lai::planner::PlanCommands;
 use lai::telemetry;
+use lai::tui::TuiApp;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -125,6 +126,8 @@ enum Commands {
     },
     /// Diagnose installation issues
     Doctor,
+    /// Launch Terminal UI (diff viewer, file tree, chat, tool log)
+    Tui,
 }
 
 #[tokio::main]
@@ -210,6 +213,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Doctor) => {
             cmd_doctor().await?;
+        }
+        Some(Commands::Tui) => {
+            let project_root = std::env::current_dir()?;
+            let mut app = TuiApp::new(project_root);
+            app.run().await?;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);
