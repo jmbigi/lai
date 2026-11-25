@@ -3,8 +3,13 @@
 
 set -euo pipefail
 
-MODELS=("qwen3:8b" "deepseek-r1:8b" "qwen3-coder-opt:latest")
-BASE_URL="http://127.0.0.1:11434/v1"
+if [ -n "${MODELS_OVERRIDE:-}" ]; then
+    read -r -a MODELS <<< "$MODELS_OVERRIDE"
+else
+    MODELS=("qwen3:8b" "deepseek-r1:8b" "qwen3-coder-opt:latest")
+fi
+BASE_URL="${BASE_URL_OVERRIDE:-http://127.0.0.1:11434/v1}"
+TASK_TIMEOUT="${TASK_TIMEOUT:-900}"
 BENCH_DIR=$(mktemp -d -t lai-comp-XXXXXX)
 
 echo "═══════════════════════════════════════════════════════════"
@@ -33,7 +38,9 @@ for model in "${MODELS[@]}"; do
     echo "  Testing: $model"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    MODEL_DIR="$BENCH_DIR/$model"
+    # Model names may contain ":" (e.g. qwen3:8b); cargo rejects paths
+    # with a colon, so sanitise the directory name.
+    MODEL_DIR="$BENCH_DIR/${model//:/_}"
     mkdir -p "$MODEL_DIR"
     echo 0 > "$MODEL_DIR/passed.count"
     echo 0 > "$MODEL_DIR/failed.count"
@@ -64,28 +71,44 @@ pub fn add(a: i32, b: i32) -> i32 { a + b }
 EOF
         
         echo "🎯 $model :: $name"
-        
+
+        BEFORE_HASH=$(sha256sum src/lib.rs | cut -d' ' -f1)
+
         START=$(date +%s%3N)
-        OUTPUT=$(/home/kubuntu/lai/lai_rust/target/release/lai \
+        set +e
+        OUTPUT=$(timeout "$TASK_TIMEOUT" /home/kubuntu/lai/lai_rust/target/release/lai \
             --model "$model" \
             --base-url "$BASE_URL" \
             auto "$prompt" \
             --max-iterations 10 \
             2>&1)
+        RC=$?
+        set -e
         END=$(date +%s%3N)
         DURATION=$((END - START))
-        
-        if cargo check --quiet 2>/dev/null; then
+
+        AFTER_HASH=$(sha256sum src/lib.rs | cut -d' ' -f1)
+
+        # Honest verification: file must change and tests must pass.
+        if [ "$RC" -eq 124 ]; then
+            VERIFY="TIMEOUT"
+            REASON="exceeded ${TASK_TIMEOUT}s"
+        elif [ "$BEFORE_HASH" = "$AFTER_HASH" ]; then
+            VERIFY="FAIL"
+            REASON="no file changes"
+        elif cargo test --quiet >/dev/null 2>&1; then
             VERIFY="PASS"
+            REASON="tests pass"
         else
             VERIFY="FAIL"
+            REASON="tests failed"
         fi
-        
-        echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY"
-        echo "$name: $VERIFY (${DURATION}ms)" >> "$MODEL_DIR/results.list"
-        
+
+        echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY ($REASON)"
+        echo "$name: $VERIFY (${DURATION}ms) [$REASON]" >> "$MODEL_DIR/results.list"
+
         cat > "$MODEL_DIR/${name}_result.json" << EOF
-{"task": "$name", "model": "$model", "duration_ms": $DURATION, "verify": "$VERIFY"}
+{"task": "$name", "model": "$model", "duration_ms": $DURATION, "verify": "$VERIFY", "reason": "$REASON"}
 EOF
         
         cd - > /dev/null
@@ -103,11 +126,14 @@ echo "  COMPETITION SUMMARY"
 echo "═══════════════════════════════════════════════════════════"
 
 for model in "${MODELS[@]}"; do
-    MODEL_DIR="$BENCH_DIR/$model"
+    # Model names may contain ":" (e.g. qwen3:8b); cargo rejects paths
+    # with a colon, so sanitise the directory name.
+    MODEL_DIR="$BENCH_DIR/${model//:/_}"
     if [ -f "$MODEL_DIR/results.list" ]; then
-        PASSED=$(grep -c "PASS" "$MODEL_DIR/results.list" || echo 0)
-        FAILED=$(grep -c "FAIL" "$MODEL_DIR/results.list" || echo 0)
-        echo "  $model: ✅ $PASSED | ❌ $FAILED"
+        PASSED=$(grep -c ': PASS ' "$MODEL_DIR/results.list" || true)
+        FAILED=$(grep -c ': FAIL ' "$MODEL_DIR/results.list" || true)
+        TIMEOUTS=$(grep -c ': TIMEOUT ' "$MODEL_DIR/results.list" || true)
+        echo "  $model: ✅ ${PASSED:-0} | ❌ ${FAILED:-0} | ⏱️ ${TIMEOUTS:-0}"
     fi
 done
 

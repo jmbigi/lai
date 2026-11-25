@@ -51,6 +51,7 @@ echo "📁 Directorio de benchmark: $BENCH_DIR"
 
 # Global counters (use files to persist across subshells)
 echo 0 > "$BENCH_DIR/passed.count"
+echo 0 > "$BENCH_DIR/partial.count"
 echo 0 > "$BENCH_DIR/failed.count"
 echo 0 > "$BENCH_DIR/total_time.count"
 > "$BENCH_DIR/results.list"
@@ -95,7 +96,10 @@ EOF
     
     echo "🎯 Task: $task_name"
     echo "   Prompt: ${prompt:0:80}..."
-    
+
+    # Fingerprint before the agent runs, so we can detect a no-op "success"
+    BEFORE_HASH=$(sha256sum src/lib.rs 2>/dev/null | cut -d' ' -f1)
+
     # Run lai auto IN the task directory
     START=$(date +%s%3N)
     OUTPUT=$(/home/kubuntu/lai/lai_rust/target/release/lai \
@@ -106,28 +110,50 @@ EOF
         2>&1)
     END=$(date +%s%3N)
     DURATION=$((END - START))
-    
-    # Check if cargo check passes
-    if cargo check --quiet 2>/dev/null; then
-        VERIFY="PASS"
-        echo "$(( $(cat "$BENCH_DIR/passed.count") + 1 ))" > "$BENCH_DIR/passed.count"
-    else
+
+    AFTER_HASH=$(sha256sum src/lib.rs 2>/dev/null | cut -d' ' -f1)
+
+    # Honest verification, three levels:
+    #   PASS    -> agent changed files and at least one test passes
+    #   PARTIAL -> agent changed files and it compiles, but there are no tests
+    #   FAIL    -> no changes, or it does not compile/tests fail
+    if [ "$BEFORE_HASH" = "$AFTER_HASH" ]; then
         VERIFY="FAIL"
-        echo "$(( $(cat "$BENCH_DIR/failed.count") + 1 ))" > "$BENCH_DIR/failed.count"
+        REASON="no file changes (agent did not write code)"
+    elif ! cargo test --quiet > "$BENCH_DIR/${task_name}_test.log" 2>&1; then
+        VERIFY="FAIL"
+        REASON="tests failed or code does not compile"
+    else
+        PASSED_TESTS=$(grep -oE '^test result: ok\. [0-9]+ passed' "$BENCH_DIR/${task_name}_test.log" \
+            | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}' || true)
+        if [ "${PASSED_TESTS:-0}" -gt 0 ]; then
+            VERIFY="PASS"
+            REASON="${PASSED_TESTS} test(s) pass"
+        else
+            VERIFY="PARTIAL"
+            REASON="compiles, no tests executed"
+        fi
     fi
+
+    case "$VERIFY" in
+        PASS)    echo "$(( $(cat "$BENCH_DIR/passed.count") + 1 ))"  > "$BENCH_DIR/passed.count" ;;
+        PARTIAL) echo "$(( $(cat "$BENCH_DIR/partial.count") + 1 ))" > "$BENCH_DIR/partial.count" ;;
+        *)       echo "$(( $(cat "$BENCH_DIR/failed.count") + 1 ))"  > "$BENCH_DIR/failed.count" ;;
+    esac
     
     # Update total time
     echo "$(( $(cat "$BENCH_DIR/total_time.count") + DURATION ))" > "$BENCH_DIR/total_time.count"
     
-    echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY"
-    echo "$task_name: $VERIFY (${DURATION}ms)" >> "$BENCH_DIR/results.list"
-    
+    echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY ($REASON)"
+    echo "$task_name: $VERIFY (${DURATION}ms) [$REASON]" >> "$BENCH_DIR/results.list"
+
     # Save individual result
     cat > "$BENCH_DIR/${task_name}_result.json" << EOF
 {
     "task": "$task_name",
     "duration_ms": $DURATION,
     "verify": "$VERIFY",
+    "reason": "$REASON",
     "output_length": ${#OUTPUT}
 }
 EOF
@@ -170,12 +196,14 @@ echo "  RESULTADOS: $MODEL"
 echo "════════════════════════════════════════════════════════════"
 
 PASSED=$(cat "$BENCH_DIR/passed.count")
+PARTIAL=$(cat "$BENCH_DIR/partial.count")
 FAILED=$(cat "$BENCH_DIR/failed.count")
 TOTAL_TIME=$(cat "$BENCH_DIR/total_time.count")
 TOTAL=${#TASKS[@]}
 
-echo "✅ Pasaron: $PASSED"
-echo "❌ Fallaron: $FAILED"
+echo "✅ Pass (tests): $PASSED"
+echo "🟡 Partial (compiles, no tests): $PARTIAL"
+echo "❌ Fail: $FAILED"
 echo "📊 Total: $TOTAL"
 echo "⏱️  Tiempo total: ${TOTAL_TIME}ms"
 echo ""
@@ -199,6 +227,7 @@ cat > "$BENCH_DIR/summary.json" << EOF
     "timestamp": "$(date -Iseconds)",
     "total_tasks": ${#TASKS[@]},
     "passed": $PASSED,
+    "partial": $PARTIAL,
     "failed": $FAILED,
     "total_time_ms": $TOTAL_TIME,
     "results": $(printf '%s\n' "${AGGREGATE_RESULTS[@]}" | jq -s .)
