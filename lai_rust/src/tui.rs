@@ -13,12 +13,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Terminal,
 };
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Represents a file diff for display
@@ -51,7 +50,7 @@ pub enum DiffLine {
 /// Chat message for display
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
-    pub role: String,      // "user", "assistant", "system", "tool"
+    pub role: String, // "user", "assistant", "system", "tool"
     pub content: String,
     pub tool_calls: Option<Vec<ToolCallDisplay>>,
     pub timestamp: String,
@@ -80,17 +79,17 @@ pub struct FileNode {
 /// TUI application state
 pub struct TuiApp {
     terminal: Option<Terminal<CrosstermBackend<Stdout>>>,
-    
+
     // Panels
     pub file_tree: FileTreeState,
     pub chat_panel: ChatPanelState,
     pub diff_viewer: DiffViewerState,
     pub tool_log: ToolLogState,
-    
+
     // Layout
     pub active_panel: ActivePanel,
     pub show_help: bool,
-    
+
     // Data
     pub project_root: PathBuf,
 }
@@ -103,6 +102,7 @@ pub enum ActivePanel {
     ToolLog,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ActivePanel {
     fn default() -> Self {
         ActivePanel::Chat
@@ -118,6 +118,7 @@ pub struct FileTreeState {
     pub flat_nodes: Vec<(FileNode, bool)>, // (node, is_visible)
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for FileTreeState {
     fn default() -> Self {
         Self {
@@ -207,24 +208,30 @@ impl TuiApp {
     }
 
     fn build_node(&self, path: &Path, depth: usize) -> Result<FileNode> {
-        let name = path.file_name()
+        let name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(".")
             .to_string();
-        
+
         let is_dir = path.is_dir();
         let mut children = Vec::new();
-        
+
         if is_dir {
             if let Ok(entries) = std::fs::read_dir(path) {
                 for entry in entries.flatten() {
                     let child_path = entry.path();
                     // Skip hidden and build directories
-                    let child_name = child_path.file_name()
+                    let child_name = child_path
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("");
-                    if child_name.starts_with('.') 
-                        || matches!(child_name, "target" | "node_modules" | "__pycache__" | ".git" | "build" | "dist") {
+                    if child_name.starts_with('.')
+                        || matches!(
+                            child_name,
+                            "target" | "node_modules" | "__pycache__" | ".git" | "build" | "dist"
+                        )
+                    {
                         continue;
                     }
                     if let Ok(node) = self.build_node(&child_path, depth + 1) {
@@ -241,7 +248,7 @@ impl TuiApp {
                 }
             });
         }
-        
+
         Ok(FileNode {
             name,
             path: path.to_path_buf(),
@@ -270,7 +277,7 @@ impl TuiApp {
 
     async fn run_event_loop(&mut self) -> Result<()> {
         let mut last_tick = std::time::Instant::now();
-        
+
         loop {
             // Draw - take terminal out temporarily to avoid borrow conflict
             if let Some(mut terminal) = self.terminal.take() {
@@ -538,17 +545,17 @@ impl TuiApp {
         if msg.is_empty() {
             return Ok(());
         }
-        
+
         self.chat_panel.messages.push(ChatMessage {
             role: "user".to_string(),
             content: msg.clone(),
             tool_calls: None,
             timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
         });
-        
+
         self.chat_panel.input_buffer.clear();
         self.chat_panel.scroll_offset = self.chat_panel.messages.len().saturating_sub(1);
-        
+
         // Here you would send to the LLM and get response
         // For now, just echo
         self.chat_panel.messages.push(ChatMessage {
@@ -557,7 +564,7 @@ impl TuiApp {
             tool_calls: None,
             timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
         });
-        
+
         Ok(())
     }
 
@@ -565,7 +572,7 @@ impl TuiApp {
 
     fn render(&mut self, f: &mut ratatui::Frame) {
         let area = f.area();
-        
+
         if self.show_help {
             self.render_help(f, area);
             return;
@@ -575,9 +582,9 @@ impl TuiApp {
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(20),  // File tree
-                Constraint::Percentage(55),  // Chat or Diff
-                Constraint::Percentage(25),  // Tool log
+                Constraint::Percentage(20), // File tree
+                Constraint::Percentage(55), // Chat or Diff
+                Constraint::Percentage(25), // Tool log
             ])
             .split(area);
 
@@ -605,24 +612,38 @@ impl TuiApp {
     }
 
     fn render_file_tree(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let items: Vec<ListItem> = self.file_tree.flat_nodes.iter().map(|(node, _)| {
-            let indent = "  ".repeat(node.depth);
-            let icon = if node.is_dir {
-                if node.expanded { "📂" } else { "📁" }
-            } else {
-                "📄"
-            };
-            let style = if node.is_dir {
-                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{} {} ", indent, icon), Style::default().fg(Color::Gray)),
-                Span::styled(node.name.clone(), style),
-            ]))
-        }).collect();
+        let items: Vec<ListItem> = self
+            .file_tree
+            .flat_nodes
+            .iter()
+            .map(|(node, _)| {
+                let indent = "  ".repeat(node.depth);
+                let icon = if node.is_dir {
+                    if node.expanded {
+                        "📂"
+                    } else {
+                        "📁"
+                    }
+                } else {
+                    "📄"
+                };
+                let style = if node.is_dir {
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{} {} ", indent, icon),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    Span::styled(node.name.clone(), style),
+                ]))
+            })
+            .collect();
 
         let title = if self.active_panel == ActivePanel::FileTree {
             "📁 Archivos [ACTIVO] "
@@ -631,15 +652,22 @@ impl TuiApp {
         };
 
         let list = List::new(items)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(if self.active_panel == ActivePanel::FileTree {
-                    Style::default().fg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Gray)
-                }))
-            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(if self.active_panel == ActivePanel::FileTree {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    }),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("► ");
 
         f.render_stateful_widget(list, area, &mut self.file_tree.list_state);
@@ -649,56 +677,72 @@ impl TuiApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(10),     // Messages
-                Constraint::Length(3),   // Input
+                Constraint::Min(10),   // Messages
+                Constraint::Length(3), // Input
             ])
             .split(area);
 
         // Messages
-        let messages: Vec<ListItem> = self.chat_panel.messages.iter().rev().map(|msg| {
-            let role_color = match msg.role.as_str() {
-                "user" => Color::Green,
-                "assistant" => Color::Cyan,
-                "system" => Color::Yellow,
-                "tool" => Color::Magenta,
-                _ => Color::White,
-            };
-            
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled(format!("[{}] ", msg.timestamp), Style::default().fg(Color::Gray)),
-                    Span::styled(format!("{}: ", msg.role), Style::default().fg(role_color).add_modifier(Modifier::BOLD)),
-                ]),
-            ];
-            
-            for line in msg.content.lines() {
-                lines.push(Line::from(vec![Span::raw(format!("  {}", line))]));
-            }
-            
-            if let Some(tool_calls) = &msg.tool_calls {
-                for tc in tool_calls {
-                    lines.push(Line::from(vec![
-                        Span::styled("  🔧 ", Style::default().fg(Color::Blue)),
-                        Span::styled(&tc.name, Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(format!("({})", tc.arguments)),
-                    ]));
-                    if let Some(result) = &tc.result {
+        let messages: Vec<ListItem> = self
+            .chat_panel
+            .messages
+            .iter()
+            .rev()
+            .map(|msg| {
+                let role_color = match msg.role.as_str() {
+                    "user" => Color::Green,
+                    "assistant" => Color::Cyan,
+                    "system" => Color::Yellow,
+                    "tool" => Color::Magenta,
+                    _ => Color::White,
+                };
+
+                let mut lines = vec![Line::from(vec![
+                    Span::styled(
+                        format!("[{}] ", msg.timestamp),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    Span::styled(
+                        format!("{}: ", msg.role),
+                        Style::default().fg(role_color).add_modifier(Modifier::BOLD),
+                    ),
+                ])];
+
+                for line in msg.content.lines() {
+                    lines.push(Line::from(vec![Span::raw(format!("  {}", line))]));
+                }
+
+                if let Some(tool_calls) = &msg.tool_calls {
+                    for tc in tool_calls {
                         lines.push(Line::from(vec![
-                            Span::styled("    → ", Style::default().fg(Color::Gray)),
-                            Span::raw(if result.len() > 80 { format!("{}...", &result[..80]) } else { result.clone() }),
+                            Span::styled("  🔧 ", Style::default().fg(Color::Blue)),
+                            Span::styled(&tc.name, Style::default().add_modifier(Modifier::BOLD)),
+                            Span::raw(format!("({})", tc.arguments)),
                         ]));
+                        if let Some(result) = &tc.result {
+                            lines.push(Line::from(vec![
+                                Span::styled("    → ", Style::default().fg(Color::Gray)),
+                                Span::raw(if result.len() > 80 {
+                                    format!("{}...", &result[..80])
+                                } else {
+                                    result.clone()
+                                }),
+                            ]));
+                        }
                     }
                 }
-            }
-            
-            ListItem::new(lines).style(Style::default().fg(Color::White))
-        }).collect();
+
+                ListItem::new(lines).style(Style::default().fg(Color::White))
+            })
+            .collect();
 
         let list = List::new(messages)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .title("💬 Chat [ACTIVO] ")
-                .border_style(Style::default().fg(Color::Cyan)))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("💬 Chat [ACTIVO] ")
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
             .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
             .highlight_symbol("► ");
 
@@ -710,7 +754,7 @@ impl TuiApp {
         } else {
             "Presiona 'i' para escribir mensaje".to_string()
         };
-        
+
         let input_style = if self.chat_panel.input_mode {
             Style::default().fg(Color::Yellow)
         } else {
@@ -725,31 +769,53 @@ impl TuiApp {
 
     fn render_diff(&mut self, f: &mut ratatui::Frame, area: Rect) {
         if self.diff_viewer.diffs.is_empty() {
-            let empty = Paragraph::new("No hay diffs para mostrar\n\nPresiona Ctrl+1 para seleccionar archivo en el árbol")
-                .style(Style::default().fg(Color::Gray))
-                .alignment(Alignment::Center)
-                .block(Block::default().borders(Borders::ALL).title("📝 Diff Viewer"));
+            let empty = Paragraph::new(
+                "No hay diffs para mostrar\n\nPresiona Ctrl+1 para seleccionar archivo en el árbol",
+            )
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("📝 Diff Viewer"),
+            );
             f.render_widget(empty, area);
             return;
         }
 
         let diff = &self.diff_viewer.diffs[self.diff_viewer.selected_diff];
         let path_str = diff.path.to_string_lossy();
-        
+
         let mut lines = vec![
             Line::from(vec![
                 Span::styled("📝 ", Style::default().fg(Color::Cyan)),
-                Span::styled(path_str.as_ref(), Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)),
-                Span::styled(format!(" ({}/{})", self.diff_viewer.selected_diff + 1, self.diff_viewer.diffs.len()), Style::default().fg(Color::Gray)),
+                Span::styled(
+                    path_str.as_ref(),
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!(
+                        " ({}/{})",
+                        self.diff_viewer.selected_diff + 1,
+                        self.diff_viewer.diffs.len()
+                    ),
+                    Style::default().fg(Color::Gray),
+                ),
             ]),
             Line::from(""),
         ];
 
         for hunk in &diff.hunks {
-            lines.push(Line::from(vec![
-                Span::styled(format!("@@ -{},{} +{},{} @@", hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines), Style::default().fg(Color::Cyan)),
-            ]));
-            
+            lines.push(Line::from(vec![Span::styled(
+                format!(
+                    "@@ -{},{} +{},{} @@",
+                    hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines
+                ),
+                Style::default().fg(Color::Cyan),
+            )]));
+
             for line in &hunk.lines {
                 match line {
                     DiffLine::Context(text) => {
@@ -760,13 +826,21 @@ impl TuiApp {
                     }
                     DiffLine::Add(text) => {
                         lines.push(Line::from(vec![
-                            Span::styled("+ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                            Span::styled(
+                                "+ ",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                             Span::styled(text, Style::default().fg(Color::Green)),
                         ]));
                     }
                     DiffLine::Remove(text) => {
                         lines.push(Line::from(vec![
-                            Span::styled("- ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                            Span::styled(
+                                "- ",
+                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                            ),
                             Span::styled(text, Style::default().fg(Color::Red)),
                         ]));
                     }
@@ -775,7 +849,11 @@ impl TuiApp {
         }
 
         let paragraph = Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("📝 Diff Viewer [ACTIVO]"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("📝 Diff Viewer [ACTIVO]"),
+            )
             .wrap(Wrap { trim: false })
             .scroll((self.diff_viewer.scroll_offset as u16, 0));
 
@@ -783,39 +861,65 @@ impl TuiApp {
     }
 
     fn render_tool_log(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let items: Vec<ListItem> = self.tool_log.calls.iter().rev().map(|call| {
-            let status_icon = if call.success { "✓" } else { "✗" };
-            let status_color = if call.success { Color::Green } else { Color::Red };
-            
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled(format!("{} ", status_icon), Style::default().fg(status_color)),
-                    Span::styled(&call.name, Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
-                ]),
-            ];
-            
-            if !call.arguments.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::styled("  args: ", Style::default().fg(Color::Gray)),
-                    Span::raw(if call.arguments.len() > 60 { format!("{}...", &call.arguments[..60]) } else { call.arguments.clone() }),
-                ]));
-            }
-            
-            if let Some(result) = &call.result {
-                lines.push(Line::from(vec![
-                    Span::styled("  → ", Style::default().fg(Color::Gray)),
-                    Span::raw(if result.len() > 60 { format!("{}...", &result[..60]) } else { result.clone() }),
-                ]));
-            }
-            
-            ListItem::new(lines)
-        }).collect();
+        let items: Vec<ListItem> = self
+            .tool_log
+            .calls
+            .iter()
+            .rev()
+            .map(|call| {
+                let status_icon = if call.success { "✓" } else { "✗" };
+                let status_color = if call.success {
+                    Color::Green
+                } else {
+                    Color::Red
+                };
+
+                let mut lines = vec![Line::from(vec![
+                    Span::styled(
+                        format!("{} ", status_icon),
+                        Style::default().fg(status_color),
+                    ),
+                    Span::styled(
+                        &call.name,
+                        Style::default()
+                            .add_modifier(Modifier::BOLD)
+                            .fg(Color::Cyan),
+                    ),
+                ])];
+
+                if !call.arguments.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("  args: ", Style::default().fg(Color::Gray)),
+                        Span::raw(if call.arguments.len() > 60 {
+                            format!("{}...", &call.arguments[..60])
+                        } else {
+                            call.arguments.clone()
+                        }),
+                    ]));
+                }
+
+                if let Some(result) = &call.result {
+                    lines.push(Line::from(vec![
+                        Span::styled("  → ", Style::default().fg(Color::Gray)),
+                        Span::raw(if result.len() > 60 {
+                            format!("{}...", &result[..60])
+                        } else {
+                            result.clone()
+                        }),
+                    ]));
+                }
+
+                ListItem::new(lines)
+            })
+            .collect();
 
         let list = List::new(items)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .title("🔧 Tool Calls")
-                .border_style(Style::default().fg(Color::Gray)))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("🔧 Tool Calls")
+                    .border_style(Style::default().fg(Color::Gray)),
+            )
             .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
             .highlight_symbol("► ");
 
@@ -829,9 +933,10 @@ impl TuiApp {
             ActivePanel::Diff => "Diff",
             ActivePanel::ToolLog => "Tools",
         };
-        
-        let shortcuts = "Ctrl+1:Archivos  Ctrl+2:Chat  Ctrl+3:Diff  Ctrl+4:Tools  Ctrl+H:Ayuda  Ctrl+C:Salir";
-        
+
+        let shortcuts =
+            "Ctrl+1:Archivos  Ctrl+2:Chat  Ctrl+3:Diff  Ctrl+4:Tools  Ctrl+H:Ayuda  Ctrl+C:Salir";
+
         let status = Paragraph::new(format!(" lai | Panel: {} | {}", panel_name, shortcuts))
             .style(Style::default().fg(Color::White).bg(Color::Blue))
             .alignment(Alignment::Center);
@@ -840,9 +945,19 @@ impl TuiApp {
 
     fn render_help(&self, f: &mut ratatui::Frame, area: Rect) {
         let help_text = vec![
-            Line::from(vec![Span::styled(" lai TUI - Ayuda\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+            Line::from(vec![Span::styled(
+                " lai TUI - Ayuda\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )]),
             Line::from(""),
-            Line::from(vec![Span::styled("Navegación Global:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "Navegación Global:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  Ctrl+1    Panel de Archivos"),
             Line::from("  Ctrl+2    Panel de Chat"),
             Line::from("  Ctrl+3    Panel de Diff"),
@@ -850,24 +965,44 @@ impl TuiApp {
             Line::from("  Ctrl+H    Mostrar/Ocultar esta ayuda"),
             Line::from("  Ctrl+C    Salir"),
             Line::from(""),
-            Line::from(vec![Span::styled("Panel de Archivos:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "Panel de Archivos:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  ↑/↓       Navegar"),
             Line::from("  ←/→       Colapsar/Expandir directorio"),
             Line::from("  Enter     Abrir archivo"),
             Line::from(""),
-            Line::from(vec![Span::styled("Panel de Chat:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "Panel de Chat:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  i         Entrar en modo input"),
             Line::from("  Enter     Enviar mensaje (en modo input)"),
             Line::from("  Esc       Cancelar input"),
             Line::from("  ↑/↓       Scroll mensajes"),
             Line::from("  PgUp/PgDn Scroll página"),
             Line::from(""),
-            Line::from(vec![Span::styled("Panel de Diff:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "Panel de Diff:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  ↑/↓       Scroll diff"),
             Line::from("  ←/→       Diff anterior/siguiente"),
             Line::from("  PgUp/PgDn Scroll página"),
             Line::from(""),
-            Line::from(vec![Span::styled("Panel de Tool Calls:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "Panel de Tool Calls:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  ↑/↓       Navegar calls"),
             Line::from("  PgUp/PgDn Scroll página"),
             Line::from(""),
@@ -887,7 +1022,7 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
     let mut diffs = Vec::new();
     let mut current_diff: Option<FileDiff> = None;
     let mut current_hunk: Option<DiffHunk> = None;
-    
+
     for line in diff_text.lines() {
         if line.starts_with("--- ") || line.starts_with("+++ ") {
             // New file diff
@@ -897,13 +1032,18 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
                 }
                 diffs.push(d);
             }
-            
-            let path = if line.starts_with("--- ") {
-                line[4..].trim().strip_prefix("a/").unwrap_or(&line[4..]).to_string()
-            } else {
-                line[4..].trim().strip_prefix("b/").unwrap_or(&line[4..]).to_string()
-            };
-            
+
+            let rest = line
+                .strip_prefix("--- ")
+                .or_else(|| line.strip_prefix("+++ "))
+                .unwrap_or("")
+                .trim();
+            let path = rest
+                .strip_prefix("a/")
+                .or_else(|| rest.strip_prefix("b/"))
+                .unwrap_or(rest)
+                .to_string();
+
             current_diff = Some(FileDiff {
                 path: PathBuf::from(path),
                 old_content: String::new(),
@@ -915,12 +1055,12 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
             if let Some(h) = current_hunk.take() {
                 current_diff.as_mut().unwrap().hunks.push(h);
             }
-            
+
             // Parse @@ -old_start,old_lines +new_start,new_lines @@
             let parts: Vec<&str> = line.split_whitespace().collect();
             let (old_start, old_lines) = parse_range(parts.get(1).unwrap_or(&"-1,1"));
             let (new_start, new_lines) = parse_range(parts.get(2).unwrap_or(&"+1,1"));
-            
+
             current_hunk = Some(DiffHunk {
                 old_start,
                 old_lines,
@@ -929,16 +1069,16 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
                 lines: Vec::new(),
             });
         } else if let Some(hunk) = &mut current_hunk {
-            if line.starts_with(' ') {
-                hunk.lines.push(DiffLine::Context(line[1..].to_string()));
-            } else if line.starts_with('+') {
-                hunk.lines.push(DiffLine::Add(line[1..].to_string()));
-            } else if line.starts_with('-') {
-                hunk.lines.push(DiffLine::Remove(line[1..].to_string()));
+            if let Some(text) = line.strip_prefix(' ') {
+                hunk.lines.push(DiffLine::Context(text.to_string()));
+            } else if let Some(text) = line.strip_prefix('+') {
+                hunk.lines.push(DiffLine::Add(text.to_string()));
+            } else if let Some(text) = line.strip_prefix('-') {
+                hunk.lines.push(DiffLine::Remove(text.to_string()));
             }
         }
     }
-    
+
     if let Some(h) = current_hunk.take() {
         if let Some(d) = current_diff.as_mut() {
             d.hunks.push(h);
@@ -947,7 +1087,7 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
     if let Some(d) = current_diff {
         diffs.push(d);
     }
-    
+
     diffs
 }
 
@@ -960,7 +1100,13 @@ fn parse_range(s: &str) -> (usize, usize) {
 }
 
 /// Add a tool call to the log
-pub fn log_tool_call(tool_log: &mut ToolLogState, name: &str, arguments: &str, result: Option<String>, success: bool) {
+pub fn log_tool_call(
+    tool_log: &mut ToolLogState,
+    name: &str,
+    arguments: &str,
+    result: Option<String>,
+    success: bool,
+) {
     tool_log.calls.push(ToolCallDisplay {
         name: name.to_string(),
         arguments: arguments.to_string(),
@@ -973,7 +1119,12 @@ pub fn log_tool_call(tool_log: &mut ToolLogState, name: &str, arguments: &str, r
 }
 
 /// Add a chat message
-pub fn log_chat_message(chat: &mut ChatPanelState, role: &str, content: &str, tool_calls: Option<Vec<ToolCallDisplay>>) {
+pub fn log_chat_message(
+    chat: &mut ChatPanelState,
+    role: &str,
+    content: &str,
+    tool_calls: Option<Vec<ToolCallDisplay>>,
+) {
     chat.messages.push(ChatMessage {
         role: role.to_string(),
         content: content.to_string(),

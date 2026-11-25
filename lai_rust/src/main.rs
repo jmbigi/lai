@@ -140,7 +140,11 @@ enum Commands {
     BenchSwe {
         #[arg(long, help = "Model to benchmark")]
         model: String,
-        #[arg(long, default_value = "http://localhost:8081/v1", help = "Base URL for the model")]
+        #[arg(
+            long,
+            default_value = "http://localhost:8081/v1",
+            help = "Base URL for the model"
+        )]
         base_url: String,
         #[arg(long, help = "Run only easy tasks (quick mode)")]
         quick: bool,
@@ -227,7 +231,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Bench { command }) => {
             commands::cmd_bench(command).await;
         }
-        Some(Commands::Init { model, auto, no_ollama, reset }) => {
+        Some(Commands::Init {
+            model,
+            auto,
+            no_ollama,
+            reset,
+        }) => {
             cmd_init(model, auto, no_ollama, reset).await?;
         }
         Some(Commands::Doctor) => {
@@ -241,10 +250,17 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Mcp { port, stdio }) => {
             cmd_mcp(port, stdio).await?;
         }
-        Some(Commands::BenchSwe { model, base_url, quick, compare }) => {
+        Some(Commands::BenchSwe {
+            model,
+            base_url,
+            quick,
+            compare,
+        }) => {
             if let Some(compare_file) = compare {
                 // Compare mode
-                let bench_file = std::env::current_dir()?.join("benchmark_results").join(&model.replace([':', '/'], "_"));
+                let bench_file = std::env::current_dir()?
+                    .join("benchmark_results")
+                    .join(&model.replace([':', '/'], "_"));
                 // This would need the test module's compare_results function
                 println!("Compare mode not fully implemented in main binary yet");
             } else {

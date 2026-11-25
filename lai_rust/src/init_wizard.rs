@@ -5,22 +5,20 @@
 use anyhow::{Context, Result};
 use atty;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    symbols,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
     Terminal,
 };
 use std::io::{self, Stdout};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 use sysinfo::System;
 use tokio::process::Command as TokioCommand;
@@ -72,6 +70,7 @@ pub struct InitWizard {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum WizardStep {
     DetectHardware,
     SelectModel,
@@ -122,7 +121,7 @@ impl InitWizard {
         println!("🔍 Detectando hardware...");
         self.hardware = Some(self.detect_hardware().await?);
         self.recommendations = self.generate_recommendations();
-        
+
         if self.selected_model.is_none() {
             self.selected_model = self.recommendations.first().map(|m| m.name.clone());
         }
@@ -154,15 +153,15 @@ impl InitWizard {
     /// Simple download without TUI progress
     async fn download_model_simple(&mut self) -> Result<()> {
         let model = self.selected_model.as_ref().context("No model selected")?;
-        
+
         // Check if already exists
-        let check = TokioCommand::new("ollama")
-            .args(["list"])
-            .output()
-            .await?;
-        
+        let check = TokioCommand::new("ollama").args(["list"]).output().await?;
+
         let stdout = String::from_utf8_lossy(&check.stdout);
-        if stdout.lines().any(|l| l.split_whitespace().next() == Some(model)) {
+        if stdout
+            .lines()
+            .any(|l| l.split_whitespace().next() == Some(model))
+        {
             println!("✓ Modelo {} ya existe", model);
             return Ok(());
         }
@@ -171,7 +170,7 @@ impl InitWizard {
             .args(["pull", model])
             .status()
             .await?;
-        
+
         if !status.success() {
             return Err(anyhow::anyhow!("Error descargando modelo: {}", status));
         }
@@ -221,7 +220,10 @@ impl InitWizard {
         // Step 3: Download model (if using ollama)
         if !self.config.no_ollama {
             self.current_step = WizardStep::DownloadModel;
-            self.status_message = format!("Descargando {}...", self.selected_model.as_deref().unwrap_or("modelo"));
+            self.status_message = format!(
+                "Descargando {}...",
+                self.selected_model.as_deref().unwrap_or("modelo")
+            );
             self.draw()?;
             self.download_model().await?;
         }
@@ -252,7 +254,7 @@ impl InitWizard {
         self.current_step = WizardStep::Complete;
         self.status_message = "¡Listo! Ejecuta: lai auto \"tu tarea\"".to_string();
         self.draw()?;
-        
+
         // Wait for user to press Enter or q
         self.wait_for_exit().await?;
         Ok(())
@@ -293,7 +295,10 @@ impl InitWizard {
     async fn detect_gpu_vram(&self) -> (Option<u64>, Option<String>) {
         // Try nvidia-smi first (NVIDIA)
         if let Ok(output) = TokioCommand::new("nvidia-smi")
-            .args(["--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+            .args([
+                "--query-gpu=memory.total,name",
+                "--format=csv,noheader,nounits",
+            ])
             .output()
             .await
         {
@@ -333,7 +338,7 @@ impl InitWizard {
             {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                    if let Ok(_json) = serde_json::from_str::<serde_json::Value>(&stdout) {
                         // Parse Apple Silicon unified memory
                         // For simplicity, return None - we'll use RAM as fallback
                     }
@@ -367,8 +372,16 @@ impl InitWizard {
     }
 
     fn generate_recommendations(&self) -> Vec<ModelRecommendation> {
-        let vram_gb = self.hardware.as_ref().and_then(|h| h.gpu_vram_mb).map(|v| v as f32 / 1024.0);
-        let ram_gb = self.hardware.as_ref().map(|h| h.total_ram_mb as f32 / 1024.0).unwrap_or(0.0);
+        let vram_gb = self
+            .hardware
+            .as_ref()
+            .and_then(|h| h.gpu_vram_mb)
+            .map(|v| v as f32 / 1024.0);
+        let ram_gb = self
+            .hardware
+            .as_ref()
+            .map(|h| h.total_ram_mb as f32 / 1024.0)
+            .unwrap_or(0.0);
         let effective_vram = vram_gb.unwrap_or(ram_gb * 0.5); // CPU fallback: use half RAM
 
         let mut models = vec![
@@ -445,11 +458,13 @@ impl InitWizard {
             // Prefer models that fit comfortably (vram_required <= effective_vram * 0.9)
             let a_fits = a.vram_required_gb <= effective_vram * 0.9;
             let b_fits = b.vram_required_gb <= effective_vram * 0.9;
-            
+
             match (a_fits, b_fits) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => a_fit.partial_cmp(&b_fit).unwrap_or(std::cmp::Ordering::Equal),
+                _ => a_fit
+                    .partial_cmp(&b_fit)
+                    .unwrap_or(std::cmp::Ordering::Equal),
             }
         });
 
@@ -473,7 +488,8 @@ impl InitWizard {
                     }
                     KeyCode::Down => {
                         let i = list_state.selected().unwrap_or(0);
-                        if i + 1 < self.recommendations.len() + 1 { // +1 for custom option
+                        if i + 1 < self.recommendations.len() + 1 {
+                            // +1 for custom option
                             list_state.select(Some(i + 1));
                         }
                     }
@@ -504,16 +520,20 @@ impl InitWizard {
     }
 
     async fn download_model(&mut self) -> Result<()> {
-        let model = self.selected_model.as_ref().context("No model selected")?.clone();
-        
+        let model = self
+            .selected_model
+            .as_ref()
+            .context("No model selected")?
+            .clone();
+
         // Check if already exists
-        let check = TokioCommand::new("ollama")
-            .args(["list"])
-            .output()
-            .await?;
-        
+        let check = TokioCommand::new("ollama").args(["list"]).output().await?;
+
         let stdout = String::from_utf8_lossy(&check.stdout);
-        if stdout.lines().any(|l| l.split_whitespace().next() == Some(&model)) {
+        if stdout
+            .lines()
+            .any(|l| l.split_whitespace().next() == Some(&model))
+        {
             self.status_message = format!("✓ Modelo {} ya existe", model);
             self.draw()?;
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -529,7 +549,7 @@ impl InitWizard {
 
         // Simulate progress updates while waiting
         let mut progress = 0.0_f64;
-        while !child.try_wait()?.is_some() {
+        while child.try_wait()?.is_none() {
             progress = (progress + 0.05).min(0.95);
             self.progress = 0.3 + progress * 0.25;
             self.status_message = format!("Descargando {}... {:.0}%", model, progress * 100.0);
@@ -557,7 +577,8 @@ impl InitWizard {
         std::fs::create_dir_all(&config_dir)?;
 
         let model = self.selected_model.as_ref().context("No model selected")?;
-        let gateway_config = format!(r#"
+        let gateway_config = format!(
+            r#"
 # lai gateway configuration
 # Generated by lai init on {}
 
@@ -593,12 +614,16 @@ rate_limit:
 logging:
   level: "info"
   format: "json"
-"#, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), model);
+"#,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
+            model
+        );
 
         std::fs::write(config_dir.join("gateway.yaml"), gateway_config)?;
 
         // Generate lai config
-        let lai_config = format!(r#"
+        let lai_config = format!(
+            r#"
 # lai configuration
 # Generated by lai init on {}
 
@@ -630,7 +655,10 @@ auto_mode:
   max_iterations: 20
   max_cost_usd: 0.0
   require_approval: false
-"#, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), model);
+"#,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
+            model
+        );
 
         std::fs::write(config_dir.join("config.yaml"), lai_config)?;
         Ok(())
@@ -638,14 +666,16 @@ auto_mode:
 
     async fn generate_agents_md(&self) -> Result<()> {
         let cwd = std::env::current_dir()?;
-        let project_name = cwd.file_name()
+        let project_name = cwd
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("proyecto");
 
         let hardware = self.hardware.as_ref().context("No hardware info")?;
         let model = self.selected_model.as_ref().context("No model selected")?;
 
-        let agents_md = format!(r#"# AGENTS.md - Instrucciones para lai en {project_name}
+        let agents_md = format!(
+            r#"# AGENTS.md - Instrucciones para lai en {project_name}
 
 > Generado automáticamente por `lai init` el {}
 > Hardware detectado: {} ({:.1}GB RAM, {} cores)
@@ -701,20 +731,31 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
 
 ---
 *Este archivo debe versionarse en git. lai lo leerá automáticamente para entender el contexto del proyecto.*
-"#, 
+"#,
             chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
             hardware.gpu_name.as_deref().unwrap_or("CPU-only"),
             hardware.total_ram_mb as f32 / 1024.0,
             hardware.cpu_cores,
             model,
-            self.recommendations.iter().find(|m| m.name == *model).map(|m| m.vram_required_gb).unwrap_or(0.0),
-            hardware.gpu_name.as_deref().unwrap_or("No detectada / CPU-only"),
+            self.recommendations
+                .iter()
+                .find(|m| m.name == *model)
+                .map(|m| m.vram_required_gb)
+                .unwrap_or(0.0),
+            hardware
+                .gpu_name
+                .as_deref()
+                .unwrap_or("No detectada / CPU-only"),
             model,
-            hardware.os, hardware.arch,
+            hardware.os,
+            hardware.arch,
             hardware.total_ram_mb as f32 / 1024.0,
             hardware.cpu_cores,
             hardware.gpu_name.as_deref().unwrap_or("No detectada"),
-            hardware.gpu_vram_mb.map(|v| v as f32 / 1024.0).unwrap_or(0.0),
+            hardware
+                .gpu_vram_mb
+                .map(|v| v as f32 / 1024.0)
+                .unwrap_or(0.0),
             model,
         );
 
@@ -724,14 +765,14 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
 
     async fn run_health_check(&mut self) -> Result<()> {
         let model = self.selected_model.as_ref().context("No model selected")?;
-        
+
         // 1. Check ollama has model
-        let check = TokioCommand::new("ollama")
-            .args(["list"])
-            .output()
-            .await?;
+        let check = TokioCommand::new("ollama").args(["list"]).output().await?;
         let stdout = String::from_utf8_lossy(&check.stdout);
-        if !stdout.lines().any(|l| l.split_whitespace().next() == Some(model)) {
+        if !stdout
+            .lines()
+            .any(|l| l.split_whitespace().next() == Some(model))
+        {
             return Err(anyhow::anyhow!("Modelo no encontrado en ollama"));
         }
         self.status_message = "✓ ollama: modelo disponible".to_string();
@@ -784,13 +825,13 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
             let hardware = self.hardware.clone();
             let recommendations = self.recommendations.clone();
             let selected_model = self.selected_model.clone();
-            
+
             terminal.draw(move |f| {
                 Self::render_frame_static(
-                    f, 
-                    current_step, 
-                    progress, 
-                    &status_message, 
+                    f,
+                    current_step,
+                    progress,
+                    &status_message,
                     error_message.as_deref(),
                     hardware.as_ref(),
                     &recommendations,
@@ -806,14 +847,20 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
             let recommendations = self.recommendations.clone();
             let hardware = self.hardware.clone();
             let list_state = list_state.clone();
-            
+
             terminal.draw(move |f| {
-                Self::render_model_selection_static(f, &recommendations, hardware.as_ref(), list_state)
+                Self::render_model_selection_static(
+                    f,
+                    &recommendations,
+                    hardware.as_ref(),
+                    list_state,
+                )
             })?;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_frame_static(
         f: &mut ratatui::Frame,
         current_step: WizardStep,
@@ -824,24 +871,32 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
         recommendations: &[ModelRecommendation],
         selected_model: Option<&str>,
     ) {
-        let area = f.size();
+        let area = f.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3),   // Title
-                Constraint::Min(10),     // Content
-                Constraint::Length(3),   // Progress bar
-                Constraint::Length(3),   // Status
-                Constraint::Length(2),   // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(10),   // Content
+                Constraint::Length(3), // Progress bar
+                Constraint::Length(3), // Status
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         // Title
         let title = Paragraph::new("🚀 lai init - Configuración Inicial")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Blue)));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            );
         f.render_widget(title, chunks[0]);
 
         // Content based on step
@@ -890,7 +945,7 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
         hardware: Option<&HardwareInfo>,
         list_state: ListState,
     ) {
-        let area = f.size();
+        let area = f.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -902,36 +957,73 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
             .split(area);
 
         let title = Paragraph::new("🤖 Selecciona Modelo")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Blue)));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Blue)),
+            );
         f.render_widget(title, chunks[0]);
 
-        let items: Vec<ListItem> = recommendations.iter().enumerate().map(|(i, m)| {
-            let fits = hardware.map(|h| {
-                let vram = h.gpu_vram_mb.unwrap_or(h.total_ram_mb / 2) as f32 / 1024.0;
-                m.vram_required_gb <= vram * 0.9
-            }).unwrap_or(false);
-            let marker = if fits { "✓" } else { "⚠" };
-            let moe = if m.is_moe { " [MoE]" } else { "" };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{} {}. ", marker, i + 1), Style::default().fg(Color::Green)),
-                Span::styled(m.display_name.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{} ~{}GB", moe, m.size_gb), Style::default().fg(Color::Yellow)),
-            ]))
-        }).collect();
+        let items: Vec<ListItem> = recommendations
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let fits = hardware
+                    .map(|h| {
+                        let vram = h.gpu_vram_mb.unwrap_or(h.total_ram_mb / 2) as f32 / 1024.0;
+                        m.vram_required_gb <= vram * 0.9
+                    })
+                    .unwrap_or(false);
+                let marker = if fits { "✓" } else { "⚠" };
+                let moe = if m.is_moe { " [MoE]" } else { "" };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{} {}. ", marker, i + 1),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::styled(
+                        m.display_name.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{} ~{}GB", moe, m.size_gb),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ]))
+            })
+            .collect();
 
         let mut items_with_custom = items;
         items_with_custom.push(ListItem::new(Line::from(vec![
             Span::styled("  ", Style::default()),
-            Span::styled("Escribir modelo personalizado...", Style::default().fg(Color::Blue).add_modifier(Modifier::ITALIC)),
+            Span::styled(
+                "Escribir modelo personalizado...",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::ITALIC),
+            ),
         ])));
 
         let list = List::new(items_with_custom)
-            .block(Block::default().borders(Borders::ALL).title("Modelos Recomendados"))
-            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Modelos Recomendados"),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("► ");
-        
+
         let mut state = list_state;
         f.render_stateful_widget(list, chunks[1], &mut state);
 
@@ -940,7 +1032,9 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
             let info = Paragraph::new(format!(
                 "GPU: {} | VRAM: {} | RAM: {:.1}GB | CPU: {} cores",
                 hw.gpu_name.as_deref().unwrap_or("CPU-only"),
-                hw.gpu_vram_mb.map(|v| format!("{:.1}GB", v as f32 / 1024.0)).unwrap_or("N/A".to_string()),
+                hw.gpu_vram_mb
+                    .map(|v| format!("{:.1}GB", v as f32 / 1024.0))
+                    .unwrap_or("N/A".to_string()),
                 hw.total_ram_mb as f32 / 1024.0,
                 hw.cpu_cores
             ))
@@ -951,28 +1045,60 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
         }
     }
 
-    fn render_hardware_detection_static(hardware: Option<&HardwareInfo>) -> Paragraph {
+    fn render_hardware_detection_static(hardware: Option<&HardwareInfo>) -> Paragraph<'_> {
         if let Some(hw) = hardware {
             let gpu_info = hw.gpu_name.as_deref().unwrap_or("No detectada (modo CPU)");
-            let vram_info = hw.gpu_vram_mb.map(|v| format!("{:.1} GB", v as f32 / 1024.0)).unwrap_or("N/A".to_string());
+            let vram_info = hw
+                .gpu_vram_mb
+                .map(|v| format!("{:.1} GB", v as f32 / 1024.0))
+                .unwrap_or("N/A".to_string());
             let ollama_status = if hw.ollama_installed {
-                format!("✓ Instalado ({})", hw.ollama_version.as_deref().unwrap_or("?"))
+                format!(
+                    "✓ Instalado ({})",
+                    hw.ollama_version.as_deref().unwrap_or("?")
+                )
             } else {
                 "✗ No instalado - se usará llama.cpp directo".to_string()
             };
 
             Paragraph::new(Text::from(vec![
-                Line::from(vec![Span::styled("🖥  Hardware Detectado\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+                Line::from(vec![Span::styled(
+                    "🖥  Hardware Detectado\n",
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Cyan),
+                )]),
                 Line::from(""),
-                Line::from(vec![Span::styled("GPU: ", Style::default().fg(Color::Yellow)), Span::raw(gpu_info)]),
-                Line::from(vec![Span::styled("VRAM: ", Style::default().fg(Color::Yellow)), Span::raw(vram_info)]),
-                Line::from(vec![Span::styled("RAM Total: ", Style::default().fg(Color::Yellow)), Span::raw(format!("{:.1} GB", hw.total_ram_mb as f32 / 1024.0))]),
-                Line::from(vec![Span::styled("CPU: ", Style::default().fg(Color::Yellow)), Span::raw(format!("{} cores", hw.cpu_cores))]),
-                Line::from(vec![Span::styled("OS/Arch: ", Style::default().fg(Color::Yellow)), Span::raw(format!("{} {}", hw.os, hw.arch))]),
+                Line::from(vec![
+                    Span::styled("GPU: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(gpu_info),
+                ]),
+                Line::from(vec![
+                    Span::styled("VRAM: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(vram_info),
+                ]),
+                Line::from(vec![
+                    Span::styled("RAM Total: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(format!("{:.1} GB", hw.total_ram_mb as f32 / 1024.0)),
+                ]),
+                Line::from(vec![
+                    Span::styled("CPU: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(format!("{} cores", hw.cpu_cores)),
+                ]),
+                Line::from(vec![
+                    Span::styled("OS/Arch: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(format!("{} {}", hw.os, hw.arch)),
+                ]),
                 Line::from(""),
-                Line::from(vec![Span::styled("Ollama: ", Style::default().fg(Color::Yellow)), Span::raw(ollama_status)]),
+                Line::from(vec![
+                    Span::styled("Ollama: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(ollama_status),
+                ]),
                 Line::from(""),
-                Line::from(vec![Span::styled("Generando recomendaciones de modelo...\n", Style::default().fg(Color::Green))]),
+                Line::from(vec![Span::styled(
+                    "Generando recomendaciones de modelo...\n",
+                    Style::default().fg(Color::Green),
+                )]),
             ]))
             .wrap(Wrap { trim: true })
             .block(Block::default().borders(Borders::ALL).title("Detección"))
@@ -982,31 +1108,58 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
         }
     }
 
-    fn render_model_list_static<'a>(recommendations: &'a [ModelRecommendation], hardware: Option<&'a HardwareInfo>) -> Paragraph<'a> {
+    fn render_model_list_static<'a>(
+        recommendations: &'a [ModelRecommendation],
+        hardware: Option<&'a HardwareInfo>,
+    ) -> Paragraph<'a> {
         let mut lines = vec![
-            Line::from(vec![Span::styled("Modelos recomendados para tu hardware:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+            Line::from(vec![Span::styled(
+                "Modelos recomendados para tu hardware:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )]),
             Line::from(""),
         ];
 
         for (i, m) in recommendations.iter().enumerate() {
-            let fits = hardware.map(|h| {
-                let vram = h.gpu_vram_mb.unwrap_or(h.total_ram_mb / 2) as f32 / 1024.0;
-                m.vram_required_gb <= vram * 0.9
-            }).unwrap_or(false);
+            let fits = hardware
+                .map(|h| {
+                    let vram = h.gpu_vram_mb.unwrap_or(h.total_ram_mb / 2) as f32 / 1024.0;
+                    m.vram_required_gb <= vram * 0.9
+                })
+                .unwrap_or(false);
             let marker = if fits { "✓" } else { "⚠" };
             let moe = if m.is_moe { " [MoE]" } else { "" };
             lines.push(Line::from(vec![
-                Span::styled(format!("{} {}. ", marker, i + 1), Style::default().fg(Color::Green)),
-                Span::styled(m.display_name.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{} ~{}GB\n", moe, m.size_gb), Style::default().fg(Color::Yellow)),
-                Span::styled(format!("   {}\n", m.description), Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{} {}. ", marker, i + 1),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    m.display_name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} ~{}GB\n", moe, m.size_gb),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!("   {}\n", m.description),
+                    Style::default().fg(Color::Gray),
+                ),
             ]));
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  ", Style::default()),
-            Span::styled("Escribir modelo personalizado...", Style::default().fg(Color::Blue).add_modifier(Modifier::ITALIC)),
+            Span::styled(
+                "Escribir modelo personalizado...",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::ITALIC),
+            ),
         ]));
 
         Paragraph::new(Text::from(lines))
@@ -1014,36 +1167,67 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
             .block(Block::default().borders(Borders::ALL).title("Selección"))
     }
 
-    fn render_download_progress_static(selected_model: Option<&str>) -> Paragraph {
+    fn render_download_progress_static(selected_model: Option<&str>) -> Paragraph<'_> {
         Paragraph::new(Text::from(vec![
-            Line::from(vec![Span::styled("⬇ Descargando modelo...\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+            Line::from(vec![Span::styled(
+                "⬇ Descargando modelo...\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("Modelo: ", Style::default().fg(Color::Yellow)),
-                Span::styled(selected_model.unwrap_or(""), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    selected_model.unwrap_or(""),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(""),
-            Line::from(vec![Span::styled("Esto puede tomar varios minutos según tu conexión.\n", Style::default().fg(Color::Gray))]),
+            Line::from(vec![Span::styled(
+                "Esto puede tomar varios minutos según tu conexión.\n",
+                Style::default().fg(Color::Gray),
+            )]),
             Line::from(""),
-            Line::from(vec![Span::styled("Progreso simulado - ollama no expone progreso granular", Style::default().fg(Color::DarkGray))]),
+            Line::from(vec![Span::styled(
+                "Progreso simulado - ollama no expone progreso granular",
+                Style::default().fg(Color::DarkGray),
+            )]),
         ]))
         .wrap(Wrap { trim: true })
         .block(Block::default().borders(Borders::ALL).title("Descarga"))
     }
 
-    fn render_configuring_static(component: &str) -> Paragraph {
+    fn render_configuring_static(component: &str) -> Paragraph<'_> {
         Paragraph::new(Text::from(vec![
-            Line::from(vec![Span::styled(format!("⚙ Configurando {}...\n", component), Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+            Line::from(vec![Span::styled(
+                format!("⚙ Configurando {}...\n", component),
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )]),
             Line::from(""),
-            Line::from(vec![Span::styled("Escribiendo archivos de configuración...", Style::default().fg(Color::Gray))]),
+            Line::from(vec![Span::styled(
+                "Escribiendo archivos de configuración...",
+                Style::default().fg(Color::Gray),
+            )]),
         ]))
         .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title("Configuración"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Configuración"),
+        )
     }
 
     fn render_health_check_static<'a>() -> Paragraph<'a> {
         Paragraph::new(Text::from(vec![
-            Line::from(vec![Span::styled("🏥 Verificando instalación...\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))]),
+            Line::from(vec![Span::styled(
+                "🏥 Verificando instalación...\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )]),
             Line::from(""),
             Line::from("✓ ollama: modelo disponible"),
             Line::from("✓ gateway: config OK"),
@@ -1056,9 +1240,22 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
 
     fn render_complete_static<'a>() -> Paragraph<'a> {
         Paragraph::new(Text::from(vec![
-            Line::from(vec![Span::styled("✅ ¡Instalación Completada!\n\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Green))]),
-            Line::from(vec![Span::styled("Tu lai está listo para usar.\n\n", Style::default().fg(Color::Cyan))]),
-            Line::from(vec![Span::styled("Próximos pasos:\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow))]),
+            Line::from(vec![Span::styled(
+                "✅ ¡Instalación Completada!\n\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Green),
+            )]),
+            Line::from(vec![Span::styled(
+                "Tu lai está listo para usar.\n\n",
+                Style::default().fg(Color::Cyan),
+            )]),
+            Line::from(vec![Span::styled(
+                "Próximos pasos:\n",
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Yellow),
+            )]),
             Line::from("  lai auto \"tu tarea\"        # Modo autónomo"),
             Line::from("  lai chat                   # Chat interactivo"),
             Line::from("  lai review .               # Revisar código"),
@@ -1070,9 +1267,12 @@ _Añade aquí notas específicas del proyecto, decisiones de arquitectura, TODOs
         .block(Block::default().borders(Borders::ALL).title("¡Completado!"))
     }
 
-    fn render_error_static(error_message: Option<&str>) -> Paragraph {
+    fn render_error_static(error_message: Option<&str>) -> Paragraph<'_> {
         Paragraph::new(Text::from(vec![
-            Line::from(vec![Span::styled("❌ Error\n\n", Style::default().add_modifier(Modifier::BOLD).fg(Color::Red))]),
+            Line::from(vec![Span::styled(
+                "❌ Error\n\n",
+                Style::default().add_modifier(Modifier::BOLD).fg(Color::Red),
+            )]),
             Line::from(error_message.unwrap_or("Error desconocido")),
             Line::from(""),
             Line::from("Presiona 'q' para salir"),
@@ -1148,7 +1348,11 @@ pub async fn cmd_doctor() -> Result<()> {
         println!("✓ ollama instalado");
         let output = TokioCommand::new("ollama").args(["list"]).output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let models: Vec<&str> = stdout.lines().skip(1).filter_map(|l| l.split_whitespace().next()).collect();
+        let models: Vec<&str> = stdout
+            .lines()
+            .skip(1)
+            .filter_map(|l| l.split_whitespace().next())
+            .collect();
         if models.is_empty() {
             warnings.push("No hay modelos descargados en ollama".to_string());
         } else {
@@ -1181,11 +1385,15 @@ pub async fn cmd_doctor() -> Result<()> {
     } else {
         if !issues.is_empty() {
             println!("❌ Errores ({}):", issues.len());
-            for i in &issues { println!("  - {}", i); }
+            for i in &issues {
+                println!("  - {}", i);
+            }
         }
         if !warnings.is_empty() {
             println!("⚠ Advertencias ({}):", warnings.len());
-            for w in &warnings { println!("  - {}", w); }
+            for w in &warnings {
+                println!("  - {}", w);
+            }
         }
         println!("\n💡 Ejecuta 'lai init' para corregir");
     }
