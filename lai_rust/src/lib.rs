@@ -10,6 +10,7 @@ pub mod context;
 pub mod diagnostic_engine;
 pub mod init_wizard;
 pub mod llm;
+pub mod mcp_server;
 pub mod memory_store;
 pub mod orchestration;
 pub mod planner;

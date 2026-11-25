@@ -6,6 +6,7 @@ use lai::baseline::BaselineCommands;
 use lai::benchmark::BenchCommands;
 use lai::commands;
 use lai::init_wizard::{cmd_doctor, cmd_init};
+use lai::mcp_server::cmd_mcp;
 use lai::memory_store::{CheckpointCommands, MemoryCommands};
 use lai::planner::PlanCommands;
 use lai::telemetry;
@@ -128,6 +129,13 @@ enum Commands {
     Doctor,
     /// Launch Terminal UI (diff viewer, file tree, chat, tool log)
     Tui,
+    /// Start MCP server for tool exposure to Cursor/Cline/Claude Code
+    Mcp {
+        #[arg(long, help = "Port for TCP server (default: 8083)")]
+        port: Option<u16>,
+        #[arg(long, help = "Use stdio transport (for Claude Code)")]
+        stdio: bool,
+    },
 }
 
 #[tokio::main]
@@ -218,6 +226,9 @@ async fn main() -> anyhow::Result<()> {
             let project_root = std::env::current_dir()?;
             let mut app = TuiApp::new(project_root);
             app.run().await?;
+        }
+        Some(Commands::Mcp { port, stdio }) => {
+            cmd_mcp(port, stdio).await?;
         }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);
