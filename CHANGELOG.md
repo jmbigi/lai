@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Regla 0 (Misión Fundacional):** lai existe para impulsar IAs locales, abiertas y soberanas. Open source first, sin dependencia de claves/API keys, sin dependencia de cuentas en la nube, software gratuito y de calidad, privacidad por diseño. Cualquier feature que introduzca dependencia obligatoria de cloud requiere aprobación explícita.
 - **Regla 10 (Documentación obligatoria de cambios):** Nueva regla que exige crear documento de cambios propuestos antes de modificar código, documentar estado ANTES y DESPUÉS de cada cambio individual, y mantener trazabilidad para favorecer el trabajo en equipo. Prohíbe cambios silenciosos o en batch sin documentación intermedia.
 
+### Fixed
+- **lai_rust/context.rs**: El análisis profundo de proyecto ahora completa realmente la estructura de código (módulos, funciones, tipos, imports y entry points); antes `modules` y `patterns` quedaban siempre vacíos.
+- **lai_rust/context.rs**: El walker ahora poda `target/`, `node_modules/`, `.git/`, cachés y directorios ocultos, y omite archivos binarios, no-UTF8 o mayores a 512 KB en lugar de fallar o degradar el rendimiento.
+- **lai_rust/context.rs**: Detección de entry points ignora código de ejemplo dentro de strings raw/triple-quoted.
+- **lai_rust/context.rs**: Los objetivos se extraen solo de secciones de Goals/Objectives/Mission, se deduplican, se limitan a 20 y se limpian de Markdown.
+
+### Improved
+- **lai_rust/context.rs**: Detección de stack en monorepos (manifiestos anidados como `lai_rust/Cargo.toml` o `gateway-go/go.mod`) y clasificación por lenguaje dominante en lugar de solo el manifiesto raíz.
+- **lai_rust/context.rs**: El contexto formateado incluye excerpts de README, AGENTS.md y manifiestos, con un límite de 16 000 caracteres para proteger la ventana del modelo.
+- **lai_rust/context.rs**: Análisis de la raíz del repo lai reducido de ~828 ms a ~15 ms y con 9 tests unitarios nuevos.
+
 ## [v0.0.2] - 2026-11-20
 
 ### Fixed
