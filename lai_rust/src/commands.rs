@@ -2,6 +2,7 @@
 
 use crate::benchmark::framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat};
 use crate::benchmark::standard_benchmarks;
+use crate::context::{ContextAnalyzer, format_context_for_llm};
 use crate::llm::{LlmClient, Message, ToolCall};
 use crate::services::Services;
 use crate::tools::ToolRegistry;
@@ -126,7 +127,8 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
     
     // Load project context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let project_context = analyze_project_context(&cwd);
+    let analyzer = ContextAnalyzer::new(cwd.clone());
+    let project_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&cwd));
     
     // Get tool schemas
     let tools = ToolRegistry::new();
@@ -282,7 +284,9 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
         }
         if input == "analyze" || input == "analizar" || input == "analizar proyecto" || input == "analyze project" {
             println!("🔍 Re-analyzing project...");
-            let new_context = analyze_project_context(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let analyzer = ContextAnalyzer::new(cwd);
+            let new_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))));
             // Update the system message with fresh context
             history[0] = Message {
                 role: "system".into(),
@@ -744,7 +748,8 @@ pub async fn cmd_auto(task: &str, max_iterations: u32, output: Option<&str>, mod
     
     // Load project context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let project_context = analyze_project_context(&cwd);
+    let analyzer = ContextAnalyzer::new(cwd.clone());
+    let project_context = analyzer.analyze().map(|ctx| format_context_for_llm(&ctx)).unwrap_or_else(|_| analyze_project_context(&cwd));
     
     let llm = LlmClient::new(base_url.to_string(), model.to_string());
     let tools = ToolRegistry::new();
