@@ -5,6 +5,7 @@ use clap::Parser;
 use lai::baseline::BaselineCommands;
 use lai::benchmark::BenchCommands;
 use lai::commands;
+use lai::init_wizard::{cmd_doctor, cmd_init};
 use lai::memory_store::{CheckpointCommands, MemoryCommands};
 use lai::planner::PlanCommands;
 use lai::telemetry;
@@ -111,10 +112,23 @@ enum Commands {
         #[command(subcommand)]
         command: BenchCommands,
     },
+    /// Interactive setup wizard (detect hardware, download model, configure)
+    Init {
+        #[arg(long, help = "Model to use (skip selection)")]
+        model: Option<String>,
+        #[arg(long, help = "Non-interactive, use recommended model")]
+        auto: bool,
+        #[arg(long, help = "Use llama.cpp directly (no ollama)")]
+        no_ollama: bool,
+        #[arg(long, help = "Reset configuration and start fresh")]
+        reset: bool,
+    },
+    /// Diagnose installation issues
+    Doctor,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize telemetry
@@ -191,9 +205,16 @@ async fn main() {
         Some(Commands::Bench { command }) => {
             commands::cmd_bench(command).await;
         }
+        Some(Commands::Init { model, auto, no_ollama, reset }) => {
+            cmd_init(model, auto, no_ollama, reset).await?;
+        }
+        Some(Commands::Doctor) => {
+            cmd_doctor().await?;
+        }
         None => {
             println!("lai - Local AI Code Assistant v{}", VERSION);
             println!("Use `lai --help` for usage.");
         }
     }
+    Ok(())
 }

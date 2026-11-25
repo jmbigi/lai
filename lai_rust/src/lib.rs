@@ -8,6 +8,7 @@ pub mod change_engine;
 pub mod commands;
 pub mod context;
 pub mod diagnostic_engine;
+pub mod init_wizard;
 pub mod llm;
 pub mod memory_store;
 pub mod orchestration;
