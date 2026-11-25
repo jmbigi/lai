@@ -2,15 +2,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Helper macro for creating HashMaps with serde_json::Value
-macro_rules! hashmap {
-    ($( $key:expr => $val:expr ),* $(,)?) => {{
-        let mut map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
-        $( map.insert($key, $val.into()); )*
-        map
-    }};
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyDecision {
     pub allowed: bool,
@@ -66,7 +57,6 @@ pub enum Operation {
 }
 pub struct PolicyEngine {
     config: PolicyConfig,
-    call_history: Vec<String>,
     file_write_counts: HashMap<String, usize>,
     session_tokens: u64,
     session_cost: u64,
@@ -80,7 +70,6 @@ impl PolicyEngine {
     pub fn new(config: PolicyConfig) -> Self {
         Self {
             config,
-            call_history: Vec::new(),
             file_write_counts: HashMap::new(),
             session_tokens: 0,
             session_cost: 0,

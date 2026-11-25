@@ -253,7 +253,7 @@ pub async fn ensure_local_model_available_async(
     Ok(())
 }
 
-async fn start_service_async(svc: &ServiceInfo) -> bool {
+async fn _start_service_async(svc: &ServiceInfo) -> bool {
     if svc.is_running() {
         return true;
     }

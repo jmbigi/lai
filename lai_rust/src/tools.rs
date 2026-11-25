@@ -15,11 +15,8 @@ pub struct ToolSchema {
     pub description: String,
     pub parameters: Value,
 }
-type ToolFunc = Arc<
-    dyn Fn(HashMap<String, Value>) -> Pin<Box<dyn Future<Output = Result<String>> + Send>>
-        + Send
-        + Sync,
->;
+type BoxedToolFuture = Pin<Box<dyn Future<Output = Result<String>> + Send>>;
+type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> BoxedToolFuture + Send + Sync>;
 #[derive(Clone)]
 pub struct ToolRegistry {
     pub tools: HashMap<String, ToolFunc>,
@@ -53,11 +50,7 @@ impl ToolRegistry {
         Fut: std::future::Future<Output = Result<String>> + Send + 'static,
     {
         let func = Arc::new(func);
-        let wrapped: Arc<
-            dyn Fn(HashMap<String, Value>) -> Pin<Box<dyn Future<Output = Result<String>> + Send>>
-                + Send
-                + Sync,
-        > = Arc::new(move |args: HashMap<String, Value>| {
+        let wrapped: ToolFunc = Arc::new(move |args: HashMap<String, Value>| {
             let func = Arc::clone(&func);
             Box::pin(async move { func(args).await })
         });
@@ -308,9 +301,10 @@ impl ToolRegistry {
         });
     }
     pub async fn call_tool(&self, name: &str, args: HashMap<String, Value>) -> Result<String> {
-        let mut policy = self.policy_engine.lock().unwrap();
-        let decision = policy.check_tool(name, &args);
-        drop(policy);
+        let decision = {
+            let mut policy = self.policy_engine.lock().unwrap();
+            policy.check_tool(name, &args)
+        };
         if !decision.allowed {
             return Err(anyhow::anyhow!(
                 "PolicyEngine blocked tool '{}': {}",

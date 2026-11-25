@@ -5,7 +5,7 @@ use crate::telemetry::{end_task_span, task_span};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -259,15 +259,13 @@ impl Spec {
 pub struct Planner {
     llm_base_url: String,
     llm_model: String,
-    working_dir: PathBuf,
 }
 
 impl Planner {
-    pub fn new(llm_base_url: &str, llm_model: &str, working_dir: &Path) -> Self {
+    pub fn new(llm_base_url: &str, llm_model: &str) -> Self {
         Self {
             llm_base_url: llm_base_url.to_string(),
             llm_model: llm_model.to_string(),
-            working_dir: working_dir.to_path_buf(),
         }
     }
 
@@ -617,7 +615,7 @@ pub async fn create_plan_from_task(
     task_span(&task_id, "plan_generation", task);
     let start = Instant::now();
 
-    let planner = Planner::new(llm_base_url, llm_model, working_dir);
+    let planner = Planner::new(llm_base_url, llm_model);
 
     // Build context
     let context = build_project_context(working_dir);

@@ -1,7 +1,7 @@
 //! DiagnosticEngine - Motor de diagnóstico y localización de fallos.
 //! Implementa análisis de fallos, localización de causas raíz y clasificación.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,6 @@ impl Default for DiagnosticConfig {
 /// Motor de diagnóstico
 pub struct DiagnosticEngine {
     config: DiagnosticConfig,
-    workspace_root: PathBuf,
     knowledge_base: Arc<RwLock<DiagnosticKnowledgeBase>>,
 }
 
@@ -157,9 +156,9 @@ pub struct DiagnosticResult {
 
 impl DiagnosticEngine {
     pub fn new(workspace_root: PathBuf, config: DiagnosticConfig) -> Result<Self> {
+        let _ = workspace_root; // Reserved for future file context
         Ok(Self {
             config,
-            workspace_root,
             knowledge_base: Arc::new(RwLock::new(DiagnosticKnowledgeBase::default())),
         })
     }

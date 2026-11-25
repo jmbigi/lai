@@ -224,6 +224,7 @@ pub fn record_policy_decision(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn record_tool_call(
     task_id: &str,
     tool: &str,

@@ -1,33 +1,13 @@
 //! lai - Local AI Code Assistant
 //! v5.0 Architecture: Deterministic engineering, controlled autonomy, supply-chain security, bounded verifiability, measured efficiency.
 
-mod baseline;
-mod benchmark;
-mod change_engine;
-mod commands;
-mod context;
-mod diagnostic_engine;
-mod llm;
-mod memory_store;
-mod orchestration;
-mod planner;
-mod policy;
-mod quality;
-mod repair_engine;
-mod repomap;
-mod services;
-mod telemetry;
-mod tools;
-mod verification;
-mod verification_engine;
-
-// Re-export command enums from their modules
-pub use baseline::BaselineCommands;
-pub use benchmark::{standard_benchmarks, BenchCommands};
-pub use memory_store::{CheckpointCommands, MemoryCommands};
-pub use planner::PlanCommands;
-
 use clap::Parser;
+use lai::baseline::BaselineCommands;
+use lai::benchmark::BenchCommands;
+use lai::commands;
+use lai::memory_store::{CheckpointCommands, MemoryCommands};
+use lai::planner::PlanCommands;
+use lai::telemetry;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

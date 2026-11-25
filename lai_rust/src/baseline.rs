@@ -63,7 +63,7 @@ impl BaselineMetric {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_string(s: &str) -> Self {
         match s {
             "test_pass_rate" => BaselineMetric::TestPassRate,
             "test_count" => BaselineMetric::TestCount,
@@ -480,7 +480,7 @@ impl BaselineStore {
             serde_json::from_str(&metrics_json).unwrap_or_default();
         let mut metrics = HashMap::new();
         for (k, v) in metrics_map {
-            metrics.insert(BaselineMetric::from_str(&k), v);
+            metrics.insert(BaselineMetric::from_string(&k), v);
         }
 
         let metadata: HashMap<String, serde_json::Value> =
@@ -506,7 +506,7 @@ impl BaselineStore {
         Ok(RegressionAlert {
             id: row.get(0)?,
             baseline_id: row.get(1)?,
-            metric: BaselineMetric::from_str(&metric_str),
+            metric: BaselineMetric::from_string(&metric_str),
             baseline_value: row.get(3)?,
             current_value: row.get(4)?,
             delta: row.get(5)?,

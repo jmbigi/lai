@@ -636,37 +636,6 @@ pub async fn cmd_code(
     }
 }
 
-fn compute_unified_diff(old: &str, new: &str, filename: &str) -> String {
-    use std::process::Command;
-
-    // Write temp files
-    let old_file = format!("/tmp/{}.old", filename.replace('/', "_"));
-    let new_file = format!("/tmp/{}.new", filename.replace('/', "_"));
-
-    if let (Ok(_), Ok(_)) = (fs::write(&old_file, old), fs::write(&new_file, new)) {
-        let output = Command::new("diff")
-            .args(["-u", &old_file, &new_file])
-            .output();
-
-        let _ = fs::remove_file(&old_file);
-        let _ = fs::remove_file(&new_file);
-
-        if let Ok(out) = output {
-            let diff = String::from_utf8_lossy(&out.stdout).to_string();
-            // Fix the header lines to use proper paths
-            let mut lines: Vec<String> = diff.lines().map(|s| s.to_string()).collect();
-            if lines.len() >= 2 {
-                let old_header = format!("--- a/{}", filename);
-                let new_header = format!("+++ b/{}", filename);
-                lines[0] = old_header;
-                lines[1] = new_header;
-            }
-            return lines.join("\n");
-        }
-    }
-    String::new()
-}
-
 pub async fn cmd_status() {
     println!("lai - Local AI Code Assistant");
     println!("Services: checking...");

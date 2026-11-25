@@ -295,10 +295,9 @@ impl TlaVerifier {
             {
                 status = VerificationStatus::Verified;
             }
-        } else if output.contains("Invariant") && output.contains("violated") {
-            status = VerificationStatus::Falsified;
-            counterexample = Some(output.to_string());
-        } else if output.contains("Deadlock") && output.contains("found") {
+        } else if (output.contains("Invariant") && output.contains("violated"))
+            || (output.contains("Deadlock") && output.contains("found"))
+        {
             status = VerificationStatus::Falsified;
             counterexample = Some(output.to_string());
         } else if output.contains("timeout")

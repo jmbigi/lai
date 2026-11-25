@@ -4,7 +4,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -67,7 +67,7 @@ pub enum MemoryType {
 }
 
 impl MemoryType {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "semantic" => Some(MemoryType::Semantic),
             "episodic" => Some(MemoryType::Episodic),
@@ -108,6 +108,7 @@ pub struct MemoryEntry {
 }
 
 impl MemoryEntry {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         memory_type: MemoryType,
         content: String,
@@ -167,8 +168,6 @@ pub enum MatchType {
 
 pub struct MemoryStore {
     conn: Arc<Mutex<Connection>>,
-    working_dir: PathBuf,
-    embedding_dim: usize,
 }
 
 impl MemoryStore {
@@ -181,12 +180,7 @@ impl MemoryStore {
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
         let conn = Arc::new(Mutex::new(conn));
 
-        let store = Self {
-            conn,
-            working_dir: working_dir.to_path_buf(),
-            embedding_dim: 384, // For local embeddings if enabled
-        };
-
+        let store = Self { conn };
         store.init_schema()?;
         Ok(store)
     }
@@ -696,7 +690,7 @@ impl MemoryStore {
 
         Ok(MemoryEntry {
             id: row.get(0)?,
-            memory_type: MemoryType::from_str(&memory_type_str).unwrap_or(MemoryType::Semantic),
+            memory_type: MemoryType::from_string(&memory_type_str).unwrap_or(MemoryType::Semantic),
             content: row.get(2)?,
             source: row.get(3)?,
             tool_name: row.get(4)?,

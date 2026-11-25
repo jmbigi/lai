@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 use uuid::Uuid;
 
-use crate::verification::contracts::{VerificationAdapter, VerificationError, VerificationStatus};
+use crate::verification::contracts::{VerificationError, VerificationStatus};
 
 /// Supported neural verification engines
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
