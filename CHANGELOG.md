@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **swebench/**: harness incremental para SWE-bench Verified (descarga del dataset, preparación de imágenes Docker reanudable, compilación de un binario compatible con glibc 2.35, ejecución del agente en contenedor y captura de parches en formato oficial). Validado de punta a punta con `astropy__astropy-12907`. La evaluación (`evaluate.py`) queda pendiente.
 - **Regla 0 (Misión Fundacional):** lai existe para impulsar IAs locales, abiertas y soberanas. Open source first, sin dependencia de claves/API keys, sin dependencia de cuentas en la nube, software gratuito y de calidad, privacidad por diseño. Cualquier feature que introduzca dependencia obligatoria de cloud requiere aprobación explícita.
 - **Regla 10 (Documentación obligatoria de cambios):** Nueva regla que exige crear documento de cambios propuestos antes de modificar código, documentar estado ANTES y DESPUÉS de cada cambio individual, y mantener trazabilidad para favorecer el trabajo en equipo. Prohíbe cambios silenciosos o en batch sin documentación intermedia.
 
 ### Fixed
+- **lai_rust/auto**: el resultado de cada herramienta se trunca a 6 000 caracteres (cabeza y cola con marcador). Leer un archivo grande desbordaba el contexto del modelo y le hacía olvidar la tarea.
+- **lai_rust/auto**: el *nudge* reinyecta ahora la tarea completa y ordena actuar de forma directiva; antes el modelo respondía "no hace falta herramienta" y terminaba sin cambios.
+- **lai_rust/Cargo.toml**: `reqwest` con `default-features = false` (solo rustls). Elimina la dependencia de OpenSSL, que rompía la compilación en contenedores limpios.
 - **lai_rust/auto**: tool calling arreglado para modelos no optimizados. `lai auto` usa ahora function calling nativo ([OI] `tools`/`tool_choice`) con fallback al protocolo de bloques JSON, y añade un *nudge* cuando el modelo responde en prosa sin llamar herramientas. `qwen3:8b` pasa de 0/3 a 3/3 tareas en el benchmark rápido.
 - **lai_rust/auto**: los argumentos con `\n` literales (JSON doble-escapado) se desescapan antes de escribir el archivo; antes el fichero quedaba en una sola línea.
 - **lai_rust/context.rs**: El análisis profundo de proyecto ahora completa realmente la estructura de código (módulos, funciones, tipos, imports y entry points); antes `modules` y `patterns` quedaban siempre vacíos.

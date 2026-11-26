@@ -955,12 +955,16 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                             "↻ No tool call emitted; asking the model to act ({}/{})",
                             nudges, MAX_NUDGES
                         );
+                        // Restate the task: with small context windows the
+                        // original request is the first thing to be evicted.
                         messages.push(crate::llm::Message {
                             role: "user".into(),
-                            content: "You did not call any tool. If this task requires creating \
-or modifying files you MUST call the write_file tool now with the complete final file \
-content (path + content). Do not describe the code in prose; call the tool."
-                                .into(),
+                            content: format!(
+                                "You stopped without using a tool, but the task is not done yet.\n\n\
+TASK:\n{task}\n\n\
+Call a tool now. If you already know the fix, call write_file (or apply_patch) with the \
+complete corrected file content. Do not reply with analysis or questions — act."
+                            ),
                             tool_calls: None,
                             tool_call_id: None,
                             name: None,
@@ -1027,6 +1031,10 @@ content (path + content). Do not describe the code in prose; call the tool."
                         format!("Unknown tool: {}", name_str)
                     };
 
+                    // Bound the tool output: reading a large file can otherwise
+                    // blow the model's context window and evict the task itself.
+                    let tool_result = truncate_tool_output(name_str, &tool_result);
+
                     messages.push(crate::llm::Message {
                         role: "tool".into(),
                         content: tool_result,
@@ -1042,6 +1050,35 @@ content (path + content). Do not describe the code in prose; call the tool."
             }
         }
     }
+}
+
+/// Maximum characters of a tool result kept in the conversation history.
+///
+/// Local models often run with a 4k-8k context window; a single `read_file` on a
+/// large source file would otherwise evict the task description and the agent
+/// would start answering questions instead of editing code.
+const MAX_TOOL_OUTPUT_CHARS: usize = 6_000;
+
+/// Truncate a tool result keeping the head and the tail, with a clear marker.
+fn truncate_tool_output(tool: &str, output: &str) -> String {
+    if output.chars().count() <= MAX_TOOL_OUTPUT_CHARS {
+        return output.to_string();
+    }
+    let keep = MAX_TOOL_OUTPUT_CHARS / 2;
+    let head: String = output.chars().take(keep).collect();
+    let tail: String = output
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    let omitted = output.chars().count() - head.chars().count() - tail.chars().count();
+    format!(
+        "{head}\n\n[... {omitted} characters omitted from {tool} output; \
+read a specific range or use grep to see more ...]\n\n{tail}"
+    )
 }
 
 /// Convert literal escape sequences (`\n`, `\t`, `\"`) into real characters.
@@ -1554,5 +1591,26 @@ mod normalization_tests {
         assert_eq!(parsed[0]["tool"], "write_file");
         assert_eq!(parsed[0]["id"], "call_1");
         assert_eq!(parsed[0]["arguments"]["path"], "a.rs");
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::*;
+
+    #[test]
+    fn short_output_is_untouched() {
+        let out = "hello world";
+        assert_eq!(truncate_tool_output("read_file", out), out);
+    }
+
+    #[test]
+    fn long_output_keeps_head_and_tail() {
+        let out: String = "a".repeat(20_000);
+        let truncated = truncate_tool_output("read_file", &out);
+        assert!(truncated.chars().count() < 20_000);
+        assert!(truncated.contains("characters omitted from read_file output"));
+        assert!(truncated.starts_with("aaaa"));
+        assert!(truncated.ends_with("aaaa"));
     }
 }

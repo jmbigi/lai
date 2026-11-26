@@ -131,3 +131,16 @@ para ciclos de agente en este hardware. Queda excluido de la comparativa.
    (sin fallback) para aislar el efecto del *nudge*.
 3. Añadir tareas multi-archivo (refactor con tests existentes) para medir
    comprensión de repositorio, no solo generación de un archivo.
+
+---
+
+## SWE-bench Verified
+
+Hay un harness incremental en [`swebench/`](swebench/README.md) para ejecutar el
+benchmark oficial por etapas (descargar → preparar → ejecutar → evaluar).
+
+Estado: **pipeline validado de punta a punta con 1 instancia**
+(`astropy__astropy-12907`, `qwen3:8b`, parche generado en 615 s). Falta
+`evaluate.py` para puntuar, y una corrida piloto de 10–20 instancias. **No hay
+todavía resultados representativos**: cualquier cifra de esta sección sería
+prematura.
