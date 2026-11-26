@@ -131,7 +131,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | Regla | Estado | Evidencia / observación |
 |---|---|---|
 | 1–3. Reglas externas | ✅ | `AGENTS.md` resume el ruleset y enlaza las fuentes. |
-| 4. Salida de LAI con LLM local | ✅ | `llm.rs` implementa `is_local_url()` (loopback, rangos privados, `.local`) y `LlmClient::check_endpoint()` aborta antes de cualquier request si el endpoint no es local, salvo `--allow-remote`. Cubierto por 5 tests unitarios (2026-11-26). |
+| 4. Salida de LAI con LLM local | ✅ | `llm.rs` implementa `is_local_url()` (loopback, rangos privados, `.local`, alias `host.docker.internal`/`gateway.docker.internal` de Docker) y `LlmClient::check_endpoint()` aborta antes de cualquier request si el endpoint no es local, salvo `--allow-remote`. Cubierto por 6 tests unitarios (2026-11-26). Los alias de Docker se aceptan porque resuelven a la propia máquina: son la vía para llegar a un Ollama local desde un contenedor. |
 | 5. Código propio de LAI con IA cloud | ✅ | Permitido explícitamente por esta revisión (2026-11-21). |
 | 6. Honestidad | ⚠️ En mejora | Documentos históricos contenían cifras desactualizadas (p. ej. `chess.py` 12,959 bytes vs. 8,706 reales). Se añadieron avisos de vigencia. |
 | 7. Exactitud | ⚠️ En mejora | `DOCS/quality_comparison.md` contenía métricas de ejemplo presentadas como resultados; se convirtió en plantilla sin resultados inventados. |

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -140,9 +141,14 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    tmp = STATE.with_suffix(".tmp")
+    # Nombre único: varias corridas en paralelo no deben chocar en el temporal.
+    tmp = STATE.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(STATE)
+    try:
+        tmp.replace(STATE)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def slug(value: str) -> str:
@@ -544,20 +550,9 @@ def build_eval_script(instance: dict) -> tuple[str, bool]:
 
 
 def docker_available() -> bool:
-    try:
-        result = subprocess.run(
-            ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f"❌ Docker no está disponible: {exc}", file=sys.stderr)
-        return False
-    if result.returncode != 0:
-        print(f"❌ Docker no está disponible: {(result.stderr or result.stdout).strip()[:300]}", file=sys.stderr)
-        return False
-    return True
+    import docker_env
+
+    return docker_env.check()
 
 
 def image_present(image: str) -> bool:
@@ -857,6 +852,12 @@ def parse_args() -> argparse.Namespace:
 
 REQUIRED_FIELDS = ("image", "eval_script", "log_parser", "FAIL_TO_PASS", "PASS_TO_PASS")
 
+#: Listas que deben existir pero pueden estar vacías. En el dataset oficial,
+#: varias instancias (p. ej. django__django-12209, sphinx-doc__sphinx-8595)
+#: traen `PASS_TO_PASS: []` y eso es legítimo: no hay tests de regresión
+#: declarados, sólo los que deben pasar a pasar.
+ALLOW_EMPTY_LIST_FIELDS = ("FAIL_TO_PASS", "PASS_TO_PASS")
+
 
 def validate_instances(instances: dict[str, dict], ids: list[str]) -> list[str]:
     """Campos imprescindibles para evaluar. Devuelve una lista de errores legibles.
@@ -867,7 +868,13 @@ def validate_instances(instances: dict[str, dict], ids: list[str]) -> list[str]:
     errors = []
     for iid in ids:
         instance = instances.get(iid) or {}
-        missing = [field for field in REQUIRED_FIELDS if not instance.get(field)]
+        missing = []
+        for field in REQUIRED_FIELDS:
+            value = instance.get(field)
+            if value is None or value == "":
+                missing.append(field)
+            elif isinstance(value, list) and not value and field not in ALLOW_EMPTY_LIST_FIELDS:
+                missing.append(field)
         if missing:
             errors.append(f"{iid}: faltan {', '.join(missing)}")
     return errors

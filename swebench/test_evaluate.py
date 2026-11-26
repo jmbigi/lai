@@ -187,5 +187,37 @@ class LogEvaluationTests(unittest.TestCase):
         self.assertNotIn("/", evaluate.slug("a/b"))
 
 
+class ValidationTests(unittest.TestCase):
+    def test_empty_pass_to_pass_is_valid(self):
+        """El dataset oficial trae PASS_TO_PASS vacío en algunas instancias."""
+        instances = {
+            "demo__demo-1": {
+                "image": "img:1",
+                "eval_script": "echo hi",
+                "log_parser": "parse_log_pytest",
+                "FAIL_TO_PASS": ["tests/test_a.py::test_a"],
+                "PASS_TO_PASS": [],
+            }
+        }
+        self.assertEqual(evaluate.validate_instances(instances, ["demo__demo-1"]), [])
+
+    def test_missing_eval_script_is_reported(self):
+        instances = {
+            "demo__demo-1": {
+                "image": "img:1",
+                "log_parser": "parse_log_pytest",
+                "FAIL_TO_PASS": ["a"],
+                "PASS_TO_PASS": ["b"],
+            }
+        }
+        errors = evaluate.validate_instances(instances, ["demo__demo-1"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("eval_script", errors[0])
+
+    def test_missing_instance_is_reported(self):
+        errors = evaluate.validate_instances({}, ["ghost__ghost-1"])
+        self.assertIn("ghost__ghost-1", errors[0])
+
+
 if __name__ == "__main__":
     unittest.main()

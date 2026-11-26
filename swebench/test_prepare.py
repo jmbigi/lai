@@ -80,6 +80,33 @@ class StatePersistenceTests(unittest.TestCase):
             self.assertEqual(data["instances"]["a"]["status"], "ready")
             self.assertIsNotNone(data["updated_at"])
 
+    def test_save_state_leaves_no_temporary_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            with mock.patch.object(prepare, "STATE", state_path):
+                prepare.save_state({"instances": {"a": {"status": "ready"}}})
+            leftovers = [p.name for p in Path(tmp).iterdir() if p.name != "state.json"]
+            self.assertEqual(leftovers, [])
+
+    def test_concurrent_saves_use_unique_temporaries(self):
+        """Dos `prepare.py` en paralelo chocaban en `state.tmp` (Windows)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            seen = []
+            real_write_text = Path.write_text
+
+            def spy(self, *args, **kwargs):
+                seen.append(self.name)
+                return real_write_text(self, *args, **kwargs)
+
+            with mock.patch.object(prepare, "STATE", state_path):
+                with mock.patch.object(Path, "write_text", spy):
+                    prepare.save_state({"instances": {}})
+                    prepare.save_state({"instances": {}})
+            self.assertEqual(len(seen), 2)
+            self.assertNotEqual(seen[0], seen[1])
+            self.assertTrue(all(name.endswith(".tmp") for name in seen))
+
     def test_load_state_tolerates_corrupt_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "state.json"

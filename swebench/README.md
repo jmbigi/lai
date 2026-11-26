@@ -32,19 +32,39 @@ swebench/
 ├── build_lai_for_swebench.sh    # 2b. binario compatible (glibc 2.35)
 ├── run_eval.py                  # 3. agente en contenedor → data/predictions/*.jsonl
 ├── evaluate.py                  # 4. tests oficiales → data/evaluation/<run>/report.json
+├── make_oracle_predictions.py   # utilidad: predicciones con el parche oficial (validar el evaluador)
+├── docker_env.py                # diagnóstico de Docker compartido (versión, pistas)
 ├── test_evaluate.py             # tests offline: parsers y graduación
 ├── test_prepare.py              # tests offline: estados de imagen y escritura atómica
 ├── test_run_eval.py             # tests offline: clasificación y preflight
 ├── test_harness_offline.py      # tests offline: dataset simulado de punta a punta
+├── test_docker_env.py           # tests offline: diagnóstico de Docker
 ├── bin/                         # binario compilado (ignorado por git)
 └── data/                        # instancias, estado, logs, predicciones (ignorado)
 ```
 
+## Antes de empezar: requisitos de Docker
+
+`docker_env.py` comprueba el motor y, si falla, dice **por qué** en vez de dejar
+que las etapas se cuelguen. Vale la pena leer esto antes de culpar al harness:
+
+| Síntoma | Causa | Solución |
+|---------|-------|----------|
+| El CLI tarda 30–60 s en cada llamada y acaba en timeout | Docker Desktop antiguo frente a WSL reciente (caso real: 4.22 con WSL 3.0.5) | `winget upgrade --id Docker.DockerDesktop --include-unknown` |
+| `docker info` no responde pero el pipe existe | El motor no terminó de arrancar | Esperar, o `wsl --shutdown` y reabrir Docker Desktop |
+| Docker Desktop no arranca: `invalid character '\ufeff'` | `settings.json` guardado con BOM por PowerShell | Reescibir el JSON sin BOM (`encoding="utf-8"`, no `utf-8-sig`) |
+| `127.0.0.1:11434` no responde desde el contenedor | El loopback del contenedor no es el del host | Usar `http://host.docker.internal:11434/v1` |
+
+El harness traduce el loopback automáticamente para el agente, pero el
+*preflight* te avisa igualmente, porque es un error de configuración habitual.
+
 ### Etapa 1 — Descargar
 
 ```bash
+python3 swebench/fetch_dataset.py                    # 500 instancias
 python3 swebench/fetch_dataset.py --limit 10
 python3 swebench/fetch_dataset.py --repos django sympy   # filtrar por repo
+python3 swebench/fetch_dataset.py --via api          # sin instalar 'datasets'
 ```
 
 Usa el dataset oficial **`SWE-bench/SWE-bench_Verified`** (no
@@ -52,8 +72,34 @@ Usa el dataset oficial **`SWE-bench/SWE-bench_Verified`** (no
 `test_patch`, `FAIL_TO_PASS`, `PASS_TO_PASS`, los commits base **y los campos
 que necesita la evaluación**: `image`, `eval_script`, `log_parser`, `eval_type`.
 
+La descarga tiene dos vías y **ninguna requiere instalar nada**:
+
+| `--via` | Qué usa | Cuándo |
+|---------|---------|--------|
+| `auto` (defecto) | `datasets` si está instalado, si no la API | uso normal |
+| `api` | sólo stdlib (`urllib`), pagina de 100 en 100 | entorno limpio |
+| `datasets` | `pip install datasets` | si ya lo tienes |
+
 > Si tienes datos de una descarga antigua, `evaluate.py` no puede usarlos.
 > Vuelve a descargar con `--force`.
+
+### Etapa 1b — Validar el evaluador sin agente
+
+Antes de gastar horas de CPU, comprueba que `evaluate.py` sabe graduar:
+
+```bash
+python3 swebench/make_oracle_predictions.py --limit 2
+python3 swebench/evaluate.py --predictions swebench/data/predictions/oracle.jsonl
+```
+
+Genera predicciones con el **parche oficial** del dataset. Si el evaluador es
+correcto, todas salen `resolved`. Si sale `resolved: 0`, el fallo está en
+`evaluate.py` y no en el modelo: eso ahorra una corrida completa.
+
+**Ejecutado el 2026-11-26 con 5 instancias, una por parser oficial: 5/5
+resueltas, 0 errores de infraestructura.** Detalle de F2P/P2P por instancia en
+`DOCS/CAMBIOS_2026-11-26_DOCKER.md`. Ojo: eso valida el evaluador, no al agente;
+el parche lo escribió una persona.
 
 ### Etapa 2 — Preparar entornos
 
@@ -77,14 +123,30 @@ PLATFORM=linux/amd64 ./swebench/build_lai_for_swebench.sh   # forzar plataforma
 **Problema resuelto:** el binario del host exige glibc 2.39; las imágenes de
 SWE-bench son Ubuntu 22.04 (glibc 2.35) y fallaban con
 `GLIBC_2.39 not found`. El script compila lai dentro de `ubuntu:22.04` con
-`--locked` y deja el binario en `swebench/bin/lai`.
+`--locked` y deja el binario en `swebench/bin/lai`. Verificado: el binario
+resultante imprime `lai 0.1.0` dentro de la imagen de django y alcanza
+`host.docker.internal:11434`.
+
+> **Recompila siempre después de tocar `lai_rust`.** El harness no puede saber si
+> `swebench/bin/lai` está desactualizado. Un binario viejo falla de formas que
+> parecen errores del modelo (por ejemplo, rechazando el endpoint del contenedor
+> por la guarda de la Regla 4).
+>
+> Los artefactos de compilación se guardan en el volumen de caché
+> (`~/.cache/lai-swebench-cargo/target`): la primera compilación tarda ~25 min y
+> las siguientes reaprovechan las dependencias.
 
 ### Etapa 3 — Ejecutar el agente
 
 ```bash
+./swebench/run_pilot.sh                                     # piloto de 5 instancias
+MODEL=qwen2.5-coder:3b ./swebench/run_pilot.sh              # otro modelo
 python3 swebench/run_eval.py --limit 5 --model qwen3-coder-opt:latest
 python3 swebench/run_eval.py --instance astropy__astropy-12907 --max-iterations 8
 ```
+
+`run_pilot.sh` ejecuta las 5 instancias del piloto (una por cada parser oficial)
+con `--keep-going`, de modo que un fallo de infraestructura no detiene el resto.
 
 Arranca la imagen de la instancia, ejecuta `lai auto` dentro de `/testbed` con
 el enunciado del issue y captura `git diff` como predicción en formato oficial
@@ -204,18 +266,21 @@ para que no desplace la tarea.
 
 ## Pendientes (en orden)
 
-1. **Corrida piloto de 10–20 instancias** con `qwen3-coder-opt` para estimar
-   tasa de resolución y coste temporal real. Requiere un equipo con Docker.
-2. **Contexto del modelo**: medido ya el efecto en throughput (ver arriba): no
+1. **Corrida piloto de 5 instancias** (django, sphinx, sympy, scikit-learn,
+   pytest: uno por cada parser oficial) con `qwen2.5-coder:3b` o el modelo que
+   elijas. Docker ya funciona en este equipo.
+2. **Ampliar a 10–20 instancias** si el piloto termina sin fallos de
+   infraestructura, para estimar tasa de resolución con algo más de muestra.
+3. **Contexto del modelo**: medido ya el efecto en throughput (ver arriba): no
    hay ganancia entre 16384 y 32768. Falta medirlo en una corrida de agente real
    con repos grandes, que es donde el contexto se agota de verdad.
-3. **Publicar la tabla** de resultados en `BENCHMARKS.md`, con la misma
+4. **Publicar la tabla** de resultados en `BENCHMARKS.md`, con la misma
    honestidad que el resto: muestra pequeña, hardware limitado, sin comparación
    directa con cifras frontier.
 
-> El punto 2 está parcialmente cerrado (medición de throughput hecha). Los puntos
-> 1 y 3 siguen bloqueados por la falta de Docker. **No hay cifras de SWE-bench
-> que publicar.**
+> El punto 3 está parcialmente cerrado (medición de throughput hecha). Los
+> puntos 1, 2 y 4 dependen de terminar el piloto. **Todavía no hay cifras de
+> SWE-bench que publicar.**
 
 ---
 

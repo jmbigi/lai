@@ -165,7 +165,7 @@ Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
 | `cargo clippy --all-targets` | 0 warnings, 0 errores |
 | `cargo fmt --check` | limpio |
 | `python -m pytest tests -q` (Python legado) | 113 passed, 9 skipped |
-| `python -m unittest swebench.test_*` | 75/75 pasan |
+| `python -m unittest swebench.test_*` | 88/88 pasan |
 | `python scripts/check_docs.py` | 0 fallos |
 
 | Componente | Valor |
@@ -173,7 +173,9 @@ Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
 | Subcomandos del CLI | 19 (`chat`, `code`, `status`, `auto`, `repo-map`, `baseline`, `verify`, `diagnose`, `repair`, `checkpoint`, `memory`, `plan`, `metrics`, `bench`, `init`, `doctor`, `tui`, `mcp`, `bench-swe`) |
 | Herramientas del `ToolRegistry` | 13 (`read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`, `git_commit`, `git_status`, `git_diff`) |
 | Módulos | ver `lai_rust/src/lib.rs` y el árbol de `AGENTS.md` |
-| Harness SWE-bench | etapas 1–4 implementadas, validado offline; **piloto pendiente** (sin Docker) |
+| Docker | Docker Desktop 4.100.1 (servidor 29.9.3), funcionando; `docker version` responde en ~1 s |
+| Dataset SWE-bench | 500 instancias de `SWE-bench_Verified` descargadas con `--via api`, sin dependencias |
+| Harness SWE-bench | etapas 1–4 implementadas y validadas offline; **piloto de 5 instancias en curso** |
 
 > El CLI en Rust **no** incluye `serve`, `review`, `fix`, `search` ni `project`:
 > esas rutas siguen en el CLI legado en Python. No asumir paridad.

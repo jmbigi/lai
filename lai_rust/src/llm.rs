@@ -9,9 +9,14 @@ use std::collections::HashMap;
 /// Regla 4: comprueba si una URL apunta a un endpoint local.
 ///
 /// Se considera local cualquier host que sea loopback, una dirección IP
-/// privada, `localhost`, un nombre `.local`/`.localhost`, o el comodín de
+/// privada, `localhost`, un nombre `.local`/`.localhost`, el alias del host de
+/// Docker (`host.docker.internal`/`gateway.docker.internal`), o el comodín de
 /// escucha `0.0.0.0`. Cualquier otra cosa (incluidos nombres DNS públicos)
 /// requiere consentimiento explícito vía `--allow-remote`.
+///
+/// Los alias de Docker se aceptan porque resuelven a la propia máquina: son
+/// la forma de llegar a un Ollama local desde dentro de un contenedor, no una
+/// puerta a la nube.
 pub fn is_local_url(url: &str) -> bool {
     let rest = match url.split_once("://") {
         Some((_, rest)) => rest,
@@ -46,6 +51,11 @@ pub fn is_local_url(url: &str) -> bool {
     }
 
     if host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "::" {
+        return true;
+    }
+    // Alias del host en Docker Desktop / Docker Engine: resuelven a la máquina
+    // local, así que siguen siendo inferencia local (Regla 0/4).
+    if host == "host.docker.internal" || host == "gateway.docker.internal" {
         return true;
     }
     if host.ends_with(".localhost") || host.ends_with(".local") {
@@ -405,6 +415,17 @@ mod tests {
             "http://0.0.0.0:8082/v1",
             "https://LOCALHOST:1234/v1",
             "http://localhost.:11434/v1",
+        ] {
+            assert!(is_local_url(url), "deberia ser local: {url}");
+        }
+    }
+
+    #[test]
+    fn accepts_docker_host_aliases() {
+        for url in [
+            "http://host.docker.internal:11434/v1",
+            "http://gateway.docker.internal:11434/v1",
+            "http://HOST.DOCKER.INTERNAL:11434/v1",
         ] {
             assert!(is_local_url(url), "deberia ser local: {url}");
         }

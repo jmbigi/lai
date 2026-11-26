@@ -80,6 +80,32 @@ class OllamaRootTests(unittest.TestCase):
         self.assertEqual(run_eval.ollama_root("http://localhost:11434"), "http://localhost:11434")
 
 
+class ContainerBaseUrlTests(unittest.TestCase):
+    def test_loopback_becomes_host_docker_internal(self):
+        self.assertEqual(
+            run_eval.container_base_url("http://127.0.0.1:11434/v1"),
+            "http://host.docker.internal:11434/v1",
+        )
+
+    def test_localhost_and_ipv6(self):
+        self.assertEqual(
+            run_eval.container_base_url("http://localhost:11434/v1"),
+            "http://host.docker.internal:11434/v1",
+        )
+        self.assertEqual(
+            run_eval.container_base_url("http://[::1]:11434/v1"),
+            "http://host.docker.internal:11434/v1",
+        )
+
+    def test_non_loopback_is_untouched(self):
+        for url in ("http://host.docker.internal:11434/v1", "http://192.168.1.50:11434/v1"):
+            self.assertEqual(run_eval.container_base_url(url), url)
+
+    def test_warning_only_for_loopback(self):
+        self.assertIsNotNone(run_eval.container_base_url_warning("http://127.0.0.1:11434/v1"))
+        self.assertIsNone(run_eval.container_base_url_warning("http://host.docker.internal:11434/v1"))
+
+
 class ExtractPatchTests(unittest.TestCase):
     def test_extracts_between_markers(self):
         stdout = f"noise\n{B}\ndiff --git a/x b/x\n+hello\n{E}\nmore"
@@ -137,6 +163,26 @@ class ClassifyResultTests(unittest.TestCase):
         stdout = f"{B}\ndiff --git a/x b/x\n+x\n{E}\n{run_eval.AGENT_RC}=3\n"
         status, _ = run_eval.classify_result(stdout, "", 0)
         self.assertEqual(status, "patched")
+
+    def test_binary_copy_failure_is_infra(self):
+        status, reason = run_eval.classify_result("", "", 91)
+        self.assertEqual(status, "infra_error")
+        self.assertIn("copiar el binario", reason)
+
+    def test_missing_testbed_is_infra(self):
+        status, reason = run_eval.classify_result("", "", 90)
+        self.assertEqual(status, "infra_error")
+        self.assertIn("/testbed", reason)
+
+    def test_rule4_rejection_is_infra_not_no_patch(self):
+        stdout = (
+            "Error: Regla 4: el endpoint 'http://host.docker.internal:11434/v1' "
+            "no es local. lai solo usa modelos locales por defecto.\n"
+            f"{B}\n{E}\n{run_eval.AGENT_RC}=0\n"
+        )
+        status, reason = run_eval.classify_result(stdout, "", 0)
+        self.assertEqual(status, "infra_error")
+        self.assertIn("Regla 4", reason)
 
 
 class PreflightTests(unittest.TestCase):

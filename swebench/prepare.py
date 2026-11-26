@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,14 +49,11 @@ def run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
 
 def docker_available() -> bool:
     try:
-        result = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=30)
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f"❌ Docker no está disponible: {exc}", file=sys.stderr)
-        return False
-    if result.returncode != 0:
-        print(f"❌ Docker no está disponible: {(result.stderr or result.stdout).strip()[:300]}", file=sys.stderr)
-        return False
-    return True
+        import docker_env
+    except ImportError:  # ejecutado fuera de swebench/
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import docker_env
+    return docker_env.check()
 
 
 def image_state(name: str) -> bool | None:
@@ -108,9 +107,16 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    tmp = STATE.with_suffix(".tmp")
+    # Nombre único: dos `prepare.py` en paralelo sobre la misma carpeta de datos
+    # chocaban en `state.tmp` y uno de los dos moría con PermissionError en
+    # Windows (observado el 2026-11-26).
+    tmp = STATE.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(STATE)
+    try:
+        tmp.replace(STATE)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def main() -> int:

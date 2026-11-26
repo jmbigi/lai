@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -83,15 +84,24 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    tmp = STATE.with_suffix(".tmp")
+    # Nombre único: varias corridas en paralelo no deben chocar en el temporal.
+    tmp = STATE.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(STATE)
+    try:
+        tmp.replace(STATE)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def save_meta(path: Path, meta: dict) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.replace(path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def slug(model: str) -> str:
@@ -131,15 +141,9 @@ def run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
 
 
 def docker_available() -> bool:
-    try:
-        result = run(["docker", "info", "--format", "{{.ServerVersion}}"])
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        print(f"❌ Docker no está disponible: {exc}", file=sys.stderr)
-        return False
-    if result.returncode != 0:
-        print(f"❌ Docker no está disponible: {(result.stderr or result.stdout).strip()[:300]}", file=sys.stderr)
-        return False
-    return True
+    import docker_env
+
+    return docker_env.check()
 
 
 def image_present(image: str) -> bool:
@@ -171,6 +175,45 @@ def http_json(url: str, payload: dict | None = None, timeout: int = 5) -> dict |
         return None
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def container_base_url_warning(base_url: str) -> str | None:
+    """Aviso informativo si el base-url se va a traducir para el contenedor.
+
+    Medido el 2026-11-26 en Docker Desktop (Windows): con `--network host` el
+    contenedor NO ve el loopback del host, así que `127.0.0.1:11434` falla.
+    `host.docker.internal` sí resuelve en ambos modos de red. La traducción es
+    automática; el aviso solo deja constancia para que el log sea interpretable.
+    """
+    host = (urllib.parse.urlparse(base_url).hostname or "").lower()
+    if host in LOOPBACK_HOSTS:
+        return (
+            f"ℹ base-url {host}: dentro del contenedor es el propio contenedor, "
+            "así que se traduce automáticamente a host.docker.internal."
+        )
+    return None
+
+
+def container_base_url(base_url: str) -> str:
+    """Traduce el base-url para usarlo DENTRO del contenedor.
+
+    Medido el 2026-11-26 en Docker Desktop (Windows): con `--network host` el
+    contenedor no ve el loopback del host, así que `127.0.0.1:11434` no llega a
+    Ollama; `host.docker.internal` sí resuelve en red host y en bridge. En Linux
+    nativo `--network host` sí comparte el loopback, y esta traducción también
+    funciona porque Docker añade la entrada.
+    """
+    parsed = urllib.parse.urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    if host not in LOOPBACK_HOSTS:
+        return base_url
+    netloc = "host.docker.internal"
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    return urllib.parse.urlunparse(parsed._replace(netloc=netloc))
+
+
 def preflight_ollama(base_url: str, model: str) -> bool:
     host = (urllib.parse.urlparse(base_url).hostname or "").lower()
     if host not in LOCAL_HOSTS:
@@ -179,6 +222,9 @@ def preflight_ollama(base_url: str, model: str) -> bool:
             "continúa bajo tu responsabilidad.",
             file=sys.stderr,
         )
+    container_warning = container_base_url_warning(base_url)
+    if container_warning:
+        print(container_warning, file=sys.stderr)
 
     models = http_json(base_url.rstrip("/") + "/models")
     if models is None:
@@ -193,7 +239,9 @@ def preflight_ollama(base_url: str, model: str) -> bool:
         print(f"   Prueba: ollama pull {model}", file=sys.stderr)
         return False
 
-    # Contexto: Ollama usa 4096 por defecto si el modelo no está cargado.
+    # Contexto: si el modelo no está cargado no se puede leer de /api/ps, así
+    # que se consulta /api/show. No se asume ningún valor por defecto: el valor
+    # real depende de la versión de Ollama y del propio modelo.
     root = ollama_root(base_url)
     ps = http_json(root + "/api/ps") or {}
     context = None
@@ -210,9 +258,9 @@ def preflight_ollama(base_url: str, model: str) -> bool:
 
     if context is None:
         print(
-            "⚠ No se pudo leer el contexto de Ollama. Si no lo has cambiado, usa 4096 tokens "
-            "y el agente puede perder el hilo.\n"
-            "   Recomendado para SWE-bench: OLLAMA_CONTEXT_LENGTH=16384 (reinicia Ollama).",
+            "ℹ No se pudo determinar el contexto de Ollama (el modelo no está cargado y "
+            "/api/show no lo declara).\n"
+            "   No se asume ningún valor: compruébalo con `ollama ps` durante una corrida.",
             file=sys.stderr,
         )
     elif context < 8192:
@@ -276,6 +324,15 @@ def classify_result(stdout: str, stderr: str, rc: int) -> tuple[str, str]:
 
     if rc == 124:
         return "timeout", ""
+    if rc == 91:
+        return "infra_error", "no se pudo copiar el binario lai dentro del contenedor"
+    if rc == 90:
+        return "infra_error", "/testbed no existe en la imagen"
+    # La guarda de la Regla 4 aborta antes de generar ningún parche. Si aparece
+    # aquí es que el binario no acepta el endpoint del contenedor: error de
+    # configuración, no del modelo.
+    if "regla 4" in combined and "no es local" in combined:
+        return "infra_error", "el binario lai rechazó el endpoint por la guarda de la Regla 4"
     # Los fallos de enlazado dinámico suelen salir con 127, así que se comprueban
     # antes que el mensaje genérico de rc.
     if not markers_present and (
@@ -315,9 +372,12 @@ def run_instance(
 
     inner = (
         "set -uo pipefail; "
+        # El binario llega por bind mount; en Windows el bit de ejecución no
+        # viaja con el archivo, así que se copia y se marca explícitamente.
+        "cp /tmp/lai_bin/lai /usr/local/bin/lai && chmod +x /usr/local/bin/lai || exit 91; "
         "cd /testbed || exit 90; "
         "git checkout -- . 2>/dev/null || true; git clean -fdq 2>/dev/null || true; "
-        f"lai --model {shlex.quote(model)} --base-url {shlex.quote(base_url)} "
+        f"lai --model {shlex.quote(model)} --base-url {shlex.quote(container_base_url(base_url))} "
         'auto "$(cat /tmp/lai_problem.txt)" '
         f"--max-iterations {int(max_iter)} 2>&1; "
         "LAI_RC=$?; "
@@ -334,9 +394,13 @@ def run_instance(
         "--network",
         network,
         "--mount",
-        f"type=bind,source={LAI_BIN.resolve()},target=/usr/local/bin/lai,readonly",
+        # as_posix(): Docker Desktop no acepta bien las barras invertidas en
+        # --mount type=bind,source=...
+        # El destino es un ARCHIVO dentro de /tmp: si se monta sobre el
+        # directorio, `cp` falla con "Not a directory".
+        f"type=bind,source={LAI_BIN.resolve().as_posix()},target=/tmp/lai_bin/lai,readonly",
         "--mount",
-        f"type=bind,source={problem_file.resolve()},target=/tmp/lai_problem.txt,readonly",
+        f"type=bind,source={problem_file.resolve().as_posix()},target=/tmp/lai_problem.txt,readonly",
         image,
         "bash",
         "-lc",
@@ -561,14 +625,24 @@ def main() -> int:
             counts[status] = counts.get(status, 0) + 1
 
     print()
-    print("Predicciones:")
+    print("Resumen de esta corrida:")
     for status, count in sorted(counts.items()):
         print(f"  {status:11s} {count}")
-    print(f"  archivo: {pred_path}")
     print(f"  metadatos: {meta_path}")
-    print()
-    print("Siguiente etapa: python3 swebench/evaluate.py --predictions", pred_path)
-    return 0
+
+    written = sum(count for status, count in counts.items() if status != "infra_error")
+    if written:
+        print(f"  predicciones escritas: {written}  ({pred_path})")
+        print()
+        print("Siguiente etapa: python3 swebench/evaluate.py --predictions", pred_path)
+    else:
+        print()
+        print(
+            "No se escribió ninguna predicción: todos los intentos fallaron por "
+            "infraestructura. Revisa los logs antes de gastar otra corrida.",
+            file=sys.stderr,
+        )
+    return 1 if infra_failed else 0
 
 
 if __name__ == "__main__":
