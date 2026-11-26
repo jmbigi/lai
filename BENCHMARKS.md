@@ -306,31 +306,48 @@ lo correcto: un parche que rompe la importación del paquete no arregla nada.
 
 | Instancia | Parser | Agente | Parche | Evaluación | Resultado |
 |-----------|--------|-------:|-------:|------------|-----------|
-| `django__django-12209` | `parse_log_django` | 1048.7 s | 81 236 B | 34.4 s | no resuelta (rompió el paquete) |
+| `django__django-12209` | `parse_log_django` | 1048.7 s | 81 236 B | 8.9 s | no resuelta (rompió el paquete) |
 | `sphinx-doc__sphinx-8595` | `pytest_v2` | 1505.5 s | 0 B | 0 s | sin parche (timeout) |
 | `sympy__sympy-20916` | `parse_log_sympy` | 1501.8 s | 0 B | 0 s | sin parche (timeout) |
-| `scikit-learn__scikit-learn-14141` | `pytest_v2` | — | — | — | en curso |
-| `pytest-dev__pytest-5809` | `parse_log_pytest` | — | — | — | en curso |
+| `scikit-learn__scikit-learn-14141` | `pytest_v2` | 1500.9 s | 0 B | 0 s | sin parche (timeout) |
+| `pytest-dev__pytest-5809` | `parse_log_pytest` | 1500.7 s | 0 B | 0 s | sin parche (timeout) |
 
 Contexto real de Ollama en todas las corridas: **32768** tokens (leído de
 `/api/ps` después de cada corrida, no asumido). Hardware: i7-10510U, 15.8 GB,
 sin GPU dedicada, `size_vram: 0` (100 % CPU).
 
-**Lo que esta tabla sí demuestra:** el harness funciona de punta a punta con
-cuatro parsers distintos y separa correctamente el fallo del modelo
-(`django`, parche que rompe la importación) del fallo de tiempo (`sphinx`,
-`sympy`, sin parche).
+**Resumen final del piloto (5/5):**
 
-**Lo que no demuestra:** nada sobre la calidad de `qwen2.5-coder:7b`. Tres de
+| Métrica | Valor |
+|---------|-------|
+| Instancias evaluables | 1/5 (django) |
+| Resueltas | 0/1 (0 %) |
+| Tiempo total agente | 7057.6 s (1 h 57 min) |
+| Tiempo medio por instancia | 1411.5 s |
+| Errores de infraestructura | 0 |
+
+**Lo que esta tabla sí demuestra:** el harness funciona de punta a punta con
+los cinco parsers oficiales y separa correctamente el fallo del modelo
+(`django`, parche que rompe la importación) de los fallos por tiempo
+(`sphinx`, `sympy`, `scikit-learn`, `pytest`, sin parche).
+
+**Lo que no demuestra:** nada sobre la calidad de `qwen2.5-coder:7b`. Cuatro de
 cinco instancias no llegaron a producir un parche evaluable, y el único parche
 producido destruyó un archivo de 1911 líneas. Con esta muestra no se puede
 estimar una tasa de resolución.
 
 **Hallazgo operativo medido:** con 7B en CPU y contexto de 32768, 1500 s no
 alcanzan para repos grandes. `django` hizo 10 iteraciones en 1048 s, pero
-`sphinx` y `sympy` consumieron los 1500 s en 4 y 2 iteraciones respectivamente.
-El coste por iteración depende de cuánto contexto se lee, no del número de
-iteraciones.
+`sphinx`, `sympy`, `scikit-learn` y `pytest` consumieron los 1500 s en 4, 2, 1
+y 1 iteraciones respectivamente. El coste por iteración depende de cuánto
+contexto se lee, no del número de iteraciones.
+
+**Limitación crítica:** los 4 timeouts fueron causados por un bug ya corregido
+(commit `56d49c2`): `apply_patch` devolvía `Ok("Patch failed...")` en vez de
+`Err`, así que el bucle imprimía `✓ Done` y el modelo repetía la misma llamada
+idéntica hasta agotar el tiempo. El binario del piloto **no incluía** esa
+corrección ni la detección de bucles ni la guarda de `write_file`. Para medir
+el modelo real hay que repetir el piloto tras recompilar.
 
 Metodología prevista (Regla 11): una variable a la vez, `OLLAMA_CONTEXT_LENGTH`
 fijado y documentado, lectura por `grep` + rangos, y separación explícita entre
