@@ -364,7 +364,36 @@ También se actualizó la guía de herramientas del prompt: `apply_patch` pasa a
 la vía recomendada para modificar archivos existentes, y se avisa explícitamente
 de que el código de ejemplo del issue **no** es la solución.
 
-## 18. Pendientes
+## 18. Dependencias declaradas y nunca usadas
+
+**ANTES:** `lai_rust/Cargo.toml` declaraba 26 crates que el código no importa
+nunca. Cada compilación del binario Linux (que se hace desde cero dentro de
+`ubuntu:22.04`) avisaba de ellos con `unused dependency`, y todos se descargaban
+y compilaban —o al menos se resolvían— sin aportar nada.
+
+La lista se obtuvo del propio compilador, no de una suposición: `cargo check`
+emite un aviso por cada dependencia declarada que ningún `extern crate`/`use`
+toca. Se contrastó además con un script que busca el identificador de cada crate
+en `src/` y `tests/` ignorando comentarios, y coincidió.
+
+**DESPUÉS:** se eliminaron `tree-sitter` y sus siete gramáticas (Python, Rust,
+JavaScript, TypeScript, Go, Java, más el paquete base), `blake3`, `indicatif`,
+`colored`, `dashmap`, `itertools`, `petgraph`, `serde_yaml`, `syn`, `quote`,
+`proc-macro2`, `nix`, `tokio-tungstenite`, `tungstenite`, `rustls-pemfile`,
+`webpki-roots`, `mime_guess`, `async-stream`, `tracing-subscriber` y `base64`.
+También los comentarios que agrupaban bloques ya vacíos («Tree-sitter for
+structural code analysis», «File hashing for incremental indexing», «Graph
+algorithms for planning»).
+
+Se conservaron a propósito `rustls`, `mime`, `percent-encoding` y `rand`: no
+aparecen en el código pero son plausibles como dependencias indirectas o de
+feature, y quitarlas no aportaba nada medible.
+
+`cargo check --all-targets` ya no emite ningún aviso `unused dependency`. Los 103
+tests siguen pasando y `clippy` sigue en 0 avisos, así que la limpieza no cambió
+comportamiento: solo quitó peso.
+
+## 19. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|
@@ -373,6 +402,7 @@ de que el código de ejemplo del issue **no** es la solución.
 | Primera corrida real del agente | ✅ 1 instancia, **no resuelta** |
 | Piloto de 5 instancias | 1/5 hecha; faltan 4 (~17 min cada una) |
 | Tabla representativa en `BENCHMARKS.md` | bloqueada hasta terminar el piloto |
+| Dependencias muertas | ✅ 26 eliminadas, 0 avisos |
 
 Con una sola instancia no se puede afirmar nada sobre la calidad del modelo
 (Regla 11). Lo que sí se puede afirmar: el agente destruyó un archivo de 1911

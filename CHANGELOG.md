@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Dependencias muertas eliminadas** (`lai_rust/Cargo.toml`): 26 crates declarados y nunca importados (tree-sitter y sus 7 gramáticas, `blake3`, `indicatif`, `colored`, `dashmap`, `itertools`, `petgraph`, `serde_yaml`, `syn`/`quote`/`proc-macro2`, `nix`, `tokio-tungstenite`, `tungstenite`, `rustls-pemfile`, `webpki-roots`, `mime_guess`, `async-stream`, `tracing-subscriber`, `base64`). `cargo check --all-targets` ya no emite avisos `unused dependency`; el árbol de dependencias y el tiempo de compilación se reducen sin tocar código.
 - **Guarda anti-destrucción en `write_file`** (`lai_rust/src/tools.rs`): si el archivo existe, tiene 40+ líneas y el contenido nuevo es menos del 25 % del original, la escritura se rechaza con un error que recomienda `apply_patch` o `allow_shrink: true`. Motivada por un caso real: el agente sustituyó las 1911 líneas de `django/db/models/base.py` por las 18 del ejemplo del issue. 5 tests Rust nuevos.
 - **Guía de herramientas actualizada** (`commands.rs`): `apply_patch` pasa a ser la vía recomendada para modificar archivos existentes; se avisa de que el código de ejemplo del issue no es la solución.
 - **swebench/summarize.py + test_summarize.py**: cruza los metadatos del agente con el informe de evaluación y emite la tabla markdown para `BENCHMARKS.md`. Lo no medido aparece como `—`; sin evaluación avisa en vez de mostrar un cero. Admite `--run-id` y `--md`. 15 tests offline.
