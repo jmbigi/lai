@@ -142,14 +142,19 @@ resultante imprime `lai 0.1.0` dentro de la imagen de django y alcanza
 ### Etapa 3 — Ejecutar el agente
 
 ```bash
-./swebench/run_pilot.sh                                     # piloto de 5 instancias
+./swebench/run_pilot.sh                                     # piloto de 5 instancias + evaluación
 MODEL=qwen2.5-coder:3b ./swebench/run_pilot.sh              # otro modelo
+SKIP_EVAL=1 ./swebench/run_pilot.sh                         # solo el agente
+RUN_ID=mi-run ./swebench/run_pilot.sh                       # fijar el id del informe
 python3 swebench/run_eval.py --limit 5 --model qwen3-coder-opt:latest
 python3 swebench/run_eval.py --instance astropy__astropy-12907 --max-iterations 8
 ```
 
 `run_pilot.sh` ejecuta las 5 instancias del piloto (una por cada parser oficial)
-con `--keep-going`, de modo que un fallo de infraestructura no detiene el resto.
+con `--keep-going` y `--force`, de modo que un fallo de infraestructura no
+detiene el resto y una repetición no se salta instancias ya hechas. Al terminar
+encadena `evaluate.py` y `summarize.py`, así que un solo comando produce la tabla
+lista para `BENCHMARKS.md`. Con `SKIP_EVAL=1` se queda solo en el agente.
 
 **Reejecutar una instancia.** `run_eval.py` salta las instancias que ya tienen
 predicción escrita para ese modelo, y muestra «No hay instancias pendientes para

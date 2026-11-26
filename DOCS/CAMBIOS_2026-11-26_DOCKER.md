@@ -393,7 +393,24 @@ feature, y quitarlas no aportaba nada medible.
 tests siguen pasando y `clippy` sigue en 0 avisos, así que la limpieza no cambió
 comportamiento: solo quitó peso.
 
-## 19. Pendientes
+## 19. `run_pilot.sh` encadena evaluación y resumen
+
+**ANTES:** el script lanzaba las 5 instancias y terminaba imprimiendo un mensaje
+recordatorio de que había que evaluar «a mano». Dos problemas:
+
+1. No usaba `--force`, así que relanzar el piloto se saltaba las instancias que
+   ya tenían predicción y el script parecía no hacer nada.
+2. El usuario tenía que copiar y pegar el comando de `evaluate.py` con el nombre
+   del archivo de predicciones correcto (que depende del slug del modelo) y
+   luego el de `summarize.py`.
+
+**DESPUÉS:** el script genera un `RUN_ID` con marca de tiempo, pasa `--force` a
+cada instancia y, al terminar, encadena `evaluate.py --run-id $RUN_ID --force` y
+`summarize.py --model $MODEL --run-id $RUN_ID`. Un solo comando produce la tabla
+lista para `BENCHMARKS.md`. `SKIP_EVAL=1` deja solo la fase de agente y
+`RUN_ID=...` fija el identificador del informe. Verificado con `bash -n`.
+
+## 20. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|
