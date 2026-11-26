@@ -1,5 +1,11 @@
 # Estado Actual del Proyecto lai — 2026-11-21
 
+> **Aviso de vigencia (2026-11-26).** Este documento describe el estado del CLI
+> **legado en Python** (`lai.py`) a fecha 2026-11-21. La implementación principal
+> es **Rust** (`lai_rust/`). Ver la sección *Estado actual (Rust)* al final para
+> los datos verificados de la implementación activa. Las cifras de tests y de
+> herramientas de aquí abajo corresponden a `lai.py` y **no** a `lai_rust/`.
+
 ## Resumen Ejecutivo
 
 **lai** (Local AI Code Assistant) es un CLI completo para revisar, reparar y mejorar código usando LLMs locales (Qwen3-8B via llama.cpp). Todo código generado por lai usa modelos locales (Regla 4); el código propio de lai puede generarse con IA cloud (Regla 5).
@@ -129,7 +135,8 @@ python3 lai.py review archivo.py --format sarif
 
 ## Versiones
 
-- lai: **0.0.2** (pyproject.toml single source)
+- lai (Rust, principal): **0.1.0** (`lai_rust/Cargo.toml`)
+- lai (Python, legado): **0.0.2** (`pyproject.toml`)
 - gateway-go: **3.1.0** (main.go log line)
 - OpenAPI: **3.0.0** (gateway-go/openapi.yaml)
 - llama.cpp: b12567 (build custom)
@@ -142,3 +149,28 @@ python3 lai.py review archivo.py --format sarif
 4. ~~`run_command`/`python_eval` usan `shell=True` (no sandbox)~~ ✅ **RESUELTO** (bubblewrap sandbox)
 5. `gateway.py`/`harness.py` legacy — no mantener
 6. Versiones divergentes: gateway 3.1.0 vs OpenAPI 3.0.0
+
+---
+
+## Estado actual (Rust) — verificado 2026-11-26
+
+Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo check` | OK, 4 avisos preexistentes en `main.rs` (variables sin usar) |
+| `cargo build --release` | OK (~6 min) |
+| `cargo test tools::tests` | 8/8 pasan |
+| `python -m unittest swebench.test_*` | 75/75 pasan |
+| `python scripts/check_docs.py` | 0 fallos |
+| `cargo fmt` / `cargo clippy` | **No instalados** en este toolchain (no ejecutados) |
+
+| Componente | Valor |
+|---|---|
+| Subcomandos del CLI | 19 (`chat`, `code`, `status`, `auto`, `repo-map`, `baseline`, `verify`, `diagnose`, `repair`, `checkpoint`, `memory`, `plan`, `metrics`, `bench`, `init`, `doctor`, `tui`, `mcp`, `bench-swe`) |
+| Herramientas del `ToolRegistry` | 13 (`read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`, `git_commit`, `git_status`, `git_diff`) |
+| Módulos | ver `lai_rust/src/lib.rs` y el árbol de `AGENTS.md` |
+| Harness SWE-bench | etapas 1–4 implementadas, validado offline; **piloto pendiente** (sin Docker) |
+
+> El CLI en Rust **no** incluye `serve`, `review`, `fix`, `search` ni `project`:
+> esas rutas siguen en el CLI legado en Python. No asumir paridad.

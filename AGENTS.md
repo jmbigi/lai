@@ -27,21 +27,40 @@ This file provides guidance for AI agents working on the lai codebase.
 
 ## Architecture (Rust)
 
+`lai_rust/src/` (module list taken from `lib.rs`, 2026-11-26):
+
 ```
 lai_rust/
 ├── Cargo.toml
 └── src/
-    ├── main.rs          # CLI entry point, command dispatch
-    ├── commands.rs      # All 25+ command implementations
-    ├── llm.rs           # LLM client (HTTP, streaming, tool calling)
-    ├── services.rs      # Service management (llama.cpp, gateway, ollama)
-    ├── tools.rs         # ToolRegistry with 50+ tools
-    ├── automode.rs      # AutoMode: Plan + ReAct + Reflection
-    ├── agents.rs        # Multi-agent orchestrator (critic, reviewer)
-    ├── session.rs       # Session management
-    ├── thinking.rs      # Thinking extraction/display
-    └── config.rs        # Configuration management
+    ├── main.rs              # clap CLI: 19 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
+    ├── commands.rs          # implementations of the CLI subcommands
+    ├── llm.rs               # HTTP client for llama.cpp / Ollama; Rule 4 local-only guard
+    ├── tools.rs             # ToolRegistry (13 tools) + JSON schemas
+    ├── context.rs           # project understanding (structure, docs, patterns, objectives)
+    ├── planner.rs           # DAG planner + SPEC.md generation
+    ├── change_engine.rs     # controlled changes, diff/patch, checkpoints, rollback
+    ├── diagnostic_engine.rs # failure localisation and root-cause classification
+    ├── repair_engine.rs     # automated repair with validation and rollback
+    ├── verification_engine.rs # multi-level verification, bounded verdicts
+    ├── baseline.rs          # baseline tracking and regression detection
+    ├── memory_store.rs      # 4-tier memory with provenance and invalidation
+    ├── policy.rs            # policy engine used by tools
+    ├── quality.rs           # quality checks
+    ├── repomap.rs           # repository symbol map
+    ├── services.rs          # local service management (llama.cpp, gateway, ollama)
+    ├── telemetry.rs         # local observability
+    ├── tui.rs               # terminal UI (diff viewer, file tree, chat, tool log)
+    ├── init_wizard.rs       # interactive local setup
+    ├── mcp_server.rs        # MCP (JSON-RPC 2.0) server exposing lai tools
+    ├── benchmark/           # benchmark framework + mandatory contracts
+    ├── orchestration/       # alternative orchestration engines (e.g. LangGraph adapter)
+    └── verification/        # formal verification adapters (Dafny, TLA+, neural)
 ```
+
+> The legacy Python CLI (`lai.py`) is **not** at parity with the Rust crate: it
+> has more subcommands (serve, review, fix, search…) but is in maintenance mode.
+> Do not assume a command exists in both.
 
 ## Key Rules (from DOCUMENTACION_REGLAS.md)
 
@@ -132,16 +151,17 @@ cargo install --path .
 
 ## Migration Notes (Python → Rust)
 
-The Rust port maintains full feature parity with Python:
+The Rust port is the primary implementation. Historical module correspondence
+(the Python modules were not ported 1:1; several Rust modules are new):
 
-| Python Module | Rust Module |
-|---------------|-------------|
-| `lai.py` (LAI class) | `llm.rs` (LlmClient), `main.rs` |
+| Python (legacy) | Rust equivalent |
+|-----------------|-----------------|
+| `lai.py` (LAI class) | `llm.rs` (client), `commands.rs`, `main.rs` |
 | `lai_tools.py` (ToolRegistry) | `tools.rs` |
-| `lai_automode.py` (AutoMode) | `automode.rs` |
-| `lai_agents.py` (Orchestrator) | `agents.rs` |
-| `session` management | `session.rs` |
-| `thinking` extraction | `thinking.rs` |
-| `config` management | `config.rs` |
+| `lai_automode.py` (AutoMode) | `planner.rs` + `change_engine.rs` + `verification_engine.rs` (deterministic loop) |
+| `lai_agents.py` (Orchestrator) | `orchestration/` (not at parity) |
+| session/state handling | `memory_store.rs`, `change_engine.rs` (checkpoints) |
+| thinking extraction | `llm.rs` / `telemetry.rs` |
+| config management | `init_wizard.rs`, `policy.rs` |
 
-All 25+ CLI commands ported. Gateway (Go) unchanged.
+Gateway (Go) unchanged.

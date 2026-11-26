@@ -95,7 +95,8 @@ def save_meta(path: Path, meta: dict) -> None:
 
 
 def slug(model: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9._-]+", "_", model).strip("_") or "model"
+    value = re.sub(r"[^a-zA-Z0-9._-]+", "_", model)
+    return value.strip("._-") or "model"
 
 
 def build_task(instance: dict) -> str:
@@ -245,6 +246,54 @@ def preflight(instances: list[dict], base_url: str, model: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def extract_patch(stdout: str) -> str:
+    """Devuelve el diff capturado entre los marcadores ("" si no hay marcadores).
+
+    Se usa el primer par de marcadores: si el agente (o un test) imprime los
+    marcadores otra vez, no se arrastra contenido de más.
+    """
+    start = stdout.find(DIFF_BEGIN)
+    if start == -1:
+        return ""
+    start += len(DIFF_BEGIN)
+    end = stdout.find(DIFF_END, start)
+    if end == -1:
+        return ""
+    return stdout[start:end].strip()
+
+
+def classify_result(stdout: str, stderr: str, rc: int) -> tuple[str, str]:
+    """Clasifica el resultado de una ejecución Docker.
+
+    Devuelve ``(estado, motivo)``. Un error de Docker/entorno NO debe convertirse
+    en un parche vacío: eso falsearía la tasa de resolución. Por eso se distingue
+    ``infra_error`` de ``no_patch`` y de ``timeout``.
+
+    Es una función pura para poder probarla sin Docker.
+    """
+    combined = (stdout + stderr).lower()
+    markers_present = DIFF_BEGIN in stdout and DIFF_END in stdout
+
+    if rc == 124:
+        return "timeout", ""
+    # Los fallos de enlazado dinámico suelen salir con 127, así que se comprueban
+    # antes que el mensaje genérico de rc.
+    if not markers_present and (
+        "error while loading shared libraries" in combined
+        or ("glibc" in combined and ("not found" in combined or "version" in combined))
+    ):
+        return "infra_error", "el binario lai requiere una glibc más nueva que la de la imagen"
+    if "lai: command not found" in (stdout + stderr) or "exec format error" in combined:
+        return "infra_error", "el binario lai no se pudo ejecutar dentro del contenedor"
+    if rc in (125, 126, 127) and not markers_present:
+        return "infra_error", f"docker/entorno devolvió rc={rc}"
+    if not markers_present:
+        return "infra_error", "no aparecieron los marcadores de diff; el contenedor no completó el guion"
+    if not extract_patch(stdout):
+        return "no_patch", ""
+    return "patched", ""
+
+
 def run_instance(
     instance: dict,
     model: str,
@@ -322,9 +371,7 @@ def run_instance(
         stdout, stderr, rc = "", "docker no encontrado", 127
     duration = time.time() - started
 
-    patch = ""
-    if DIFF_BEGIN in stdout and DIFF_END in stdout:
-        patch = stdout.split(DIFF_BEGIN, 1)[1].rsplit(DIFF_END, 1)[0].strip()
+    patch = extract_patch(stdout)
 
     agent_rc = None
     match = re.search(rf"^{re.escape(AGENT_RC)}=(-?\d+)$", stdout, re.M)
@@ -343,30 +390,7 @@ def run_instance(
 
     # Clasificación. Un error de Docker/entorno no debe convertirse en un
     # parche vacío: eso falsearía la tasa de resolución.
-    infra_error = ""
-    combined = (stdout + stderr).lower()
-    markers_present = DIFF_BEGIN in stdout and DIFF_END in stdout
-    if rc == 124:
-        status = "timeout"
-    elif rc in (125, 126, 127) and not markers_present:
-        status = "infra_error"
-        infra_error = f"docker/entorno devolvió rc={rc}"
-    elif not markers_present and (
-        "error while loading shared libraries" in combined
-        or ("glibc" in combined and ("not found" in combined or "version" in combined))
-    ):
-        status = "infra_error"
-        infra_error = "el binario lai requiere una glibc más nueva que la de la imagen"
-    elif "lai: command not found" in (stdout + stderr) or "exec format error" in combined:
-        status = "infra_error"
-        infra_error = "el binario lai no se pudo ejecutar dentro del contenedor"
-    elif not markers_present:
-        status = "infra_error"
-        infra_error = "no aparecieron los marcadores de diff; el contenedor no completó el guion"
-    elif not patch:
-        status = "no_patch"
-    else:
-        status = "patched"
+    status, infra_error = classify_result(stdout, stderr, rc)
 
     return {
         "instance_id": iid,

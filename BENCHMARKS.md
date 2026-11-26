@@ -95,6 +95,33 @@ No declara capacidad `tools` en Ollama y depende del protocolo JSON simulado.
 Medido: >20 min por tarea, 1 PASS antes de agotar el tiempo. **No es práctico**
 para ciclos de agente en este hardware. Queda excluido de la comparativa.
 
+### CPU sin GPU dedicada: 3 tareas × `qwen2.5-coder:3b` (2026-11-26)
+
+Primera medición propia en un equipo **sin GPU dedicada**, hecha con la versión
+corregida de `run_benchmark.sh` (`LAI_BIN` en lugar de rutas absolutas).
+
+| Dato | Valor |
+|------|-------|
+| Hardware | Intel Core i7-10510U (4c/8t, 1.8 GHz), 15.8 GB RAM, Intel UHD Graphics (sin GPU dedicada) |
+| Modelo | `qwen2.5-coder:3b` (Q4, ~1.9 GB) |
+| Runtime | Ollama en `127.0.0.1:11434`, contexto por defecto (4096) |
+| Binario | `lai 0.1.0` (Rust, `--release`) |
+| Tareas | 3 (modo `quick`: `add_two_numbers`, `factorial`, `fix_off_by_one`), `--max-iterations 10` |
+
+| Tarea | Resultado | Tiempo | Motivo |
+|-------|-----------|--------|--------|
+| `add_two_numbers` | FAIL | 255.6 s | sin cambios en archivos (`rc=0`) |
+| `factorial` | FAIL | 391.6 s | no compila o los tests fallan |
+| `fix_off_by_one` | PARTIAL | 223.3 s | compila, sin tests ejecutados |
+| **Total** | **0 PASS / 1 PARTIAL / 2 FAIL** | **870.5 s (14.5 min)** | — |
+
+Lectura honesta: en CPU pura, 3 tareas consumen ~15 minutos y el modelo de 3B no
+completa ninguna con evidencia de tests. Es coherente con lo descrito en
+`DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md` (el ancho de banda manda), pero **una sola
+corrida de 3 tareas no demuestra nada sobre la calidad del modelo**: puede ser
+varianza. Para afirmar algo haría falta repetir con controles intercalados
+(Regla 11).
+
 ---
 
 ## Qué se arregló gracias a estas pruebas
@@ -120,7 +147,9 @@ para ciclos de agente en este hardware. Queda excluido de la comparativa.
   números son una muestra, no una garantía.
 - **Muestra pequeña.** 3–20 tareas por corrida. Sirven para detectar
   regresiones, no para ranking fino.
-- **Un solo equipo.** VRAM de 7.7 GB condiciona qué modelos son viables.
+- **Dos entornos.** La comparativa de 2026-11-25 se midió con GPU (RTX 3070
+  Laptop, 7.7 GB VRAM); la corrida de CPU de 2026-11-26, con una iGPU y 15.8 GB
+  de RAM. **No son comparables entre sí**: son filas distintas de hardware.
 
 ---
 

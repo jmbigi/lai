@@ -1,5 +1,14 @@
 # LAI v5.0 - Roadmap y Tareas Pendientes
 
+> **Aviso de vigencia (2026-11-26).** Este roadmap describe el stack
+> `docker-compose` de la fase v5.0 (llama.cpp, gateway, langfuse, joern,
+> codebadger, mem0, graphiti, neo4j, Dafny, TLA+, Marabou, ERAN…). **Ese stack
+> no forma parte del lai actual**: el proyecto se apoya en modelos locales vía
+> Ollama/llama.cpp y en verificación determinista (compilador, linter, tests).
+> Las tareas de abajo se conservan como registro histórico y **no** son
+> objetivos comprometidos. El trabajo realmente pendiente está en
+> `swebench/README.md` (corrida piloto) y en `DOCS/CAMBIOS_2026-11-26_PENDIENTES.md`.
+
 ## Estado Actual: ✅ COMPLETADO (Core)
 
 ### Implementado (Commit 0a649b6)
@@ -11,7 +20,10 @@
 
 ---
 
-## 📋 TAREAS PENDIENTES
+## 📋 TAREAS PENDIENTES (histórico — ver aviso de vigencia arriba)
+
+> Ninguna de estas tareas se ha ejecutado. Requieren el stack `docker-compose`
+> descrito arriba, que no está en uso.
 
 ### 1. Tests de Integración con Servicios Reales
 **Prioridad: ALTA** | **Estimación: 2-3 días**

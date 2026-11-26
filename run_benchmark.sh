@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 # Real SWE-bench style benchmark for lai
 # Runs coding tasks against local models via ollama
+#
+# Uso:
+#   ./run_benchmark.sh [modelo] [base_url] [quick]
+#   LAI_BIN=/ruta/al/lai ./run_benchmark.sh qwen2.5-coder:3b
+#
+# Variables:
+#   LAI_BIN   binario de lai (por defecto <repo>/lai_rust/target/release/lai)
+#   BUILD     "1" para recompilar antes de medir (por defecto no recompila)
 
-set -euo pipefail
+set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL="${1:-qwen3-coder-opt}"
 BASE_URL="${2:-http://127.0.0.1:11434/v1}"
 QUICK="${3:-false}"
+LAI_BIN="${LAI_BIN:-$SCRIPT_DIR/lai_rust/target/release/lai}"
+BUILD="${BUILD:-0}"
+
+if [ ! -x "$LAI_BIN" ]; then
+    echo "❌ No existe el binario: $LAI_BIN"
+    echo "   Compílalo con: cd lai_rust && cargo build --release"
+    echo "   O indica otra ruta con LAI_BIN=/ruta/al/lai"
+    exit 1
+fi
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  lai SWE-bench Benchmark"
@@ -35,15 +53,20 @@ done
 if ! curl -s "$OLLAMA_API" | grep -q "\"$MODEL\""; then
     echo "❌ Modelo '$MODEL' no encontrado en ollama"
     echo "   Modelos disponibles:"
-    curl -s "$OLLAMA_API" | jq -r '.models[].name'
+    if command -v jq >/dev/null 2>&1; then
+        curl -s "$OLLAMA_API" | jq -r '.models[].name'
+    else
+        curl -s "$OLLAMA_API" | grep -o '"name":"[^"]*"' | cut -d'"' -f4
+    fi
     exit 1
 fi
 
 echo "✅ Ollama OK, modelo '$MODEL' disponible"
 
 # Build lai if needed
-cd /home/kubuntu/lai/lai_rust
-cargo build --release --quiet 2>/dev/null
+if [ "$BUILD" = "1" ]; then
+    ( cd "$SCRIPT_DIR/lai_rust" && cargo build --release --quiet )
+fi
 
 # Create a temporary directory for benchmark
 BENCH_DIR=$(mktemp -d -t lai-bench-XXXXXX)
@@ -98,20 +121,29 @@ EOF
     echo "   Prompt: ${prompt:0:80}..."
 
     # Fingerprint before the agent runs, so we can detect a no-op "success"
-    BEFORE_HASH=$(sha256sum src/lib.rs 2>/dev/null | cut -d' ' -f1)
+    hash_file() {
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+        else
+            shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+        fi
+    }
+
+    BEFORE_HASH=$(hash_file src/lib.rs)
 
     # Run lai auto IN the task directory
     START=$(date +%s%3N)
-    OUTPUT=$(/home/kubuntu/lai/lai_rust/target/release/lai \
+    OUTPUT=$("$LAI_BIN" \
         --model "$MODEL" \
         --base-url "$BASE_URL" \
         auto "$prompt" \
         --max-iterations 10 \
         2>&1)
+    AGENT_RC=$?
     END=$(date +%s%3N)
     DURATION=$((END - START))
 
-    AFTER_HASH=$(sha256sum src/lib.rs 2>/dev/null | cut -d' ' -f1)
+    AFTER_HASH=$(hash_file src/lib.rs)
 
     # Honest verification, three levels:
     #   PASS    -> agent changed files and at least one test passes
@@ -144,8 +176,8 @@ EOF
     # Update total time
     echo "$(( $(cat "$BENCH_DIR/total_time.count") + DURATION ))" > "$BENCH_DIR/total_time.count"
     
-    echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY ($REASON)"
-    echo "$task_name: $VERIFY (${DURATION}ms) [$REASON]" >> "$BENCH_DIR/results.list"
+    echo "   ⏱️  ${DURATION}ms | 🔍 $VERIFY ($REASON) | rc=$AGENT_RC"
+    echo "$task_name: $VERIFY (${DURATION}ms) [$REASON] rc=$AGENT_RC" >> "$BENCH_DIR/results.list"
 
     # Save individual result
     cat > "$BENCH_DIR/${task_name}_result.json" << EOF
@@ -154,6 +186,7 @@ EOF
     "duration_ms": $DURATION,
     "verify": "$VERIFY",
     "reason": "$REASON",
+    "agent_rc": $AGENT_RC,
     "output_length": ${#OUTPUT}
 }
 EOF
@@ -221,6 +254,13 @@ for result_file in "$BENCH_DIR"/*_result.json; do
 done
 
 # Save summary
+if command -v jq >/dev/null 2>&1; then
+    RESULTS_JSON=$(printf '%s\n' "${AGGREGATE_RESULTS[@]}" | jq -s .)
+else
+    RESULTS_JSON='[]'
+    echo "ℹ jq no está instalado: summary.json guardará \"results\": [] (los *_result.json individuales siguen completos)."
+fi
+
 cat > "$BENCH_DIR/summary.json" << EOF
 {
     "model": "$MODEL",
@@ -230,7 +270,7 @@ cat > "$BENCH_DIR/summary.json" << EOF
     "partial": $PARTIAL,
     "failed": $FAILED,
     "total_time_ms": $TOTAL_TIME,
-    "results": $(printf '%s\n' "${AGGREGATE_RESULTS[@]}" | jq -s .)
+    "results": $RESULTS_JSON
 }
 EOF
 

@@ -32,7 +32,10 @@ swebench/
 ├── build_lai_for_swebench.sh    # 2b. binario compatible (glibc 2.35)
 ├── run_eval.py                  # 3. agente en contenedor → data/predictions/*.jsonl
 ├── evaluate.py                  # 4. tests oficiales → data/evaluation/<run>/report.json
-├── test_evaluate.py             # tests offline de parsers y graduación (sin Docker)
+├── test_evaluate.py             # tests offline: parsers y graduación
+├── test_prepare.py              # tests offline: estados de imagen y escritura atómica
+├── test_run_eval.py             # tests offline: clasificación y preflight
+├── test_harness_offline.py      # tests offline: dataset simulado de punta a punta
 ├── bin/                         # binario compilado (ignorado por git)
 └── data/                        # instancias, estado, logs, predicciones (ignorado)
 ```
@@ -121,6 +124,26 @@ Prueba offline de los parsers y la graduación, sin Docker:
 ```bash
 python3 -m unittest swebench/test_evaluate.py -v
 ```
+
+---
+
+## Pruebas offline del harness (sin Docker)
+
+Todo lo que no depende de un *daemon* se prueba en cualquier equipo:
+
+```bash
+python3 -m unittest swebench.test_prepare swebench.test_run_eval \
+    swebench.test_harness_offline swebench.test_evaluate
+```
+
+| Suite | Qué cubre |
+|-------|-----------|
+| `test_prepare.py` | Nombre de imagen (dataset y convención), `image_state` (presente/ausente/desconocido/timeout), estado atómico, JSON corrupto, `free_gb` |
+| `test_run_eval.py` | `slug` sin traversal, `build_task`, `ollama_root`, extracción del diff (primer bloque), clasificación `timeout`/`infra_error`/`no_patch`/`patched` (glibc, librerías, `command not found`, marcadores ausentes), preflight de Ollama e imágenes |
+| `test_harness_offline.py` | Normalización de instancias (listas JSON), escritura atómica, carga en `evaluate.py`, `choose_predictions`, wrapper del `eval_script`, graduación con dataset simulado |
+| `test_evaluate.py` | Parsers oficiales, códigos de salida, inyección del `exit code`, graduación oficial |
+
+Ninguna de estas suites usa Docker, HuggingFace ni red.
 
 ---
 

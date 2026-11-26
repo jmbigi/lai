@@ -855,6 +855,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+REQUIRED_FIELDS = ("image", "eval_script", "log_parser", "FAIL_TO_PASS", "PASS_TO_PASS")
+
+
+def validate_instances(instances: dict[str, dict], ids: list[str]) -> list[str]:
+    """Campos imprescindibles para evaluar. Devuelve una lista de errores legibles.
+
+    Se comprueba antes de tocar Docker: sin `eval_script` o `log_parser` no hay
+    evaluación oficial posible y no tiene sentido gastar minutos de contenedor.
+    """
+    errors = []
+    for iid in ids:
+        instance = instances.get(iid) or {}
+        missing = [field for field in REQUIRED_FIELDS if not instance.get(field)]
+        if missing:
+            errors.append(f"{iid}: faltan {', '.join(missing)}")
+    return errors
+
+
 def main() -> int:
     args = parse_args()
 
@@ -891,16 +909,7 @@ def main() -> int:
     run_dir = EVALUATION / run_id
 
     # Validar campos imprescindibles antes de tocar Docker.
-    errors = []
-    for iid in selected_ids:
-        instance = instances[iid]
-        missing = [
-            field
-            for field in ("image", "eval_script", "log_parser", "FAIL_TO_PASS", "PASS_TO_PASS")
-            if not instance.get(field)
-        ]
-        if missing:
-            errors.append(f"{iid}: faltan {', '.join(missing)}")
+    errors = validate_instances(instances, selected_ids)
     if errors:
         print("❌ Datos incompletos. Vuelve a descargar el dataset con --force:", file=sys.stderr)
         for error in errors[:10]:
