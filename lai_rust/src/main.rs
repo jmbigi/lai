@@ -260,13 +260,21 @@ async fn main() -> anyhow::Result<()> {
                 // Compare mode
                 let bench_file = std::env::current_dir()?
                     .join("benchmark_results")
-                    .join(&model.replace([':', '/'], "_"));
+                    .join(model.replace([':', '/'], "_"));
                 // This would need the test module's compare_results function
                 println!("Compare mode not fully implemented in main binary yet");
+                println!("  Modelo:          {}", model);
+                println!("  Resultados:      {}", bench_file.display());
+                println!("  Referencia:      {}", compare_file);
+                if !std::path::Path::new(&compare_file).exists() {
+                    println!("  Aviso: el archivo de referencia no existe todavía.");
+                }
             } else {
                 // Import the test module's benchmark functions
                 // For now, just show help
                 println!("SWE-bench evaluation for model: {}", model);
+                println!("  Base URL: {}", base_url);
+                println!("  Modo rápido: {}", if quick { "sí" } else { "no" });
                 println!("Run with: cargo test --test swe_bench -- --nocapture");
             }
         }

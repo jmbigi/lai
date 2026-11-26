@@ -12,6 +12,7 @@ This directory contains technical documentation for lai.
 | [INFERENCIA_LOCAL_BAJA_GAMA.md](INFERENCIA_LOCAL_BAJA_GAMA.md) | CPU inference guide for low-end teams (Regla 11) |
 | [CAMBIOS_2026-11-26.md](CAMBIOS_2026-11-26.md) | Before/after record of the 2026-11-26 changes (Regla 10) |
 | [CAMBIOS_2026-11-26_PENDIENTES.md](CAMBIOS_2026-11-26_PENDIENTES.md) | Before/after record of the Docker-free pending work: offline tests, docs fixes (Regla 10) |
+| [CAMBIOS_2026-11-26_MEJORAS2.md](CAMBIOS_2026-11-26_MEJORAS2.md) | Before/after record: Rule 4 guard, tool-call parser fix, fmt/clippy, scripts, measurements (Regla 10) |
 
 ## External References
 

@@ -3,19 +3,9 @@
 //! Documents the honest gap vs. cloud frontier models.
 
 use anyhow::Result;
-use lai::benchmark::{
-    contracts::*,
-    framework::{BenchmarkConfig, BenchmarkRunner, OutputFormat},
-};
-use lai::commands;
-use lai::init_wizard::cmd_init;
-use lai::mcp_server::cmd_mcp;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::time::timeout;
 
 /// A coding task for evaluation
 #[derive(Debug, Clone)]
@@ -313,7 +303,7 @@ mod tests {
             let output = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(setup)
-                .current_dir(&project_root)
+                .current_dir(project_root)
                 .output()?;
             if !output.status.success() {
                 eprintln!(
@@ -518,11 +508,7 @@ Follow Rust best practices and the project's existing code style.
 pub async fn run_quick_benchmark(model: &str, base_url: &str) -> Result<()> {
     let mut bench = LocalModelBenchmark::new(model.to_string(), base_url.to_string());
     // Only run easy tasks for quick benchmark
-    bench.tasks = bench
-        .tasks
-        .into_iter()
-        .filter(|t| t.difficulty == TaskDifficulty::Easy)
-        .collect();
+    bench.tasks.retain(|t| t.difficulty == TaskDifficulty::Easy);
     bench.run().await
 }
 

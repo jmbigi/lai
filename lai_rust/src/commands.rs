@@ -142,8 +142,9 @@ fn analyze_project_context(cwd: &Path) -> String {
     parts.join("\n")
 }
 
-pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_remote: bool) {
-    let llm = LlmClient::new(base_url.to_string(), model.to_string());
+pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, allow_remote: bool) {
+    let llm =
+        LlmClient::new(base_url.to_string(), model.to_string()).with_allow_remote(allow_remote);
     let prompt_str = prompt.join(" ");
 
     // Load project context
@@ -440,9 +441,10 @@ pub async fn cmd_code(
     yolo: bool,
     model: &str,
     base_url: &str,
-    _allow_remote: bool,
+    allow_remote: bool,
 ) {
-    let client = LlmClient::new(base_url.to_string(), model.to_string());
+    let client =
+        LlmClient::new(base_url.to_string(), model.to_string()).with_allow_remote(allow_remote);
     let tools = ToolRegistry::new();
     let max_iterations: i32 = 3;
 
@@ -781,7 +783,7 @@ pub async fn cmd_auto(
     output: Option<&str>,
     model: &str,
     base_url: &str,
-    _allow_remote: bool,
+    allow_remote: bool,
 ) {
     println!("🤖 Auto mode: {}", task);
     println!("   Max iterations: {}", max_iterations);
@@ -899,7 +901,8 @@ EXAMPLE - Reading a file:
 If the user asks you to create a file, your FIRST tool call MUST be "write_file"."#
     );
 
-    let llm = LlmClient::new(base_url.to_string(), model.to_string());
+    let llm =
+        LlmClient::new(base_url.to_string(), model.to_string()).with_allow_remote(allow_remote);
 
     let mut messages = vec![
         crate::llm::Message {
@@ -1163,25 +1166,103 @@ fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
     let mut calls = Vec::new();
     let mut search_start = 0;
 
-    while let Some(start) = response[search_start..].find("```json") {
-        let abs_start = search_start + start + 7; // skip ```json
-        if let Some(end) = response[abs_start..].find("```") {
-            let json_str = &response[abs_start..abs_start + end].trim();
-            if let Ok(val) = serde_json::from_str::<Value>(json_str) {
-                // Validate: must have "tool" (string) and "arguments" (object)
-                if let (Some(tool), Some(args)) = (val.get("tool"), val.get("arguments")) {
-                    if tool.is_string() && args.is_object() {
-                        calls.push(val);
-                    }
+    while let Some(start) = response[search_start..].find("```") {
+        let fence_start = search_start + start;
+        let after_fence = fence_start + 3;
+        // Opcional: etiqueta de lenguaje tras las comillas (```json, ```JSON).
+        let mut body_start = after_fence;
+        while let Some(c) = response[body_start..].chars().next() {
+            if c.is_ascii_alphanumeric() {
+                body_start += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let lang = response[after_fence..body_start]
+            .trim()
+            .to_ascii_lowercase();
+        if let Some(end) = response[body_start..].find("```") {
+            let json_str = response[body_start..body_start + end].trim();
+            let looks_like_json = json_str.starts_with('{');
+            if (lang.is_empty() || lang == "json") && looks_like_json {
+                if let Some(call) = parse_tool_call_json(json_str) {
+                    calls.push(call);
                 }
             }
-            search_start = abs_start + end + 3;
+            search_start = body_start + end + 3;
         } else {
             break;
         }
     }
 
     calls
+}
+
+/// Escapa los caracteres de control literales que aparecen dentro de cadenas
+/// JSON. Los modelos pequeños escriben código con saltos de línea reales dentro
+/// del string `content`, produciendo JSON inválido que `serde_json` rechaza.
+fn repair_json_control_chars(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 32);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in raw.chars() {
+        if in_string {
+            if escaped {
+                out.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    out.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    out.push(ch);
+                    in_string = false;
+                }
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    out.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => out.push(c),
+            }
+        } else {
+            if ch == '"' {
+                in_string = true;
+            }
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Parsea el contenido de un bloque ```json y lo normaliza a
+/// `{"tool": <nombre>, "arguments": <objeto>}`.
+fn parse_tool_call_json(json_str: &str) -> Option<Value> {
+    let mut val = serde_json::from_str::<Value>(json_str)
+        .or_else(|_| serde_json::from_str::<Value>(&repair_json_control_chars(json_str)))
+        .ok()?;
+
+    // Acepta los alias que usan los modelos: tool / name / tool_name / function.
+    let name = ["tool", "name", "tool_name", "function"]
+        .iter()
+        .find_map(|key| val.get(*key).and_then(|v| v.as_str()))
+        .map(|s| s.to_string())?;
+
+    // `arguments` puede venir como objeto o como string con JSON dentro.
+    let args = match val.get_mut("arguments") {
+        Some(Value::String(s)) => serde_json::from_str::<Value>(s).ok()?,
+        Some(v @ Value::Object(_)) => v.clone(),
+        _ => return None,
+    };
+    if !args.is_object() {
+        return None;
+    }
+
+    Some(serde_json::json!({ "tool": name, "arguments": args }))
 }
 
 fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap<String, Value> {
@@ -1621,6 +1702,64 @@ mod normalization_tests {
         assert_eq!(parsed[0]["tool"], "write_file");
         assert_eq!(parsed[0]["id"], "call_1");
         assert_eq!(parsed[0]["arguments"]["path"], "a.rs");
+    }
+
+    #[test]
+    fn simulated_call_with_raw_newlines_is_repaired() {
+        // Caso real de qwen2.5-coder:3b: el `content` lleva saltos de linea
+        // literales, asi que el JSON es invalido para serde_json.
+        let response = "```json\n{\n  \"tool\": \"write_file\",\n  \"arguments\": {\n    \"path\": \"src/lib.rs\",\n    \"content\": \"pub fn f() -> i32 {\n    1\n}\"\n  }\n}\n```";
+        let calls = parse_simulated_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tool"], "write_file");
+        let content = calls[0]["arguments"]["content"].as_str().unwrap();
+        assert!(content.contains("pub fn f()"));
+        assert!(content.contains('\n'));
+    }
+
+    #[test]
+    fn simulated_call_accepts_name_alias() {
+        let response = "```json\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"a.rs\", \"content\": \"x\"}}\n```";
+        let calls = parse_simulated_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tool"], "write_file");
+        assert_eq!(calls[0]["arguments"]["path"], "a.rs");
+    }
+
+    #[test]
+    fn simulated_call_accepts_string_arguments() {
+        let response = "```json\n{\"tool\": \"read_file\", \"arguments\": \"{\\\"path\\\": \\\"a.rs\\\"}\"}\n```";
+        let calls = parse_simulated_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["arguments"]["path"], "a.rs");
+    }
+
+    #[test]
+    fn simulated_call_accepts_uppercase_fence() {
+        let response = "```JSON\n{\"tool\": \"git_status\", \"arguments\": {}}\n```";
+        let calls = parse_simulated_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tool"], "git_status");
+    }
+
+    #[test]
+    fn simulated_call_ignores_rust_code_blocks() {
+        let response = "```rust\nfn main() { println!(\"hi\"); }\n```";
+        assert!(parse_simulated_tool_calls(response).is_empty());
+    }
+
+    #[test]
+    fn simulated_call_requires_arguments() {
+        let response = "```json\n{\"tool\": \"write_file\"}\n```";
+        assert!(parse_simulated_tool_calls(response).is_empty());
+    }
+
+    #[test]
+    fn repair_keeps_escaped_quotes_intact() {
+        let raw = "{\"content\": \"let s = \\\"a\\\";\nlet t = 1;\"}";
+        let repaired = repair_json_control_chars(raw);
+        let val: Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(val["content"], "let s = \"a\";\nlet t = 1;");
     }
 }
 

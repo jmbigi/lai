@@ -164,7 +164,9 @@ fn grep_tool(args: &HashMap<String, Value>) -> Result<String> {
     let walker = WalkDir::new(path)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy()));
+        .filter_entry(|e| {
+            !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy())
+        });
     for entry in walker.filter_map(|e| e.ok()) {
         let p = entry.path();
         if !p.is_file() {
@@ -232,7 +234,9 @@ fn find_files_tool(args: &HashMap<String, Value>) -> Result<String> {
     let walker = WalkDir::new(path)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy()));
+        .filter_entry(|e| {
+            !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy())
+        });
     for entry in walker.filter_map(|e| e.ok()) {
         let p = entry.path();
         if !p.is_file() {
@@ -667,11 +671,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::create_dir_all(dir.path().join("target")).unwrap();
         fs::create_dir_all(dir.path().join("node_modules")).unwrap();
-        fs::write(
-            dir.path().join("src/a.rs"),
-            "Hello world\nsecond HELLO\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join("src/a.rs"), "Hello world\nsecond HELLO\n").unwrap();
         fs::write(dir.path().join("target/b.rs"), "Hello target\n").unwrap();
         fs::write(dir.path().join("node_modules/c.rs"), "Hello node\n").unwrap();
 

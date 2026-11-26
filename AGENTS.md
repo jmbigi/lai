@@ -133,11 +133,17 @@ cargo install --path .
 - AutoMode only on trusted repositories
 - Gateway binds to loopback; no auth by default
 - Never expose gateway/llama.cpp to public interfaces
-- **Rule 4 enforced**: `is_local_url()` blocks non-local endpoints
+- **Rule 4 enforced in code**: `llm.rs::is_local_url()` + `LlmClient::check_endpoint()`
+  abort before any request to a non-local endpoint (override only with
+  `--allow-remote`, explicit user decision)
+- Service binaries are resolved from the environment, never hardcoded:
+  `LAI_LLAMA_SERVER`, `LAI_GATEWAY_BIN`, `LAI_GATEWAY_DIR`, `LAI_OLLAMA_BIN`
 
 ## Documentation
 
 - `DOCUMENTACION_REGLAS.md` — Single source of truth for rules
+- `DOCS/CAMBIOS_2026-11-26.md` and `DOCS/CAMBIOS_2026-11-26_MEJORAS2.md` — change records (Rule 10)
+- `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md` — CPU inference guide for low-end teams (Rule 11)
 - `DOCS/REVISION_2026.md` — Technical review and research
 - `README.md` — User-facing overview
 - `CHANGELOG.md` — Version history

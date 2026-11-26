@@ -131,12 +131,12 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | Regla | Estado | Evidencia / observación |
 |---|---|---|
 | 1–3. Reglas externas | ✅ | `AGENTS.md` resume el ruleset y enlaza las fuentes. |
-| 4. Salida de LAI con LLM local | ✅ | `lai.py` usa por defecto `http://localhost:8080/v1`; las rutas de generación verifican que el endpoint sea local. |
+| 4. Salida de LAI con LLM local | ✅ | `llm.rs` implementa `is_local_url()` (loopback, rangos privados, `.local`) y `LlmClient::check_endpoint()` aborta antes de cualquier request si el endpoint no es local, salvo `--allow-remote`. Cubierto por 5 tests unitarios (2026-11-26). |
 | 5. Código propio de LAI con IA cloud | ✅ | Permitido explícitamente por esta revisión (2026-11-21). |
 | 6. Honestidad | ⚠️ En mejora | Documentos históricos contenían cifras desactualizadas (p. ej. `chess.py` 12,959 bytes vs. 8,706 reales). Se añadieron avisos de vigencia. |
 | 7. Exactitud | ⚠️ En mejora | `DOCS/quality_comparison.md` contenía métricas de ejemplo presentadas como resultados; se convirtió en plantilla sin resultados inventados. |
 | 8. Chess con LLM local | ⚠️ Parcial | `chess/chess.py` fue generado con Qwen3-8B local, pero recibió correcciones manuales; ver `chess/README.md`. |
-| 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust con paridad de comandos: chat, generate, code, think, auto, run, serve, status, models, tools, search, find, fix, review, diff, test, init, config, install, update, exec, doctor, clean, completion, project, repair, ocr, mcp, system-one, deguro, rag, agents, complete, symbols, goto, repomap, interactive. Build release compila limpio. `lai.py` legado sin modificaciones salvo correcciones críticas. |
+| 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust. CLI real (verificado 2026-11-26, 19 subcomandos clap): `chat`, `code`, `status`, `auto`, `repo-map`, `baseline`, `verify`, `diagnose`, `repair`, `checkpoint`, `memory`, `plan`, `metrics`, `bench`, `init`, `doctor`, `tui`, `mcp`, `bench-swe`. **No existen** `serve`, `review`, `fix`, `search`, `project` en el CLI Rust (sí en el Python legado, que está en mantenimiento y no a la par). Build release compila limpio, `cargo clippy --all-targets` sin avisos. |
 | 10. Documentación obligatoria de cambios | 🆕 Nueva | Regla agregada 2026-11-23. Requiere documento de cambios propuestos, estado antes/después por cada cambio, y trazabilidad para trabajo en equipo. |
 | 11. Baja gama: medir antes de recomendar | 🆕 Nueva | Regla agregada 2026-11-26. Exige medir una variable a la vez, calcular el techo de ancho de banda, aplicar la compuerta de contexto completo y marcar las cifras externas como no reproducidas. Guía: `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`. |
 

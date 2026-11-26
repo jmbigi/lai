@@ -2,7 +2,7 @@
 
 use lai::benchmark::{
     contracts::*,
-    framework::{standard_benchmarks, BenchmarkConfig, BenchmarkRunner, OutputFormat},
+    framework::{standard_benchmarks, BenchmarkRunner, OutputFormat},
 };
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -56,6 +56,7 @@ impl CapabilityAdapter for TestAdapter {
         &self,
         request: &ExecutionRequest,
     ) -> Result<PreflightResult, ContractError> {
+        let _ = request;
         Ok(PreflightResult {
             allowed: true,
             reason: None,

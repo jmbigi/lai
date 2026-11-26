@@ -1,11 +1,14 @@
 //! Integration tests for LAI infrastructure
 //!
-//! These tests require the docker-compose stack to be running:
-//! ```bash
-//! docker-compose up -d
-//! ```
+//! HISTÓRICO: este archivo apunta al stack docker-compose que ya no forma
+//! parte del proyecto (Langfuse, Joern, CodeBadger, Prometheus, Grafana…).
+//! Las funciones no llevan `#[tokio::test]`, así que **no se ejecuta ninguna
+//! prueba**: se conserva solo como referencia. No lo tomes como cobertura.
 //!
-//! Run with: `cargo test --test integration -- --ignored`
+//! Run with: `cargo test --test infrastructure -- --ignored`
+
+#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(clippy::needless_borrows_for_generic_args)]
 
 use std::time::Duration;
 use tokio::time::sleep;

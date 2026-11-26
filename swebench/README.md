@@ -94,6 +94,14 @@ Antes de ejecutar, hace *preflight* solo de las instancias pendientes: Docker,
 imagen, modelo presente en Ollama y longitud de contexto. Si el contexto es
 menor de 8 192 tokens, avisa y recomienda `OLLAMA_CONTEXT_LENGTH=16384`.
 
+> **Medido el 2026-11-26 (Regla 11).** En un i7-10510U con 15.8 GB de RAM y
+> `qwen2.5-coder:3b`, subir o bajar el contexto entre 16384 y 32768 **no cambió
+> el throughput**: 7.11 tok/s con 32768 frente a 7.07 tok/s con 16384 (4
+> muestras cada uno, misma prompt). El aviso de contexto sigue teniendo sentido
+> para tareas de agente con repos grandes, pero no esperes que
+> `OLLAMA_CONTEXT_LENGTH=16384` acelere nada. Detalle y comando reproducible en
+> `BENCHMARKS.md` y `scripts/measure_context_throughput.sh`.
+
 Si `lai` termina con error, **el diff se conserva igualmente**; solo se
 descartan los fallos de infraestructura (imagen ausente, CLI no ejecutable,
 glibc incompatible, timeout), que no se escriben como predicciones.
@@ -198,14 +206,16 @@ para que no desplace la tarea.
 
 1. **Corrida piloto de 10–20 instancias** con `qwen3-coder-opt` para estimar
    tasa de resolución y coste temporal real. Requiere un equipo con Docker.
-2. **Contexto del modelo**: con 4 096 tokens el agente pierde el hilo. Probar
-   `OLLAMA_CONTEXT_LENGTH=16384` de forma sistemática y documentar el efecto
-   (una variable a la vez, Regla 11).
+2. **Contexto del modelo**: medido ya el efecto en throughput (ver arriba): no
+   hay ganancia entre 16384 y 32768. Falta medirlo en una corrida de agente real
+   con repos grandes, que es donde el contexto se agota de verdad.
 3. **Publicar la tabla** de resultados en `BENCHMARKS.md`, con la misma
    honestidad que el resto: muestra pequeña, hardware limitado, sin comparación
    directa con cifras frontier.
 
-> Nada de esto se ha ejecutado todavía. **No hay cifras que publicar.**
+> El punto 2 está parcialmente cerrado (medición de throughput hecha). Los puntos
+> 1 y 3 siguen bloqueados por la falta de Docker. **No hay cifras de SWE-bench
+> que publicar.**
 
 ---
 

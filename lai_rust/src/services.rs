@@ -48,11 +48,19 @@ pub struct Services {
 
 impl Services {
     pub fn new() -> Self {
+        // Rutas configurables por entorno: no dependen de la máquina del autor.
+        let llama_script =
+            std::env::var("LAI_LLAMA_SERVER").unwrap_or_else(|_| "llama-server".to_string());
+        let gateway_script =
+            std::env::var("LAI_GATEWAY_BIN").unwrap_or_else(|_| "gateway".to_string());
+        let gateway_cwd = std::env::var("LAI_GATEWAY_DIR").ok();
+        let ollama_script =
+            std::env::var("LAI_OLLAMA_BIN").unwrap_or_else(|_| "ollama".to_string());
         Self {
             llama: ServiceInfo {
                 port: 8080,
                 health_path: "/health".into(),
-                script: Some("/home/kubuntu/llama.cpp-bin/llama-b12567/llama-server".into()),
+                script: Some(llama_script),
                 args: vec![],
                 cwd: None,
                 running: AtomicBool::new(false),
@@ -60,15 +68,15 @@ impl Services {
             gateway: ServiceInfo {
                 port: 8081,
                 health_path: "/health".into(),
-                script: Some("/home/kubuntu/curso-ia/modelo-local/gateway-go/gateway".into()),
+                script: Some(gateway_script),
                 args: vec![],
-                cwd: Some("/home/kubuntu/curso-ia/modelo-local/gateway-go".into()),
+                cwd: gateway_cwd,
                 running: AtomicBool::new(false),
             },
             ollama: ServiceInfo {
                 port: 11434,
                 health_path: "/api/tags".into(),
-                script: Some("/usr/bin/ollama".into()),
+                script: Some(ollama_script),
                 args: vec!["serve".into()],
                 cwd: None,
                 running: AtomicBool::new(false),
@@ -222,8 +230,8 @@ pub fn ensure_local_model_available(services: &Services) -> Result<(), String> {
         return Err(
             "Regla 9 (Supervivencia): No hay modelos locales disponibles (llama.cpp, gateway, Ollama).\n\
             Inicia al menos uno antes de operar:\n\
-            - llama.cpp: /home/kubuntu/llama.cpp-bin/llama-b12567/llama-server\n\
-            - gateway: cd gateway-go && ./gateway\n\
+            - llama.cpp: llama-server (o define LAI_LLAMA_SERVER)\n\
+            - gateway: gateway (o define LAI_GATEWAY_BIN / LAI_GATEWAY_DIR)\n\
             - ollama: ollama serve\n\
             O usa --allow-remote para endpoints no locales (requiere consentimiento explícito)."
                 .to_string(),
@@ -243,8 +251,8 @@ pub async fn ensure_local_model_available_async(
         return Err(
             "Regla 9 (Supervivencia): No hay modelos locales disponibles (llama.cpp, gateway, Ollama).\n\
             Inicia al menos uno antes de operar:\n\
-            - llama.cpp: /home/kubuntu/llama.cpp-bin/llama-b12567/llama-server\n\
-            - gateway: cd gateway-go && ./gateway\n\
+            - llama.cpp: llama-server (o define LAI_LLAMA_SERVER)\n\
+            - gateway: gateway (o define LAI_GATEWAY_BIN / LAI_GATEWAY_DIR)\n\
             - ollama: ollama serve\n\
             O usa --allow-remote para endpoints no locales (requiere consentimiento explícito)."
                 .to_string(),

@@ -2,7 +2,6 @@
 
 use lai::policy::{Operation, PolicyConfig, PolicyEngine, RiskLevel};
 use lai::verification::*;
-use std::path::PathBuf;
 
 #[test]
 fn test_policy_engine_creation() {

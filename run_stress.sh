@@ -2,39 +2,51 @@
 # Stress test: N random coding tasks, optionally in parallel.
 #
 # Usage: ./run_stress.sh [MODEL] [BASE_URL] [PARALLEL_JOBS]
+#   LAI_BIN=/path/to/lai TASKS_LIMIT=5 ./run_stress.sh qwen2.5-coder:3b
 #
 # Verification is honest: a task only counts as PASS when the agent actually
 # modified src/lib.rs AND `cargo test` passes on the result.
 
 set -uo pipefail
 
-MODEL="${1:-qwen3-coder-opt:latest}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODEL="${1:-qwen2.5-coder:3b}"
 BASE_URL="${2:-http://127.0.0.1:11434/v1}"
 PARALLEL="${3:-2}"
 MAX_ITER="${MAX_ITER:-10}"
 TASKS_LIMIT="${TASKS_LIMIT:-20}"
-LAI_BIN="/home/kubuntu/lai/lai_rust/target/release/lai"
+LAI_BIN="${LAI_BIN:-$SCRIPT_DIR/lai_rust/target/release/lai}"
+[ -x "$LAI_BIN" ] || LAI_BIN="${LAI_BIN}.exe"
+if [ ! -x "$LAI_BIN" ]; then
+    echo "ERROR: no se encuentra el binario lai en $LAI_BIN"
+    echo "       compila con: cd lai_rust && cargo build --release"
+    echo "       o define LAI_BIN=/ruta/al/binario"
+    exit 1
+fi
 BENCH_DIR=$(mktemp -d -t lai-stress-XXXXXX)
 
-echo "═══════════════════════════════════════════════════════════"
+echo "======================================================"
 echo "  lai Stress Test"
 echo "  Model: $MODEL"
 echo "  Parallel jobs: $PARALLEL"
+echo "  Binario: $LAI_BIN"
 echo "  Workdir: $BENCH_DIR"
-echo "═══════════════════════════════════════════════════════════"
+echo "======================================================"
 
 OLLAMA_API="${BASE_URL%/v1}/api/tags"
 for i in $(seq 1 30); do
-    curl -s "$OLLAMA_API" >/dev/null && break
-    [ "$i" -eq 30 ] && { echo "❌ Ollama no responde en $OLLAMA_API"; exit 1; }
+    curl -s --max-time 2 "$OLLAMA_API" > /dev/null && break
+    [ "$i" -eq 30 ] && { echo "ERROR: Ollama no responde en $OLLAMA_API"; exit 1; }
     sleep 1
 done
-curl -s "$OLLAMA_API" | grep -q "\"$MODEL\"" || {
-    echo "❌ Modelo '$MODEL' no encontrado. Disponibles:"
-    curl -s "$OLLAMA_API" | jq -r '.models[].name'
+TAGS=$(curl -s "$OLLAMA_API")
+if ! echo "$TAGS" | grep -q "\"$MODEL\""; then
+    echo "ERROR: modelo '$MODEL' no encontrado. Disponibles:"
+    # sin jq: extrae los campos "name" del JSON
+    echo "$TAGS" | tr ',' '\n' | grep '"name"' | sed 's/.*"name" *: *"//; s/".*//' | sed 's/^/  - /'
     exit 1
-}
-echo "✅ Modelo disponible"
+fi
+echo "OK: modelo disponible"
 echo ""
 
 TASKS=(
@@ -85,32 +97,32 @@ pub fn placeholder() -> i32 { 42 }
 #[cfg(test)] mod tests { use super::*; #[test] fn test_placeholder() { assert_eq!(placeholder(), 42); } }
 EOF
 
-    local before after start end dur verify reason
+    local before after start end dur verify reason rc
     before=$(sha256sum src/lib.rs | cut -d' ' -f1)
     start=$(date +%s%3N)
     "$LAI_BIN" --model "$MODEL" --base-url "$BASE_URL" auto "$prompt" \
         --max-iterations "$MAX_ITER" > "$task_dir/agent.log" 2>&1
+    rc=$?
     end=$(date +%s%3N)
     dur=$((end - start))
     after=$(sha256sum src/lib.rs | cut -d' ' -f1)
 
     if [ "$before" = "$after" ]; then
-        verify="FAIL"; reason="no file changes"
+        verify="FAIL"; reason="no file changes (agent rc=$rc)"
     elif cargo test --quiet > "$task_dir/test.log" 2>&1; then
         verify="PASS"; reason="tests pass"
     else
         verify="FAIL"; reason="tests failed"
     fi
 
-    printf '%s\t%s\t%s\t%s\n' "$idx" "$verify" "$dur" "$reason" > "$task_dir/result.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$idx" "$verify" "$dur" "$rc" "$reason" > "$task_dir/result.tsv"
     echo "  [task_$idx] $verify (${dur}ms) [$reason]"
 }
 
 export -f run_one
 export MODEL BASE_URL MAX_ITER LAI_BIN BENCH_DIR
 
-TASK_COUNT=$(( ${#TASKS[@]} < TASKS_LIMIT ? ${#TASKS[@]} : TASKS_LIMIT ))
-echo "🚀 Ejecutando $TASK_COUNT tareas (paralelo: $PARALLEL)..."
+echo "Ejecutando hasta $TASKS_LIMIT tareas (paralelo: $PARALLEL)..."
 echo ""
 WALL_START=$(date +%s)
 
@@ -126,25 +138,25 @@ done | xargs -P "$PARALLEL" -I{} bash -c '
 PASSED=0; FAILED=0; TOTAL_MS=0
 WALL_SECONDS=$(( $(date +%s) - WALL_START ))
 echo ""
-echo "═══════════════════════════════════════════════════════════"
+echo "======================================================"
 echo "  STRESS TEST RESULTS: $MODEL"
-echo "═══════════════════════════════════════════════════════════"
+echo "======================================================"
 for f in "$BENCH_DIR"/task_*/result.tsv; do
     [ -f "$f" ] || continue
-    IFS=$'\t' read -r idx verify dur reason < "$f"
+    IFS=$'\t' read -r idx verify dur rc reason < "$f"
     TOTAL_MS=$((TOTAL_MS + dur))
     if [ "$verify" = "PASS" ]; then PASSED=$((PASSED + 1)); else FAILED=$((FAILED + 1)); fi
-    printf '  task_%-2s %-4s %7sms  %s\n' "$idx" "$verify" "$dur" "$reason"
+    printf '  task_%-2s %-4s %7sms  rc=%-3s %s\n' "$idx" "$verify" "$dur" "$rc" "$reason"
 done
 
 TOTAL=$((PASSED + FAILED))
-echo "───────────────────────────────────────────────────────────"
-echo "✅ Pasaron: $PASSED"
-echo "❌ Fallaron: $FAILED"
-echo "📊 Total: $TOTAL"
-[ "$TOTAL" -gt 0 ] && echo "📈 Pass rate: $((PASSED * 100 / TOTAL))%"
-echo "⏱️  Tiempo sumado por tarea: ${TOTAL_MS}ms"
-echo "🕐 Tiempo de pared: ${WALL_SECONDS}s (con $PARALLEL jobs)"
+echo "------------------------------------------------------"
+echo "Pasaron:  $PASSED"
+echo "Fallaron: $FAILED"
+echo "Total:    $TOTAL"
+[ "$TOTAL" -gt 0 ] && echo "Pass rate: $((PASSED * 100 / TOTAL))%"
+echo "Tiempo sumado por tarea: ${TOTAL_MS}ms"
+echo "Tiempo de pared: ${WALL_SECONDS}s (con $PARALLEL jobs)"
 
 cat > "$BENCH_DIR/summary.json" << EOF
 {
@@ -159,4 +171,4 @@ cat > "$BENCH_DIR/summary.json" << EOF
 }
 EOF
 echo ""
-echo "💾 Resultados: $BENCH_DIR/summary.json"
+echo "Resultados: $BENCH_DIR/summary.json"

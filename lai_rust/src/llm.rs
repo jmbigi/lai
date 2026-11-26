@@ -6,6 +6,65 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Regla 4: comprueba si una URL apunta a un endpoint local.
+///
+/// Se considera local cualquier host que sea loopback, una dirección IP
+/// privada, `localhost`, un nombre `.local`/`.localhost`, o el comodín de
+/// escucha `0.0.0.0`. Cualquier otra cosa (incluidos nombres DNS públicos)
+/// requiere consentimiento explícito vía `--allow-remote`.
+pub fn is_local_url(url: &str) -> bool {
+    let rest = match url.split_once("://") {
+        Some((_, rest)) => rest,
+        None => url,
+    };
+
+    // Autoridad = todo hasta el primer '/', '?' o '#'.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+
+    // Quita userinfo (user:pass@host).
+    let authority = match authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => authority,
+    };
+
+    // IPv6 entre corchetes: [::1]:8080
+    let host = if let Some(inner) = authority.strip_prefix('[') {
+        match inner.split_once(']') {
+            Some((h, _)) => h,
+            None => inner,
+        }
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+            _ => authority,
+        }
+    };
+
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+
+    if host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "::" {
+        return true;
+    }
+    if host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        Ok(std::net::IpAddr::V6(v6)) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // fc00::/7 (unique local) y fe80::/10 (link-local)
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub role: String,
@@ -125,6 +184,7 @@ pub struct LlmClient {
     base_url: String,
     model: String,
     api_key: Option<String>,
+    allow_remote: bool,
     client: reqwest::Client,
 }
 
@@ -136,18 +196,39 @@ impl LlmClient {
             api_key: std::env::var("LAI_API_KEY")
                 .ok()
                 .filter(|key| !key.is_empty()),
+            allow_remote: false,
             client: reqwest::Client::new(),
         }
     }
 
-    fn chat_request(&self) -> reqwest::RequestBuilder {
+    /// Regla 4: permite endpoints no locales con consentimiento explícito.
+    pub fn with_allow_remote(mut self, allow_remote: bool) -> Self {
+        self.allow_remote = allow_remote;
+        self
+    }
+
+    /// Devuelve `Err` si la URL no es local y no se autorizó `--allow-remote`.
+    pub fn check_endpoint(&self) -> Result<()> {
+        if self.allow_remote || is_local_url(&self.base_url) {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "Regla 4: el endpoint '{}' no es local. lai solo usa modelos locales \
+             por defecto. Usa --allow-remote para aceptar explícitamente un \
+             endpoint remoto.",
+            self.base_url
+        )
+    }
+
+    fn chat_request(&self) -> Result<reqwest::RequestBuilder> {
+        self.check_endpoint()?;
         let request = self
             .client
             .post(format!("{}/chat/completions", self.base_url));
-        match &self.api_key {
+        Ok(match &self.api_key {
             Some(key) => request.bearer_auth(key),
             None => request,
-        }
+        })
     }
 
     pub async fn chat(&self, prompt: &str) -> Result<String> {
@@ -173,7 +254,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self.chat_request().json(&payload).send().await?;
+        let resp = self.chat_request()?.json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -214,7 +295,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self.chat_request().json(&payload).send().await?;
+        let resp = self.chat_request()?.json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -256,7 +337,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self.chat_request().json(&payload).send().await?;
+        let resp = self.chat_request()?.json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -297,7 +378,7 @@ impl LlmClient {
             )])),
         };
 
-        let resp = self.chat_request().json(&payload).send().await?;
+        let resp = self.chat_request()?.json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -306,5 +387,76 @@ impl LlmClient {
         }
 
         Ok(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_loopback_endpoints() {
+        for url in [
+            "http://127.0.0.1:11434/v1",
+            "http://127.0.0.1:8080",
+            "http://localhost:11434/v1",
+            "http://localhost",
+            "http://[::1]:11434/v1",
+            "http://0.0.0.0:8082/v1",
+            "https://LOCALHOST:1234/v1",
+            "http://localhost.:11434/v1",
+        ] {
+            assert!(is_local_url(url), "deberia ser local: {url}");
+        }
+    }
+
+    #[test]
+    fn accepts_private_ranges() {
+        for url in [
+            "http://10.0.0.5:11434/v1",
+            "http://192.168.1.10:8080",
+            "http://172.16.4.2:11434",
+            "http://172.31.255.1:11434",
+            "http://169.254.10.1:11434",
+            "http://[fd00::1]:11434",
+            "http://[fe80::1]:11434",
+            "http://mi-servidor.local:11434/v1",
+        ] {
+            assert!(is_local_url(url), "deberia ser local: {url}");
+        }
+    }
+
+    #[test]
+    fn rejects_public_endpoints() {
+        for url in [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com",
+            "http://8.8.8.8:11434/v1",
+            "http://172.32.0.1:11434",
+            "http://example.com/v1",
+            "http://[2001:4860:4860::8888]:443",
+            "",
+        ] {
+            assert!(!is_local_url(url), "no deberia ser local: {url}");
+        }
+    }
+
+    #[test]
+    fn strips_userinfo_and_query() {
+        assert!(is_local_url("http://user:pass@127.0.0.1:11434/v1"));
+        assert!(!is_local_url("http://user:pass@evil.example.com/v1"));
+        assert!(is_local_url("http://localhost:11434/v1?x=1"));
+    }
+
+    #[test]
+    fn check_endpoint_enforces_rule_4() {
+        let remote = LlmClient::new("https://api.example.com/v1".into(), "m".into());
+        assert!(remote.check_endpoint().is_err());
+
+        let remote_allowed = remote.with_allow_remote(true);
+        assert!(remote_allowed.check_endpoint().is_ok());
+
+        let local = LlmClient::new("http://127.0.0.1:11434/v1".into(), "m".into());
+        assert!(local.check_endpoint().is_ok());
     }
 }

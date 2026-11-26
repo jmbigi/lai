@@ -556,10 +556,8 @@ impl RepairEngine {
                         std::fs::remove_file(&full_path)?;
                     }
                 }
-                ChangeType::Delete => {
-                    if !change.old_content.is_empty() {
-                        std::fs::write(&full_path, &change.old_content)?;
-                    }
+                ChangeType::Delete if !change.old_content.is_empty() => {
+                    std::fs::write(&full_path, &change.old_content)?;
                 }
                 _ => {}
             }
@@ -633,7 +631,6 @@ mod tests {
     #[tokio::test]
     async fn test_repair_engine_basic() {
         let temp_dir = TempDir::new().unwrap();
-        let config = RepairConfig::default();
 
         let change_config = ChangeEngineConfig::default();
         let change_engine =
@@ -643,7 +640,6 @@ mod tests {
         let verification_engine =
             Arc::new(VerificationEngine::new(temp_dir.path()).with_config(verify_config));
 
-        let diag_config = DiagnosticConfig::default();
         let diagnostic_engine = Arc::new(
             DiagnosticEngine::new(temp_dir.path().to_path_buf(), DiagnosticConfig::default())
                 .unwrap(),

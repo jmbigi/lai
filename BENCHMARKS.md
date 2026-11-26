@@ -104,7 +104,7 @@ corregida de `run_benchmark.sh` (`LAI_BIN` en lugar de rutas absolutas).
 |------|-------|
 | Hardware | Intel Core i7-10510U (4c/8t, 1.8 GHz), 15.8 GB RAM, Intel UHD Graphics (sin GPU dedicada) |
 | Modelo | `qwen2.5-coder:3b` (Q4, ~1.9 GB) |
-| Runtime | Ollama en `127.0.0.1:11434`, contexto por defecto (4096) |
+| Runtime | Ollama en `127.0.0.1:11434`. Contexto cargado **32768** (verificado con `/api/ps`; la etiqueta anterior «4096» era una suposición y estaba mal) |
 | Binario | `lai 0.1.0` (Rust, `--release`) |
 | Tareas | 3 (modo `quick`: `add_two_numbers`, `factorial`, `fix_off_by_one`), `--max-iterations 10` |
 
@@ -114,6 +114,76 @@ corregida de `run_benchmark.sh` (`LAI_BIN` en lugar de rutas absolutas).
 | `factorial` | FAIL | 391.6 s | no compila o los tests fallan |
 | `fix_off_by_one` | PARTIAL | 223.3 s | compila, sin tests ejecutados |
 | **Total** | **0 PASS / 1 PARTIAL / 2 FAIL** | **870.5 s (14.5 min)** | — |
+
+> **Corrección posterior (Regla 6/7).** Esta corrida se hizo con un bug activo en
+> el parser de tool calls: `qwen2.5-coder:3b` emitía el bloque ```` ```json ````
+> correctamente pero lai respondía `No tool call emitted` porque el `content`
+> traía saltos de línea literales y sólo se aceptaba la clave `"tool"`. Es decir,
+> el `FAIL` de `add_two_numbers` **no era falta de capacidad del modelo sino un
+> bug del agente**. Los números se conservan como registro histórico de la
+> medición; la comparación válida es la de la subsección siguiente.
+
+### CPU sin GPU dedicada, con el parser corregido (2026-11-26, repetición)
+
+Misma máquina, mismo modelo, mismas 3 tareas, mismo binario `--release`, pero
+con el parser de tool calls arreglado. El agente **sí escribe archivos** ahora.
+
+| Dato | Valor |
+|------|-------|
+| Hardware | Intel Core i7-10510U (4c/8t, 1.8 GHz), 15.8 GB RAM, Intel UHD Graphics |
+| Modelo | `qwen2.5-coder:3b` (Q4_K_M, 3.1B, ~1.9 GB de pesos) |
+| Runtime | Ollama `127.0.0.1:11434`, `context_length` cargado **32768** (leído de `/api/ps`) |
+| Binario | `lai 0.1.0` (Rust, `--release`, con el parser corregido) |
+| Tareas | 3 (`quick`), `--max-iterations 10` |
+
+| Tarea | Resultado | Tiempo | Motivo real (revisado a mano) |
+|-------|-----------|--------|-------------------------------|
+| `add_two_numbers` | FAIL | 1312.1 s | reescribió `add(i32, i32)` como `add(&str, &str)` y rompió la compilación y el test existente |
+| `factorial` | FAIL | 345.5 s | **sobrescribió `Cargo.toml`** con un `...` literal → TOML inválido |
+| `fix_off_by_one` | PARTIAL | 198.0 s | cambió `0..=arr.len()` por `0..arr.len() - 1` (sigue mal: underflow con slice vacío); compila, no hay tests |
+| **Total** | **0 PASS / 1 PARTIAL / 2 FAIL** | **1855.5 s (30.9 min)** | — |
+
+**Lectura honesta.** El arreglo del parser funcionó: los archivos cambian y el
+`FAIL` ya no es «no file changes». Pero el resultado sigue siendo 0 PASS, y la
+causa es distinta y más informativa:
+
+1. El modelo **reemplaza código que ya funcionaba** en lugar de extenderlo:
+   `add(i32, i32)` pasó a `add(&str, &str)`, lo que rompe el test que existía.
+2. El modelo **toca archivos que no debería**: sobrescribió `Cargo.toml` con
+   contenido inventado. No hay ninguna guarda en el agente que impida escribir
+   manifiestos.
+3. El «arreglo» del off-by-one es incorrecto pero compila, así que el
+   verificador solo puede dar `PARTIAL`.
+
+Esto es un problema de **diseño de la tarea y del prompt**, no solo del modelo:
+los tres enunciados («escribe una función que sume…») son ambiguos cuando el
+archivo ya contiene una función que lo hace, y nada le dice al agente que
+conserve la API pública ni que no toque `Cargo.toml`. Comparar este 0 PASS con
+cifras de modelos frontier no tendría sentido. Con 3 tareas tampoco se puede
+afirmar nada sobre la calidad del modelo (Regla 11).
+
+### Efecto de `OLLAMA_CONTEXT_LENGTH` en el throughput (2026-11-26)
+
+Medición controlada, una sola variable (Regla 11): mismo modelo, mismo binario,
+mismo prompt (43 tokens de prompt, 128 tokens generados, `temperature: 0`), dos
+instancias de Ollama en el mismo equipo. Reproducible con
+`scripts/measure_context_throughput.sh`. `tok/s` sale de `eval_count` /
+`eval_duration` que devuelve `/api/generate`; el contexto cargado se lee de
+`/api/ps`, no se asume.
+
+| Instancia | `context_length` real | Muestras (tok/s) | Media |
+|-----------|----------------------|------------------|-------|
+| `:11434` (por defecto) | 32768 | 7.56, 7.19, 6.44, 7.26 | **7.11** |
+| `:11435` (`OLLAMA_CONTEXT_LENGTH=16384`) | 16384 | 7.15, 7.28, 6.82, 7.04 | **7.07** |
+
+**Conclusión medida:** la diferencia es del 0.6 %, indistinguible del ruido con
+4 muestras. En este equipo, con prompts cortos, bajar el contexto de 32768 a
+16384 **no acelera la decodificación**. La recomendación de
+`OLLAMA_CONTEXT_LENGTH=16384` que figuraba en `swebench/README.md` no está
+respaldada por esta medición: puede servir para ahorrar memoria (la caché KV de
+32k ocupa más), pero no como mejora de velocidad. Además, `32768` no era una
+suposición: es lo que el modelo trae por defecto, así que la etiqueta «contexto
+4096» de la tabla anterior era falsa y se corrigió.
 
 Lectura honesta: en CPU pura, 3 tareas consumen ~15 minutos y el modelo de 3B no
 completa ninguna con evidencia de tests. Es coherente con lo descrito en
@@ -129,6 +199,9 @@ varianza. Para afirmar algo haría falta repetir con controles intercalados
 | Bug encontrado | Arreglo |
 |----------------|---------|
 | Modelos sin capacidad `tools` no escribían archivos | Tool calling nativo + fallback JSON + *nudge* si responde en prosa |
+| El modelo emitía ```` ```json ```` correcto pero lai decía «No tool call emitted» | Parser reparado: saltos de línea literales dentro de cadenas, alias `tool`/`name`, `arguments` como string |
+| El agente sobrescribe `Cargo.toml` con contenido inventado | **Pendiente** (hallazgo 2026-11-26): no hay guarda sobre manifiestos |
+| El agente reemplaza una API pública que ya funcionaba | **Pendiente**: los enunciados del benchmark no declaran la restricción |
 | `\n` literales (JSON doble-escapado) → archivo en una línea | `unescape_literal_escapes` en `normalize_tool_arguments` |
 | Ruta con `:` (`qwen3:8b/`) rompía `cargo test` | Sanear nombre de directorio en los scripts |
 | "PASS" falso al no modificarse nada | Hash antes/después + tests obligatorios |

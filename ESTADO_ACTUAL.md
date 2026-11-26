@@ -158,12 +158,15 @@ Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo check` | OK, 4 avisos preexistentes en `main.rs` (variables sin usar) |
-| `cargo build --release` | OK (~6 min) |
-| `cargo test tools::tests` | 8/8 pasan |
+| `cargo check` | OK, sin avisos (2026-11-26, tanda 2) |
+| `cargo build --release` | OK (~3 min) |
+| `cargo test` (suite completa) | 90 tests OK, 0 fallos |
+| `cargo test --lib` | 61 tests OK (incluye 8 de `tools` y 7 del parser de tool calls) |
+| `cargo clippy --all-targets` | 0 warnings, 0 errores |
+| `cargo fmt --check` | limpio |
+| `python -m pytest tests -q` (Python legado) | 113 passed, 9 skipped |
 | `python -m unittest swebench.test_*` | 75/75 pasan |
 | `python scripts/check_docs.py` | 0 fallos |
-| `cargo fmt` / `cargo clippy` | **No instalados** en este toolchain (no ejecutados) |
 
 | Componente | Valor |
 |---|---|
