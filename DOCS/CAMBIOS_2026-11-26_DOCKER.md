@@ -286,13 +286,39 @@ compilación repetía las ~25 minutos de dependencias. Ahora apunta a
 `/cargo/target`, dentro del volumen ya montado para el caché de rustup. La
 primera compilación cuesta lo mismo; las siguientes reaprovechan todo.
 
-## 16. Pendientes
+## 16. Resumen reproducible: `summarize.py` y contexto medido
+
+**ANTES:** para pasar los resultados a `BENCHMARKS.md` había que abrir a mano el
+`meta.json` y el `report.json` y cruzarlos. El contexto que se anotaba era el que
+se suponía, no el que Ollama tenía cargado.
+
+**DESPUÉS:**
+
+- `run_eval.py` consulta `/api/ps` **después** de cada corrida (cuando el modelo
+  ya está cargado) y guarda `context_length` en los metadatos. Si no se puede
+  saber, queda `null`: no se rellena con un valor por defecto.
+- `read_context()` factoriza esa lectura y la reutiliza el preflight. Se
+  consulta `/api/ps` y, si el modelo no está cargado, `/api/show` (`num_ctx`).
+- `summarize.py` cruza metadatos y evaluación y emite la tabla markdown:
+
+  ```
+  python3 swebench/summarize.py --model qwen2.5-coder:7b --md
+  ```
+
+  Lo no medido aparece como `—`. Si falta la evaluación lo dice en vez de
+  mostrar un cero. También resume evaluaciones sin metadatos de agente (por
+  ejemplo la validación con parches oficiales).
+
+Medido durante el piloto (i7-10510U, 15.8 GB): `qwen2.5-coder:7b` Q4_K_M, 7.6B,
+6.9 GB de pesos, `size_vram: 0` (**100 % CPU**) y `context_length: 32768`.
+
+## 17. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|
-| Compilar `swebench/bin/lai` (glibc 2.35) | en curso (bug de `cp` corregido) |
+| Compilar `swebench/bin/lai` (glibc 2.35) | ✅ `lai 0.1.0`, 6.7 MB |
 | Validar el evaluador con parches oficiales (`oracle5`) | ✅ **5/5 resueltas** |
-| Piloto de 5 instancias con el agente | depende del binario |
+| Piloto de 5 instancias con el agente | en curso |
 | Tabla representativa en `BENCHMARKS.md` | depende del piloto |
 
-El piloto sigue sin ejecutarse. No hay cifras de agente que publicar (Regla 11).
+No hay cifras de agente que publicar todavía (Regla 11).

@@ -185,6 +185,37 @@ class ClassifyResultTests(unittest.TestCase):
         self.assertIn("Regla 4", reason)
 
 
+class ReadContextTests(unittest.TestCase):
+    """read_context(): nunca inventa un valor por defecto."""
+
+    def test_reads_loaded_model_from_api_ps(self):
+        with mock.patch.object(run_eval, "http_json") as fake:
+            fake.return_value = {
+                "models": [{"name": "qwen2.5-coder:7b", "model": "qwen2.5-coder:7b", "context_length": 32768}]
+            }
+            self.assertEqual(run_eval.read_context("qwen2.5-coder:7b", "http://127.0.0.1:11434/v1"), 32768)
+
+    def test_matches_model_without_tag(self):
+        with mock.patch.object(run_eval, "http_json") as fake:
+            fake.return_value = {"models": [{"name": "qwen2.5-coder:7b", "context_length": 16384}]}
+            self.assertEqual(run_eval.read_context("qwen2.5-coder", "http://127.0.0.1:11434/v1"), 16384)
+
+    def test_falls_back_to_api_show_num_ctx(self):
+        with mock.patch.object(run_eval, "http_json") as fake:
+            fake.side_effect = [{"models": []}, {"parameters": "num_ctx 8192\nstop <|im_end|>"}]
+            self.assertEqual(run_eval.read_context("m", "http://127.0.0.1:11434/v1"), 8192)
+
+    def test_returns_none_when_unknown(self):
+        with mock.patch.object(run_eval, "http_json") as fake:
+            fake.side_effect = [{"models": []}, {"parameters": "temperature 0"}]
+            self.assertIsNone(run_eval.read_context("m", "http://127.0.0.1:11434/v1"))
+
+    def test_returns_none_when_ollama_unreachable(self):
+        with mock.patch.object(run_eval, "http_json") as fake:
+            fake.return_value = None
+            self.assertIsNone(run_eval.read_context("m", "http://127.0.0.1:11434/v1"))
+
+
 class PreflightTests(unittest.TestCase):
     def test_ollama_root_url_is_checked(self):
         payload = {"data": [{"id": "qwen3:4b"}]}

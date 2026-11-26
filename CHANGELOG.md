@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **swebench/summarize.py + test_summarize.py**: cruza los metadatos del agente con el informe de evaluación y emite la tabla markdown para `BENCHMARKS.md`. Lo no medido aparece como `—`; sin evaluación avisa en vez de mostrar un cero. Admite `--run-id` y `--md`. 15 tests offline.
+- **swebench/run_pilot.sh**: piloto de 5 instancias, una por parser oficial, con `--keep-going`.
+- **Contexto medido en los metadatos**: `run_eval.py` guarda `context_length` leído de `/api/ps` después de cada corrida (nunca un valor supuesto).
 - **swebench/docker_env.py + test_docker_env.py**: diagnóstico compartido del motor Docker. Devuelve la causa real del fallo (binario ausente, motor colgado, versión de servidor antigua) y pistas accionables, en lugar de un mensaje genérico tras 30 s de espera. 15 tests offline.
 - **swebench/make_oracle_predictions.py**: genera predicciones con el parche oficial del dataset para validar `evaluate.py` sin ejecutar el agente. Si el evaluador es correcto, todas salen `resolved`.
 - **swebench/fetch_dataset.py `--via {auto,api,datasets}`**: descarga del dataset por la API pública de HuggingFace con sólo la stdlib (`urllib`, páginas de 100 filas). Ya no es obligatorio `pip install datasets`. Verificado: 500 instancias de `SWE-bench_Verified` con `image`, `eval_script`, `log_parser` y `eval_type`.

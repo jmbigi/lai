@@ -214,6 +214,28 @@ def container_base_url(base_url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=netloc))
 
 
+def read_context(model: str, base_url: str) -> int | None:
+    """Longitud de contexto REAL del modelo, o None si no se puede saber.
+
+    `/api/ps` solo informa de los modelos cargados; `/api/show` puede declarar
+    `num_ctx`. No se asume ningún valor por defecto: es preferible un None
+    honesto a un 4096 inventado.
+    """
+    root = ollama_root(base_url)
+    ps = http_json(root + "/api/ps") or {}
+    for item in ps.get("models", []):
+        names = {item.get("name"), item.get("model")}
+        if model in names or any(name and name.split(":")[0] == model.split(":")[0] for name in names):
+            value = item.get("context_length") or item.get("context")
+            if value:
+                return int(value)
+    show = http_json(root + "/api/show", {"model": model}) or {}
+    match = re.search(r"num_ctx\s+(\d+)", show.get("parameters") or "")
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def preflight_ollama(base_url: str, model: str) -> bool:
     host = (urllib.parse.urlparse(base_url).hostname or "").lower()
     if host not in LOCAL_HOSTS:
@@ -240,21 +262,8 @@ def preflight_ollama(base_url: str, model: str) -> bool:
         return False
 
     # Contexto: si el modelo no está cargado no se puede leer de /api/ps, así
-    # que se consulta /api/show. No se asume ningún valor por defecto: el valor
-    # real depende de la versión de Ollama y del propio modelo.
-    root = ollama_root(base_url)
-    ps = http_json(root + "/api/ps") or {}
-    context = None
-    for item in ps.get("models", []):
-        names = {item.get("name"), item.get("model")}
-        if model in names or any(name and name.split(":")[0] == model.split(":")[0] for name in names):
-            context = item.get("context_length") or item.get("context")
-            break
-    if context is None:
-        show = http_json(root + "/api/show", {"model": model}) or {}
-        match = re.search(r"num_ctx\s+(\d+)", show.get("parameters") or "")
-        if match:
-            context = int(match.group(1))
+    # que se consulta /api/show. No se asume ningún valor por defecto.
+    context = read_context(model, base_url)
 
     if context is None:
         print(
@@ -456,6 +465,11 @@ def run_instance(
     # parche vacío: eso falsearía la tasa de resolución.
     status, infra_error = classify_result(stdout, stderr, rc)
 
+    # Contexto REAL usado. Se consulta después de la corrida porque /api/ps solo
+    # informa de modelos ya cargados. Regla 11: sin este dato la medición no es
+    # reproducible.
+    context = read_context(model, base_url)
+
     return {
         "instance_id": iid,
         "status": status,
@@ -465,6 +479,7 @@ def run_instance(
         "patch": patch,
         "patch_bytes": len(patch),
         "infra_error": infra_error,
+        "context_length": context,
         "log": str(log_path.relative_to(DATA_DIR)),
     }
 
@@ -583,6 +598,7 @@ def main() -> int:
                 "patch_bytes": 0,
                 "error": result["infra_error"],
                 "model": args.model,
+                "context_length": result.get("context_length"),
                 "at": datetime.now(timezone.utc).isoformat(),
                 "log": result["log"],
             }
@@ -600,6 +616,7 @@ def main() -> int:
                 "duration_s": result["duration_s"],
                 "patch_bytes": result["patch_bytes"],
                 "model": args.model,
+                "context_length": result.get("context_length"),
                 "at": datetime.now(timezone.utc).isoformat(),
                 "log": result["log"],
             }

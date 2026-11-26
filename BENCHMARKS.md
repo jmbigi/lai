@@ -241,20 +241,33 @@ varianza. Para afirmar algo haría falta repetir con controles intercalados
 Hay un harness incremental en [`swebench/`](swebench/README.md) para ejecutar el
 benchmark oficial por etapas (descargar → preparar → ejecutar → evaluar).
 
-Estado: **harness completo (etapas 1–4)**. La evaluación ya está implementada
-(`swebench/evaluate.py`): aplica el parche del modelo, ejecuta el `eval_script`
-oficial de cada instancia, parsea los logs con el parser oficial y calcula
-`FAIL_TO_PASS`/`PASS_TO_PASS` y *resolved* con la semántica oficial. Los parsers
-y la graduación tienen tests offline (`swebench/test_evaluate.py`, 15 tests, sin
-Docker).
+Estado: **harness completo (etapas 1–4) y validado de punta a punta**. La
+evaluación (`swebench/evaluate.py`) aplica el parche del modelo, ejecuta el
+`eval_script` oficial de cada instancia, parsea los logs con el parser oficial y
+calcula `FAIL_TO_PASS`/`PASS_TO_PASS` y *resolved* con la semántica oficial.
 
-La única corrida de agente realizada fue `astropy__astropy-12907` con
-`qwen3:8b` (parche generado en 615 s). **Ese parche no está evaluado**, y no
-hay corrida piloto de 10–20 instancias.
+**Validación del evaluador (2026-11-26):** se generaron predicciones con el
+`patch` oficial del dataset (`swebench/make_oracle_predictions.py`) para cinco
+instancias, una por cada parser oficial, y se evaluaron. Resultado: **5/5
+resueltas, 0 errores de infraestructura**. Esto demuestra que el evaluador no
+devuelve «no resuelto» por defecto; **no es un resultado del agente**, porque el
+parche lo escribió una persona.
 
-> **No hay todavía resultados representativos.** Cualquier cifra de esta sección
-> sería prematura. La tabla siguiente se publicará solo cuando exista una
-> corrida real, con hardware, fecha y contexto declarados.
+| Instancia | Parser | Tiempo de evaluación |
+|-----------|--------|---------------------:|
+| django__django-12209 | `parse_log_django` | 174.6 s |
+| pytest-dev__pytest-5809 | `parse_log_pytest` | 49.6 s |
+| scikit-learn__scikit-learn-14141 | `parse_log_pytest_v2` | 88.7 s |
+| sphinx-doc__sphinx-8595 | `parse_log_pytest_v2` | 57.3 s |
+| sympy__sympy-20916 | `parse_log_sympy` | 50.5 s |
+
+Las corridas de agente anteriores (`astropy__astropy-12907` con `qwen3:8b`, 615 s)
+se hicieron con un binario que no podía llegar a Ollama desde el contenedor, así
+que **sus parches no están evaluados y no cuentan**.
+
+> **No hay todavía resultados representativos del agente.** Cualquier cifra de
+> esta sección sería prematura. La tabla siguiente se publicará solo cuando
+> exista una corrida real, con hardware, fecha y contexto declarados.
 
 | Modelo | Instancias | Resueltas | Tasa | Tiempo medio | Contexto |
 |--------|-----------|-----------|------|--------------|----------|

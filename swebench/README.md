@@ -32,6 +32,8 @@ swebench/
 ├── build_lai_for_swebench.sh    # 2b. binario compatible (glibc 2.35)
 ├── run_eval.py                  # 3. agente en contenedor → data/predictions/*.jsonl
 ├── evaluate.py                  # 4. tests oficiales → data/evaluation/<run>/report.json
+├── summarize.py                 # 5. tabla markdown para BENCHMARKS.md (agente + evaluación)
+├── run_pilot.sh                 # piloto de 5 instancias (una por parser oficial)
 ├── make_oracle_predictions.py   # utilidad: predicciones con el parche oficial (validar el evaluador)
 ├── docker_env.py                # diagnóstico de Docker compartido (versión, pistas)
 ├── test_evaluate.py             # tests offline: parsers y graduación
@@ -39,6 +41,7 @@ swebench/
 ├── test_run_eval.py             # tests offline: clasificación y preflight
 ├── test_harness_offline.py      # tests offline: dataset simulado de punta a punta
 ├── test_docker_env.py           # tests offline: diagnóstico de Docker
+├── test_summarize.py            # tests offline: cruce de metadatos y evaluación
 ├── bin/                         # binario compilado (ignorado por git)
 └── data/                        # instancias, estado, logs, predicciones (ignorado)
 ```
@@ -148,6 +151,17 @@ python3 swebench/run_eval.py --instance astropy__astropy-12907 --max-iterations 
 `run_pilot.sh` ejecuta las 5 instancias del piloto (una por cada parser oficial)
 con `--keep-going`, de modo que un fallo de infraestructura no detiene el resto.
 
+**Reejecutar una instancia.** `run_eval.py` salta las instancias que ya tienen
+predicción escrita para ese modelo, y muestra «No hay instancias pendientes para
+este modelo». Para repetir una, usa `--force`:
+
+```bash
+python3 swebench/run_eval.py --instance django__django-12209 --force
+```
+
+Los fallos de infraestructura **no** cuentan como predicción: se reintentan sin
+necesidad de `--force`.
+
 Arranca la imagen de la instancia, ejecuta `lai auto` dentro de `/testbed` con
 el enunciado del issue y captura `git diff` como predicción en formato oficial
 (`instance_id`, `model_name_or_path`, `model_patch`).
@@ -195,6 +209,19 @@ Prueba offline de los parsers y la graduación, sin Docker:
 python3 -m unittest swebench/test_evaluate.py -v
 ```
 
+### Etapa 5 — Resumir para `BENCHMARKS.md`
+
+```bash
+python3 swebench/summarize.py --model qwen2.5-coder:7b
+python3 swebench/summarize.py --model qwen2.5-coder:7b --md    # solo la tabla
+```
+
+Cruza los metadatos del agente (`data/predictions/<modelo>.meta.json`) con el
+informe de evaluación (`data/evaluation/<run_id>/report.json`) y emite una tabla
+markdown lista para pegar. Lo que no está medido aparece como `—`; si falta la
+evaluación lo dice en vez de inventar un cero. Registra el **contexto real** que
+Ollama tenía cargado (`/api/ps` después de la corrida), no un valor supuesto.
+
 ---
 
 ## Pruebas offline del harness (sin Docker)
@@ -203,15 +230,18 @@ Todo lo que no depende de un *daemon* se prueba en cualquier equipo:
 
 ```bash
 python3 -m unittest swebench.test_prepare swebench.test_run_eval \
-    swebench.test_harness_offline swebench.test_evaluate
+    swebench.test_harness_offline swebench.test_evaluate \
+    swebench.test_docker_env swebench.test_summarize
 ```
 
 | Suite | Qué cubre |
 |-------|-----------|
 | `test_prepare.py` | Nombre de imagen (dataset y convención), `image_state` (presente/ausente/desconocido/timeout), estado atómico, JSON corrupto, `free_gb` |
-| `test_run_eval.py` | `slug` sin traversal, `build_task`, `ollama_root`, extracción del diff (primer bloque), clasificación `timeout`/`infra_error`/`no_patch`/`patched` (glibc, librerías, `command not found`, marcadores ausentes), preflight de Ollama e imágenes |
+| `test_run_eval.py` | `slug` sin traversal, `build_task`, `ollama_root`, `read_context` (nunca inventa contexto), traducción del base-url al contenedor, extracción del diff (primer bloque), clasificación `timeout`/`infra_error`/`no_patch`/`patched` (glibc, librerías, `command not found`, rechazo de la Regla 4, marcadores ausentes), preflight de Ollama e imágenes |
 | `test_harness_offline.py` | Normalización de instancias (listas JSON), escritura atómica, carga en `evaluate.py`, `choose_predictions`, wrapper del `eval_script`, graduación con dataset simulado |
-| `test_evaluate.py` | Parsers oficiales, códigos de salida, inyección del `exit code`, graduación oficial |
+| `test_evaluate.py` | Parsers oficiales, códigos de salida, inyección del `exit code`, graduación oficial, `FAIL_TO_PASS`/`PASS_TO_PASS` vacíos válidos |
+| `test_docker_env.py` | Diagnóstico de Docker: CLI ausente, motor colgado, versión vacía, antigüedad del servidor |
+| `test_summarize.py` | Cruce de metadatos con el informe, modo solo-informe, evaluación ausente, `--md` |
 
 Ninguna de estas suites usa Docker, HuggingFace ni red.
 
