@@ -7,6 +7,7 @@
 #
 # Uso:
 #   ./swebench/build_lai_for_swebench.sh
+#   PLATFORM=linux/amd64 ./swebench/build_lai_for_swebench.sh
 #
 # Resultado:
 #   swebench/bin/lai   binario listo para copiarse dentro de cualquier imagen
@@ -17,15 +18,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$(cd "$ROOT/.." && pwd)"
 OUT="$ROOT/bin"
 BUILDER_IMAGE="${BUILDER_IMAGE:-ubuntu:22.04}"
+PLATFORM="${PLATFORM:-}"
 
 mkdir -p "$OUT"
+
+PLATFORM_ARGS=()
+if [ -n "$PLATFORM" ]; then
+    PLATFORM_ARGS=(--platform "$PLATFORM")
+fi
 
 echo "Compilando lai en $BUILDER_IMAGE (glibc 2.35) ..."
 echo "Fuente: $SRC/lai_rust"
 echo "Salida: $OUT/lai"
+if [ -n "$PLATFORM" ]; then
+    echo "Plataforma: $PLATFORM"
+fi
 echo
 
-docker run --rm \
+docker run --rm "${PLATFORM_ARGS[@]}" \
     -v "$SRC/lai_rust":/src:ro \
     -v "$OUT":/out \
     -v "${CARGO_CACHE:-$HOME/.cache/lai-swebench-cargo}":/cargo \
@@ -51,7 +61,7 @@ docker run --rm \
         # contra la glibc nueva del host y se copiaría por error.
         rm -rf /build/target
         cd /build
-        cargo build --release --quiet
+        cargo build --release --locked --quiet
         cp /tmp/target/release/lai /out/lai
         chmod +x /out/lai
         echo "--- verificación ---"

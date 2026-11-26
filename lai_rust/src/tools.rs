@@ -17,6 +17,304 @@ pub struct ToolSchema {
 }
 type BoxedToolFuture = Pin<Box<dyn Future<Output = Result<String>> + Send>>;
 type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> BoxedToolFuture + Send + Sync>;
+
+/// Directories that are never useful for code search and can be huge.
+fn is_skipped_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | "target"
+            | "node_modules"
+            | "__pycache__"
+            | ".venv"
+            | "venv"
+            | "env"
+            | ".tox"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".cache"
+            | "coverage"
+            | "vendor"
+    )
+}
+
+fn arg_str<'a>(args: &'a HashMap<String, Value>, key: &str, default: &'a str) -> &'a str {
+    args.get(key).and_then(|v| v.as_str()).unwrap_or(default)
+}
+
+fn arg_usize(args: &HashMap<String, Value>, key: &str, default: usize) -> usize {
+    args.get(key)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(default)
+}
+
+fn arg_bool(args: &HashMap<String, Value>, key: &str, default: bool) -> bool {
+    args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+/// Read a whole file or a 1-based line range.
+///
+/// Large files are the main way a local model blows its context window, so the
+/// default is capped and the header tells the model exactly which lines it saw.
+fn read_file_tool(args: &HashMap<String, Value>) -> Result<String> {
+    const DEFAULT_LINES: usize = 400;
+    const MAX_LINES: usize = 2_000;
+
+    let path = arg_str(args, "path", "");
+    if path.is_empty() {
+        return Err(anyhow::anyhow!("read_file requires a non-empty 'path'"));
+    }
+    let bytes = fs::read(path).map_err(|e| anyhow::anyhow!("read_file {path}: {e}"))?;
+    if bytes.iter().take(8192).any(|b| *b == 0) {
+        return Err(anyhow::anyhow!(
+            "read_file {path}: binary file (contains NUL bytes)"
+        ));
+    }
+    let content = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    if total == 0 {
+        return Ok(format!("{path}: empty file"));
+    }
+
+    let start = arg_usize(args, "start_line", 1).max(1);
+    let end_requested = args
+        .get("end_line")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .filter(|v| *v > 0);
+    let max_requested = args
+        .get("max_lines")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .filter(|v| *v > 0);
+
+    let mut end = end_requested.unwrap_or(total).min(total);
+    let limit = match max_requested {
+        Some(n) => n,
+        None if end_requested.is_some() => end.saturating_sub(start) + 1,
+        None => DEFAULT_LINES,
+    }
+    .min(MAX_LINES);
+    if end >= start {
+        end = end.min(start.saturating_add(limit.saturating_sub(1)));
+    }
+
+    if start > total {
+        return Ok(format!(
+            "{path}: start_line {start} is past end of file ({total} lines)"
+        ));
+    }
+    let end = end.max(start).min(total);
+    let mut out = format!("{path}: lines {start}-{end} of {total}\n");
+    out.push_str(&lines[start - 1..end].join("\n"));
+    if end < total {
+        out.push_str(&format!(
+            "\n... ({} more lines; use start_line/end_line to read them)",
+            total - end
+        ));
+    }
+    Ok(out)
+}
+
+/// Search files with a literal or regex matcher, skipping build/VCS noise.
+fn grep_tool(args: &HashMap<String, Value>) -> Result<String> {
+    const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+    let pattern = arg_str(args, "pattern", "");
+    if pattern.is_empty() {
+        return Err(anyhow::anyhow!("grep requires a non-empty 'pattern'"));
+    }
+    let path = arg_str(args, "path", ".");
+    let use_regex = arg_bool(args, "regex", false);
+    let case_insensitive = arg_bool(args, "case_insensitive", false);
+    let glob_filter = {
+        let raw = arg_str(args, "glob", "");
+        if raw.is_empty() {
+            None
+        } else {
+            Some(
+                glob::Pattern::new(raw)
+                    .map_err(|e| anyhow::anyhow!("invalid glob {raw:?}: {e}"))?,
+            )
+        }
+    };
+    let max_results = arg_usize(args, "max_results", 200).clamp(1, 1_000);
+
+    let regex = if use_regex {
+        Some(
+            regex::RegexBuilder::new(pattern)
+                .case_insensitive(case_insensitive)
+                .build()
+                .map_err(|e| anyhow::anyhow!("invalid regex {pattern:?}: {e}"))?,
+        )
+    } else {
+        None
+    };
+    let needle = pattern.to_lowercase();
+
+    let mut matches = Vec::new();
+    let walker = WalkDir::new(path)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy()));
+    for entry in walker.filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        if let Some(filter) = &glob_filter {
+            let rel = p.strip_prefix(path).unwrap_or(p);
+            let name = p.file_name().unwrap_or_default().to_string_lossy();
+            if !filter.matches_path(rel) && !filter.matches(&name) {
+                continue;
+            }
+        }
+        if let Ok(meta) = entry.metadata() {
+            if meta.len() > MAX_FILE_BYTES {
+                continue;
+            }
+        }
+        let bytes = match fs::read(p) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if bytes.iter().take(8192).any(|b| *b == 0) {
+            continue;
+        }
+        let content = String::from_utf8_lossy(&bytes);
+        for (i, line) in content.lines().enumerate() {
+            let hit = match &regex {
+                Some(re) => re.is_match(line),
+                None if case_insensitive => line.to_lowercase().contains(&needle),
+                None => line.contains(pattern),
+            };
+            if !hit {
+                continue;
+            }
+            let mut shown: String = line.chars().take(300).collect();
+            if line.chars().count() > 300 {
+                shown.push('…');
+            }
+            matches.push(format!("{}:{}: {}", p.display(), i + 1, shown));
+            if matches.len() >= max_results {
+                break;
+            }
+        }
+        if matches.len() >= max_results {
+            break;
+        }
+    }
+
+    if matches.is_empty() {
+        Ok(format!("No matches for {pattern:?} in {path}"))
+    } else {
+        Ok(matches.join("\n"))
+    }
+}
+
+/// Find files by glob without panicking on an invalid pattern.
+fn find_files_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let pattern = arg_str(args, "pattern", "*");
+    let path = arg_str(args, "path", ".");
+    let max_results = arg_usize(args, "max_results", 200).clamp(1, 1_000);
+    let glob_pattern = glob::Pattern::new(pattern)
+        .map_err(|e| anyhow::anyhow!("invalid glob {pattern:?}: {e}"))?;
+
+    let mut matches = Vec::new();
+    let walker = WalkDir::new(path)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy()));
+    for entry in walker.filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let rel = p.strip_prefix(path).unwrap_or(p);
+        let name = p.file_name().unwrap_or_default().to_string_lossy();
+        if glob_pattern.matches_path(rel) || glob_pattern.matches(&name) {
+            matches.push(p.display().to_string());
+            if matches.len() >= max_results {
+                break;
+            }
+        }
+    }
+    Ok(serde_json::to_string(&matches)?)
+}
+
+fn list_dir_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let path = arg_str(args, "path", ".");
+    let mut entries: Vec<String> = fs::read_dir(path)
+        .map_err(|e| anyhow::anyhow!("list_dir {path}: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                format!("{name}/")
+            } else {
+                name
+            }
+        })
+        .collect();
+    entries.sort();
+    Ok(serde_json::to_string(&entries)?)
+}
+
+/// Apply a unified diff, preferring `git apply` and falling back to `patch`.
+fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let path = arg_str(args, "path", ".");
+    let patch = arg_str(args, "patch", "");
+    if patch.trim().is_empty() {
+        return Err(anyhow::anyhow!("apply_patch requires a non-empty 'patch'"));
+    }
+    let cwd = if Path::new(path).is_dir() { path } else { "." };
+
+    let run = |program: &str, extra: &[&str]| -> Result<std::process::Output> {
+        let mut child = Command::new(program)
+            .args(extra)
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("could not run {program}: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(patch.as_bytes())?;
+        }
+        Ok(child.wait_with_output()?)
+    };
+
+    let git = run("git", &["apply", "--whitespace=nowarn", "-"]);
+    if let Ok(output) = &git {
+        if output.status.success() {
+            return Ok("Patch applied with git apply".into());
+        }
+    }
+    let patch_cmd = run("patch", &["-p1", "--forward"]);
+    match (git, patch_cmd) {
+        (_, Ok(output)) if output.status.success() => Ok("Patch applied with patch -p1".into()),
+        (Ok(git_out), Ok(patch_out)) => Ok(format!(
+            "Patch failed.\ngit apply:\n{}\npatch -p1:\n{}",
+            String::from_utf8_lossy(&git_out.stderr),
+            String::from_utf8_lossy(&patch_out.stderr)
+        )),
+        (Ok(git_out), Err(e)) => Ok(format!(
+            "Patch failed.\ngit apply:\n{}\n{e}",
+            String::from_utf8_lossy(&git_out.stderr)
+        )),
+        (Err(e), _) => Err(e),
+    }
+}
+
 #[derive(Clone)]
 pub struct ToolRegistry {
     pub tools: HashMap<String, ToolFunc>,
@@ -57,10 +355,7 @@ impl ToolRegistry {
         self.tools.insert(name.to_string(), wrapped);
     }
     fn register_core_tools(&mut self) {
-        self.register_tool("read_file", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(fs::read_to_string(path)?)
-        });
+        self.register_tool("read_file", |args| async move { read_file_tool(&args) });
         self.register_tool("write_file", |args| async move {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -68,14 +363,7 @@ impl ToolRegistry {
             fs::write(path, content)?;
             Ok(format!("Written to {} ({} chars)", path, content.len()))
         });
-        self.register_tool("list_dir", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let entries: Vec<String> = fs::read_dir(path)?
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            Ok(serde_json::to_string(&entries)?)
-        });
+        self.register_tool("list_dir", |args| async move { list_dir_tool(&args) });
         self.register_tool("run_command", |args| async move {
             let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
             let cwd = args.get("cwd").and_then(|v| v.as_str());
@@ -111,64 +399,8 @@ impl ToolRegistry {
             }
             Ok(result)
         });
-        self.register_tool("grep", |args| async move {
-            let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let max_results = args
-                .get("max_results")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(200) as usize;
-            let mut matches = Vec::new();
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                let p = entry.path();
-                if !p.is_file() {
-                    continue;
-                }
-                if let Ok(content) = fs::read_to_string(p) {
-                    for (i, line) in content.lines().enumerate() {
-                        if line.contains(pattern) {
-                            matches.push(format!(
-                                "{}:{}: {}",
-                                p.display(),
-                                i + 1,
-                                line.chars().take(300).collect::<String>()
-                            ));
-                            if matches.len() >= max_results {
-                                break;
-                            }
-                        }
-                    }
-                }
-                if matches.len() >= max_results {
-                    break;
-                }
-            }
-            Ok(serde_json::to_string(&matches)?)
-        });
-        self.register_tool("find_files", |args| async move {
-            let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let max_results = args
-                .get("max_results")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(200) as usize;
-            let glob_pattern = glob::Pattern::new(pattern).unwrap();
-            let mut matches = Vec::new();
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                let p = entry.path();
-                if !p.is_file() {
-                    continue;
-                }
-                let name = p.file_name().unwrap().to_string_lossy();
-                if glob_pattern.matches(&name) {
-                    matches.push(p.display().to_string());
-                    if matches.len() >= max_results {
-                        break;
-                    }
-                }
-            }
-            Ok(serde_json::to_string(&matches)?)
-        });
+        self.register_tool("grep", |args| async move { grep_tool(&args) });
+        self.register_tool("find_files", |args| async move { find_files_tool(&args) });
         self.register_tool("repo_map", |args| async move {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             let max_chars = args
@@ -242,26 +474,7 @@ impl ToolRegistry {
             let _ = fs::remove_file(&temp_path);
             Ok(result)
         });
-        self.register_tool("apply_patch", |args| async move {
-            let _path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
-            let mut child = Command::new("patch")
-                .args(["-p0"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                stdin.write_all(patch.as_bytes())?;
-            }
-            let output = child.wait_with_output()?;
-            Ok(if output.status.success() {
-                "Patch applied".into()
-            } else {
-                String::from_utf8_lossy(&output.stderr).to_string()
-            })
-        });
+        self.register_tool("apply_patch", |args| async move { apply_patch_tool(&args) });
         self.register_tool("git_add", |args| async move {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             let files = args.get("files").and_then(|v| v.as_str()).unwrap_or(".");
@@ -322,8 +535,8 @@ impl ToolRegistry {
         vec![
             ToolSchema {
                 name: "read_file".into(),
-                description: "Read a file".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+                description: "Read a file or a 1-based line range. Large files are capped at 400 lines by default; use start_line/end_line/max_lines for precise reads.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","description":"First line, 1-based (default 1)"},"end_line":{"type":"integer","description":"Last line, inclusive"},"max_lines":{"type":"integer","description":"Maximum lines to return (default 400, max 2000)"}},"required":["path"]}),
             },
             ToolSchema {
                 name: "write_file".into(),
@@ -332,7 +545,7 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "list_dir".into(),
-                description: "List directory".into(),
+                description: "List a directory (sorted; directories end with '/')".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
             },
             ToolSchema {
@@ -342,13 +555,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "grep".into(),
-                description: "Search pattern".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern","path"]}),
+                description: "Search files for a literal or regex pattern. Skips .git, target, node_modules and similar build/VCS directories. Returns 'path:line: text'.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"File or directory (default '.')"},"regex":{"type":"boolean","description":"Treat pattern as a regular expression"},"case_insensitive":{"type":"boolean"},"glob":{"type":"string","description":"Only search files matching this glob, e.g. '*.rs'"},"max_results":{"type":"integer","description":"Default 200, max 1000"}},"required":["pattern"]}),
             },
             ToolSchema {
                 name: "find_files".into(),
-                description: "Find files".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern","path"]}),
+                description: "Find files by glob pattern (supports 'src/**/*.rs'). Skips build/VCS directories.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string","description":"Directory (default '.')"},"max_results":{"type":"integer","description":"Default 200, max 1000"}},"required":["pattern"]}),
             },
             ToolSchema {
                 name: "repo_map".into(),
@@ -362,7 +575,7 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "apply_patch".into(),
-                description: "Apply patch".into(),
+                description: "Apply a unified diff with git apply (fallback: patch -p1). 'path' is the repository root.".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"patch":{"type":"string"}},"required":["path","patch"]}),
             },
             ToolSchema {
@@ -391,5 +604,143 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn args(value: Value) -> HashMap<String, Value> {
+        serde_json::from_value(value).expect("test arguments must be an object")
+    }
+
+    fn text(value: &str) -> String {
+        value.to_string()
+    }
+
+    #[test]
+    fn read_file_honours_line_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+
+        let out = read_file_tool(&args(json!({
+            "path": file.to_string_lossy(),
+            "start_line": 2,
+            "end_line": 3
+        })))
+        .unwrap();
+
+        assert!(out.contains("lines 2-3 of 4"), "{out}");
+        assert!(out.contains("two\nthree"), "{out}");
+        assert!(!out.contains("one"), "{out}");
+    }
+
+    #[test]
+    fn read_file_caps_large_files_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("large.txt");
+        let content: String = (1..=500).map(|i| format!("line {i}\n")).collect();
+        fs::write(&file, content).unwrap();
+
+        let out = read_file_tool(&args(json!({"path": file.to_string_lossy()}))).unwrap();
+
+        assert!(out.contains("lines 1-400 of 500"), "{out}");
+        assert!(out.contains("100 more lines"), "{out}");
+    }
+
+    #[test]
+    fn read_file_rejects_binary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("binary.bin");
+        fs::write(&file, [0xff, 0x00, 0x41]).unwrap();
+
+        let err = read_file_tool(&args(json!({"path": file.to_string_lossy()}))).unwrap_err();
+        assert!(err.to_string().contains("binary file"), "{err}");
+    }
+
+    #[test]
+    fn grep_supports_regex_case_and_glob_and_skips_noise() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::create_dir_all(dir.path().join("target")).unwrap();
+        fs::create_dir_all(dir.path().join("node_modules")).unwrap();
+        fs::write(
+            dir.path().join("src/a.rs"),
+            "Hello world\nsecond HELLO\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("target/b.rs"), "Hello target\n").unwrap();
+        fs::write(dir.path().join("node_modules/c.rs"), "Hello node\n").unwrap();
+
+        let out = grep_tool(&args(json!({
+            "pattern": "h.llo",
+            "path": dir.path().to_string_lossy(),
+            "regex": true,
+            "case_insensitive": true,
+            "glob": "*.rs"
+        })))
+        .unwrap();
+
+        assert!(out.contains("a.rs:1:"), "{out}");
+        assert!(out.contains("a.rs:2:"), "{out}");
+        assert!(!out.contains("target"), "{out}");
+        assert!(!out.contains("node_modules"), "{out}");
+    }
+
+    #[test]
+    fn grep_reports_invalid_regex_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = grep_tool(&args(json!({
+            "pattern": "(",
+            "path": dir.path().to_string_lossy(),
+            "regex": true
+        })))
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid regex"), "{err}");
+    }
+
+    #[test]
+    fn find_files_reports_invalid_glob_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = find_files_tool(&args(json!({
+            "pattern": "[",
+            "path": dir.path().to_string_lossy()
+        })))
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid glob"), "{err}");
+    }
+
+    #[test]
+    fn find_files_matches_relative_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/a.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.path().join("src/ignored.txt"), "x\n").unwrap();
+
+        let out = find_files_tool(&args(json!({
+            "pattern": "src/**/*.rs",
+            "path": dir.path().to_string_lossy()
+        })))
+        .unwrap();
+
+        assert!(out.contains("a.rs"), "{out}");
+        assert!(!out.contains("ignored.txt"), "{out}");
+    }
+
+    #[test]
+    fn list_dir_is_sorted_and_marks_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("beta")).unwrap();
+        fs::create_dir(dir.path().join("alpha")).unwrap();
+        fs::write(dir.path().join("z.txt"), "z").unwrap();
+
+        let out = list_dir_tool(&args(json!({"path": dir.path().to_string_lossy()}))).unwrap();
+        let entries: Vec<String> = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(entries, vec!["alpha/", "beta/", "z.txt"]);
+        assert!(text(&out).contains("alpha/"));
     }
 }

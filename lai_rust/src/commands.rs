@@ -153,6 +153,7 @@ pub async fn cmd_chat(prompt: &[String], model: &str, base_url: &str, _allow_rem
         .analyze()
         .map(|ctx| format_context_for_llm(&ctx))
         .unwrap_or_else(|_| analyze_project_context(&cwd));
+    let project_context = truncate_project_context(&project_context);
 
     // Get tool schemas
     let tools = ToolRegistry::new();
@@ -797,6 +798,7 @@ pub async fn cmd_auto(
         .analyze()
         .map(|ctx| format_context_for_llm(&ctx))
         .unwrap_or_else(|_| analyze_project_context(&cwd));
+    let project_context = truncate_project_context(&project_context);
 
     let tools = ToolRegistry::new();
 
@@ -840,11 +842,12 @@ IMPORTANT: Only output the JSON code block when you want to call a tool. Otherwi
 
 TOOL USAGE GUIDE:
 - "write_file": CREATE a new file. Args: {{"path": "file.py", "content": "code here"}}
-- "read_file": READ a file. Args: {{"path": "file.py"}}
+- "read_file": READ a file or a 1-based line range. Args: {{"path": "file.py"}} or {{"path": "file.py", "start_line": 120, "end_line": 220}}. Use a range for large files; the default is capped at 400 lines.
 - "run_python": RUN PYTHON CODE (not commands). Args: {{"code": "print(2+2)"}} - ONLY valid Python code!
 - "run_command": RUN SHELL COMMANDS. Args: {{"command": "ls -la"}} - Use for shell commands!
 - "list_dir": LIST directory. Args: {{"path": "."}}
-- "grep": SEARCH text. Args: {{"pattern": "text", "path": "."}}
+- "grep": SEARCH files. Args: {{"pattern": "text", "path": "."}}; optional "regex": true, "case_insensitive": true, "glob": "*.rs". Prefer grep to locate symbols before reading whole files.
+- "find_files": FIND files by glob. Args: {{"pattern": "src/**/*.rs", "path": "."}}
 
 RULES:
 - To CREATE a file: MUST use "write_file" with "path" and "content"
@@ -1058,6 +1061,33 @@ complete corrected file content. Do not reply with analysis or questions — act
 /// large source file would otherwise evict the task description and the agent
 /// would start answering questions instead of editing code.
 const MAX_TOOL_OUTPUT_CHARS: usize = 6_000;
+
+/// Maximum characters of automatic project context injected in chat/auto.
+///
+/// The analyzer can return README, module lists and objectives; on small models
+/// this preamble can consume most of the window before the user's task arrives.
+const MAX_PROJECT_CONTEXT_CHARS: usize = 8_000;
+
+fn truncate_project_context(context: &str) -> String {
+    if context.chars().count() <= MAX_PROJECT_CONTEXT_CHARS {
+        return context.to_string();
+    }
+    let keep = MAX_PROJECT_CONTEXT_CHARS / 2;
+    let head: String = context.chars().take(keep).collect();
+    let tail: String = context
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    let omitted = context.chars().count() - head.chars().count() - tail.chars().count();
+    format!(
+        "{head}\n\n[... {omitted} characters of project context omitted to protect the \
+         model context window ...]\n\n{tail}"
+    )
+}
 
 /// Truncate a tool result keeping the head and the tail, with a clear marker.
 fn truncate_tool_output(tool: &str, output: &str) -> String {

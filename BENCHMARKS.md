@@ -139,8 +139,25 @@ para ciclos de agente en este hardware. Queda excluido de la comparativa.
 Hay un harness incremental en [`swebench/`](swebench/README.md) para ejecutar el
 benchmark oficial por etapas (descargar → preparar → ejecutar → evaluar).
 
-Estado: **pipeline validado de punta a punta con 1 instancia**
-(`astropy__astropy-12907`, `qwen3:8b`, parche generado en 615 s). Falta
-`evaluate.py` para puntuar, y una corrida piloto de 10–20 instancias. **No hay
-todavía resultados representativos**: cualquier cifra de esta sección sería
-prematura.
+Estado: **harness completo (etapas 1–4)**. La evaluación ya está implementada
+(`swebench/evaluate.py`): aplica el parche del modelo, ejecuta el `eval_script`
+oficial de cada instancia, parsea los logs con el parser oficial y calcula
+`FAIL_TO_PASS`/`PASS_TO_PASS` y *resolved* con la semántica oficial. Los parsers
+y la graduación tienen tests offline (`swebench/test_evaluate.py`, 15 tests, sin
+Docker).
+
+La única corrida de agente realizada fue `astropy__astropy-12907` con
+`qwen3:8b` (parche generado en 615 s). **Ese parche no está evaluado**, y no
+hay corrida piloto de 10–20 instancias.
+
+> **No hay todavía resultados representativos.** Cualquier cifra de esta sección
+> sería prematura. La tabla siguiente se publicará solo cuando exista una
+> corrida real, con hardware, fecha y contexto declarados.
+
+| Modelo | Instancias | Resueltas | Tasa | Tiempo medio | Contexto |
+|--------|-----------|-----------|------|--------------|----------|
+| *(pendiente de corrida piloto)* | — | — | — | — | — |
+
+Metodología prevista (Regla 11): una variable a la vez, `OLLAMA_CONTEXT_LENGTH`
+fijado y documentado, lectura por `grep` + rangos, y separación explícita entre
+fallos del modelo y fallos de infraestructura.

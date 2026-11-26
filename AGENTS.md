@@ -50,6 +50,8 @@ lai_rust/
 3. **Local-only guard**: `is_local_url()` validates endpoints before any generation.
 4. **Tool calling**: AutoMode uses llama.cpp native function calling (not keyword heuristics).
 5. **Loopback only**: `serve` binds to `127.0.0.1:8082` by default; gateway binds to `127.0.0.1:8081`.
+6. **Regla 11**: For low-end CPU teams, measure one variable at a time and never present external figures as lai results. See `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`.
+7. **Regla 10**: Every change must have a before/after record in a change document (see `DOCS/CAMBIOS_2026-11-26.md`).
 
 ## Development Workflow (Rust)
 

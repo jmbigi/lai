@@ -76,6 +76,27 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
     - Esto aplica a: código fuente, archivos de configuración, documentación, tests, scripts, y cualquier artefacto del repositorio.
     - **No hacer cambios "silenciosos" ni batch de cambios sin documentación intermedia.**
 
+11. **Inferencia local en equipos de baja gama: medir antes de recomendar.**
+    Para equipos sin GPU dedicada (8–16 GB de RAM), lai no debe presentar
+    recomendaciones de modelo o cuantización como si fueran resultados propios.
+    - **Medir una variable a la vez** (modelo, cuantización, contexto, KV, hilos)
+      con controles intercalados y registrar tokens/s, RAM libre, tiempo por tarea
+      y tasa de éxito.
+    - **Calcular primero el techo de ancho de banda**: pesos + caché KV + reserva
+      del SO + pico de herramientas debe caber en la RAM libre. Si no cabe, ninguna
+      optimización de software lo resuelve.
+    - **Compuerta de contexto completo**: ningún cambio de cuantización, KV o
+      especulación se adopta si degrada la recuperación de símbolos lejanos.
+    - **Verificación obligatoria**: el bucle determinista (compilador, linter,
+      tests) define la capacidad efectiva; no se sustituye por confianza en el
+      modelo.
+    - **Cifras externas se citan como externas.** Los números de papers o
+      benchmarks de terceros (p. ej. tasas de resolución por cuantización) deben
+      marcarse como no reproducidos por lai hasta que exista una corrida propia.
+    - La guía de referencia es `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`, subordinada a
+      la Regla 0 (sin cloud, sin API keys, sin cuentas externas) y a la Regla 6
+      (honestidad).
+
 ---
 
 ## 2. Definiciones para evitar ambigüedades
@@ -117,6 +138,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | 8. Chess con LLM local | ⚠️ Parcial | `chess/chess.py` fue generado con Qwen3-8B local, pero recibió correcciones manuales; ver `chess/README.md`. |
 | 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust con paridad de comandos: chat, generate, code, think, auto, run, serve, status, models, tools, search, find, fix, review, diff, test, init, config, install, update, exec, doctor, clean, completion, project, repair, ocr, mcp, system-one, deguro, rag, agents, complete, symbols, goto, repomap, interactive. Build release compila limpio. `lai.py` legado sin modificaciones salvo correcciones críticas. |
 | 10. Documentación obligatoria de cambios | 🆕 Nueva | Regla agregada 2026-11-23. Requiere documento de cambios propuestos, estado antes/después por cada cambio, y trazabilidad para trabajo en equipo. |
+| 11. Baja gama: medir antes de recomendar | 🆕 Nueva | Regla agregada 2026-11-26. Exige medir una variable a la vez, calcular el techo de ancho de banda, aplicar la compuerta de contexto completo y marcar las cifras externas como no reproducidas. Guía: `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`. |
 
 ---
 
@@ -127,7 +149,7 @@ Cualquier cambio en estas reglas debe:
 1. Actualizar este archivo (`DOCUMENTACION_REGLAS.md`).
 2. Actualizar el resumen de `README.md` y `AGENTS.md`.
 3. Añadir una entrada en `CHANGELOG.md`.
-4. Mantener la numeración 1–10 y evitar duplicados.
+4. Mantener la numeración 1–11 y evitar duplicados.
 5. Verificarse con `make check` (incluye `scripts/check_docs.py`).
 
 ---
@@ -139,4 +161,5 @@ Cualquier cambio en estas reglas debe:
 - `CHECKLIST.md` — verificación previa a entrega.
 - `ESTADO_ACTUAL.md` — estado verificado del proyecto.
 - `DOCS/README.md` — índice y vigencia de la documentación.
+- `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md` — guía de inferencia local en CPU para equipos de baja gama (Regla 11).
 - `CHANGELOG.md` — historial de cambios.

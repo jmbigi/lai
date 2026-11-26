@@ -9,6 +9,8 @@ This directory contains technical documentation for lai.
 | [REVISION_2026.md](REVISION_2026.md) | Comprehensive technical review, research findings, and roadmap |
 | [CHANGELOG.md](CHANGELOG.md) | Detailed version history |
 | [quality_comparison.md](quality_comparison.md) | Quality metrics and comparison methodology |
+| [INFERENCIA_LOCAL_BAJA_GAMA.md](INFERENCIA_LOCAL_BAJA_GAMA.md) | CPU inference guide for low-end teams (Regla 11) |
+| [CAMBIOS_2026-11-26.md](CAMBIOS_2026-11-26.md) | Before/after record of the 2026-11-26 changes (Regla 10) |
 
 ## External References
 
