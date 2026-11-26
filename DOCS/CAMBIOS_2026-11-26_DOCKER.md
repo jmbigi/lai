@@ -460,7 +460,38 @@ iteraciones en 1048.7 s; `sphinx-doc__sphinx-8595` hizo 4 en 1505.5 s. El coste
 por iteración varía con el tamaño del contexto leído, así que 1500 s no es un
 límite universal: para repos grandes con un 7B en CPU hay que subir `TIMEOUT`.
 
-## 21. Pendientes
+## 21. La salida de los scripts parecía congelada
+
+**Síntoma medido:** el piloto de 4 instancias llevaba 22 minutos y el archivo de
+salida del job en segundo plano no contenía **ni una línea de progreso**. Lo
+único visible eran los dos mensajes informativos iniciales, que van por `stderr`.
+
+**Causa:** `run_eval.py`, `evaluate.py` y `prepare.py` escriben el progreso por
+`stdout`. Cuando `stdout` es una tubería o un archivo (no una terminal), Python
+lo bufferiza por bloques de 4–8 KB. Con una salida por instancia de pocas líneas,
+el buffer no se vacía hasta el final del proceso. `stderr` no se bufferiza, y por
+eso solo se veían los avisos.
+
+Consecuencia práctica: no había forma de saber si el proceso estaba trabajando o
+colgado, y de hecho se llegó a comprobar `docker ps` para averiguarlo.
+
+**DESPUÉS:** los tres scripts activan line-buffering al importarse:
+
+```python
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):
+    pass
+```
+
+El `try/except` es por si `stdout` no es reconfigurable (por ejemplo bajo algunos
+capturadores de test). No cambia ninguna salida, solo cuándo se vacía.
+
+**Verificación:** `python -m py_compile` en los tres archivos y las 6 suites
+offline siguen en **125 tests OK**. No se puede validar el efecto en el piloto en
+curso porque ese proceso ya arrancó con el código anterior.
+
+## 22. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|

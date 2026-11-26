@@ -49,6 +49,14 @@ LOGS = DATA_DIR / "logs"
 PREDICTIONS = DATA_DIR / "predictions"
 LAI_BIN = ROOT / "bin" / "lai"
 
+# Cuando la salida va a un archivo (job en segundo plano) Python la bufferiza por
+# bloques y el proceso parece colgado hasta que termina. Medido el 2026-11-26:
+# un piloto de 22 minutos no mostró ni una línea de progreso.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):  # pragma: no cover - stdout no reconfigurable
+    pass
+
 DIFF_BEGIN = "LAI_DIFF_BEGIN_MARKER"
 DIFF_END = "LAI_DIFF_END_MARKER"
 AGENT_RC = "LAI_AGENT_EXIT_CODE"

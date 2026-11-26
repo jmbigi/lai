@@ -42,6 +42,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
+
+# La salida redirigida a un archivo se bufferiza por bloques y el proceso parece
+# colgado. Line-buffering deja ver el progreso en los jobs en segundo plano.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):  # pragma: no cover - stdout no reconfigurable
+    pass
 INSTANCES = DATA_DIR / "instances.jsonl"
 STATE = DATA_DIR / "state.json"
 PREDICTIONS = DATA_DIR / "predictions"
