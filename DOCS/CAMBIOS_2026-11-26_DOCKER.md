@@ -491,7 +491,16 @@ capturadores de test). No cambia ninguna salida, solo cuándo se vacía.
 offline siguen en **125 tests OK**. No se puede validar el efecto en el piloto en
 curso porque ese proceso ya arrancó con el código anterior.
 
-## 22. Pendientes
+## 22. Pendientes (a cierre del 2026-11-26)
+
+| Pendiente | Estado | Bloqueo / Comentario |
+|---|---|---|
+| **Piloto completo (5/5 instancias)** | 3/5 ejecutadas con binario antiguo | `scikit-learn__scikit-learn-14141` en curso (timeout 2700 s, lleva 24 min); `pytest-dev__pytest-5809` pendiente. Los dos timeouts medidos (sphinx, sympy) fueron causados en parte por un bug ya arreglado (`apply_patch` devolvía `Ok` al fallar). |
+| **Repetir piloto con binario arreglado** | No empezado | Requiere recompilar `swebench/bin/lai` con `build_lai_for_swebench.sh` (incluye guarda write_file, apply_patch atómico, detección de bucles) y volver a lanzar las 5 instancias. ~2–3 h de cómputo total. |
+| **Tabla representativa en `BENCHMARKS.md`** | 3 filas reales + 2 en curso | La tabla actual muestra las 3 corridas medidas; las 2 restantes se completarán cuando termine el piloto. Advertencia de Regla 11 mantenida: muestra pequeña, hardware limitado, sin comparación directa con cifras frontier. |
+| **Dataset SWE-bench completo** | No | Evaluar 500 instancias requeriría más cómputo y, sobre todo, un modelo más capaz; no es objetivo inmediato. |
+
+**Cierre honesto:** hoy se desbloqueó Docker, se descargó el dataset (500 instancias vía API sin dependencias), se validó el evaluador (oracle 5/5), se corrigieron 3 bugs críticos del harness (evaluador que descartaba fallos de importación, slugs incompatibles, write_file destructiva), se limpiaron 27 crates muertas, y se hicieron los primeros 3 resultados reales del agente (1 patched/no resuelta, 2 timeouts causados por un bug ya corregido). **No hay cifras de resolución publicables** que representen la capacidad del modelo actual con el código corregido.
 
 | Pendiente | Estado |
 |-----------|--------|
