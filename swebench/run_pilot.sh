@@ -15,7 +15,12 @@ cd "$SCRIPT_DIR/.." || exit 1
 
 MODEL="${MODEL:-qwen2.5-coder:7b}"
 MAX_ITER="${MAX_ITER:-10}"
-TIMEOUT="${TIMEOUT:-1500}"
+# Medido el 2026-11-26 con qwen2.5-coder:7b en CPU: django completó 10
+# iteraciones en 1048 s, pero sphinx necesitó más de 1500 s para solo 4. El
+# coste por iteración depende de cuánto contexto lee el agente, así que el
+# margen por defecto es amplio; ajústalo con TIMEOUT=... si tu equipo es más
+# rápido.
+TIMEOUT="${TIMEOUT:-2700}"
 PYTHON="${PYTHON:-python}"
 SKIP_EVAL="${SKIP_EVAL:-0}"
 RUN_ID="${RUN_ID:-piloto-$(date +%Y%m%d-%H%M%S)}"

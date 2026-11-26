@@ -300,14 +300,37 @@ lo correcto: un parche que rompe la importación del paquete no arregla nada.
    18. Ahora rechaza reducir un archivo de 40+ líneas a menos del 25 % salvo que
    se pase `allow_shrink: true`.
 
-> **No hay resultados representativos del agente.** 1 instancia no permite decir
-> nada sobre la calidad del modelo. La tabla siguiente se completará solo con la
-> corrida piloto terminada, con hardware, fecha y contexto declarados.
+> **No hay resultados representativos del agente.** La corrida piloto cubre 5
+> instancias, una por cada parser oficial. Sirve para validar el harness de punta
+> a punta, no para juzgar al modelo.
 
-| Modelo | Instancias | Resueltas | Tasa | Tiempo medio | Contexto |
-|--------|-----------|-----------|------|--------------|----------|
-| `qwen2.5-coder:7b` | 1 | 0 | 0 % | 1048.7 s | 32768 |
-| *(piloto de 5 en curso)* | — | — | — | — | — |
+| Instancia | Parser | Agente | Parche | Evaluación | Resultado |
+|-----------|--------|-------:|-------:|------------|-----------|
+| `django__django-12209` | `parse_log_django` | 1048.7 s | 81 236 B | 34.4 s | no resuelta (rompió el paquete) |
+| `sphinx-doc__sphinx-8595` | `pytest_v2` | 1505.5 s | 0 B | 0 s | sin parche (timeout) |
+| `sympy__sympy-20916` | `parse_log_sympy` | 1501.8 s | 0 B | 0 s | sin parche (timeout) |
+| `scikit-learn__scikit-learn-14141` | `pytest_v2` | — | — | — | en curso |
+| `pytest-dev__pytest-5809` | `parse_log_pytest` | — | — | — | en curso |
+
+Contexto real de Ollama en todas las corridas: **32768** tokens (leído de
+`/api/ps` después de cada corrida, no asumido). Hardware: i7-10510U, 15.8 GB,
+sin GPU dedicada, `size_vram: 0` (100 % CPU).
+
+**Lo que esta tabla sí demuestra:** el harness funciona de punta a punta con
+cuatro parsers distintos y separa correctamente el fallo del modelo
+(`django`, parche que rompe la importación) del fallo de tiempo (`sphinx`,
+`sympy`, sin parche).
+
+**Lo que no demuestra:** nada sobre la calidad de `qwen2.5-coder:7b`. Tres de
+cinco instancias no llegaron a producir un parche evaluable, y el único parche
+producido destruyó un archivo de 1911 líneas. Con esta muestra no se puede
+estimar una tasa de resolución.
+
+**Hallazgo operativo medido:** con 7B en CPU y contexto de 32768, 1500 s no
+alcanzan para repos grandes. `django` hizo 10 iteraciones en 1048 s, pero
+`sphinx` y `sympy` consumieron los 1500 s en 4 y 2 iteraciones respectivamente.
+El coste por iteración depende de cuánto contexto se lee, no del número de
+iteraciones.
 
 Metodología prevista (Regla 11): una variable a la vez, `OLLAMA_CONTEXT_LENGTH`
 fijado y documentado, lectura por `grep` + rangos, y separación explícita entre
