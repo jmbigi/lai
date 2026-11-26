@@ -347,26 +347,58 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
         Ok(child.wait_with_output()?)
     };
 
-    let git = run("git", &["apply", "--whitespace=nowarn", "-"]);
-    if let Ok(output) = &git {
+    // Dos pasos siempre: primero comprobar, después aplicar. Un parche que no
+    // encaja debe dejar el árbol EXACTAMENTE como estaba. Medido en Windows:
+    // `patch` reescribe el archivo con CRLF y deja .orig/.rej incluso cuando el
+    // hunk falla, así que un intento fallido contaminaba el diff del agente.
+    let git_check = run("git", &["apply", "--check", "--whitespace=nowarn", "-"]);
+    if let Ok(output) = &git_check {
         if output.status.success() {
-            return Ok("Patch applied with git apply".into());
+            let applied = run("git", &["apply", "--whitespace=nowarn", "-"])?;
+            if applied.status.success() {
+                return Ok("Patch applied with git apply".into());
+            }
+            return Err(anyhow::anyhow!(
+                "Patch passed the check but git apply failed:\n{}",
+                String::from_utf8_lossy(&applied.stderr).trim()
+            ));
         }
     }
-    let patch_cmd = run("patch", &["-p1", "--forward"]);
-    match (git, patch_cmd) {
-        (_, Ok(output)) if output.status.success() => Ok("Patch applied with patch -p1".into()),
-        (Ok(git_out), Ok(patch_out)) => Ok(format!(
-            "Patch failed.\ngit apply:\n{}\npatch -p1:\n{}",
-            String::from_utf8_lossy(&git_out.stderr),
-            String::from_utf8_lossy(&patch_out.stderr)
-        )),
-        (Ok(git_out), Err(e)) => Ok(format!(
-            "Patch failed.\ngit apply:\n{}\n{e}",
-            String::from_utf8_lossy(&git_out.stderr)
-        )),
-        (Err(e), _) => Err(e),
+
+    let git_stderr = match &git_check {
+        Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        Err(e) => e.to_string(),
+    };
+
+    // Solo se recurre a `patch` si git no puede trabajar aquí (directorio que
+    // no es un repositorio). En ese caso se usa --dry-run para no escribir nada.
+    let not_a_repo = git_stderr.contains("not a git repository");
+    if not_a_repo {
+        let dry = run(
+            "patch",
+            &["-p1", "--forward", "--dry-run", "--no-backup-if-mismatch"],
+        );
+        if let Ok(output) = &dry {
+            if output.status.success() {
+                let applied = run("patch", &["-p1", "--forward", "--no-backup-if-mismatch"])?;
+                if applied.status.success() {
+                    return Ok("Patch applied with patch -p1".into());
+                }
+            }
+            return Err(anyhow::anyhow!(
+                "Patch did NOT apply (nothing was written).\npatch -p1 said:\n{}\n\
+                 Read the real file first with read_file (start_line/end_line) and build the \
+                 diff against the content you actually saw.",
+                String::from_utf8_lossy(&output.stdout).trim()
+            ));
+        }
     }
+
+    Err(anyhow::anyhow!(
+        "Patch did NOT apply (nothing was written).\ngit apply said:\n{git_stderr}\n\
+         Read the real file first with read_file (start_line/end_line) and build the diff \
+         against the content you actually saw."
+    ))
 }
 
 #[derive(Clone)]
@@ -623,7 +655,7 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "apply_patch".into(),
-                description: "Apply a unified diff with git apply (fallback: patch -p1). 'path' is the repository root.".into(),
+                description: "Apply a unified diff to an existing file (git apply --check first, then apply). 'path' is the repository root. Returns an ERROR if the hunk does not match: nothing is written in that case, so read the file with read_file before retrying.".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"patch":{"type":"string"}},"required":["path","patch"]}),
             },
             ToolSchema {
@@ -883,5 +915,66 @@ mod tests {
         })))
         .unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {}\n");
+    }
+
+    #[test]
+    fn apply_patch_reports_failure_as_error() {
+        // Un parche que no encaja NO puede devolver Ok: el bucle del agente
+        // imprimiría "Done" y el modelo repetiría la misma llamada.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("real.txt");
+        fs::write(&file, "alpha\nbeta\ngamma\n").unwrap();
+
+        let err = apply_patch_tool(&args(json!({
+            "path": dir.path().to_string_lossy(),
+            "patch": "--- a/real.txt\n+++ b/real.txt\n@@ -1,3 +1,3 @@\n-this line does not exist\n+replacement\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("did NOT apply"), "{err}");
+        // Y el archivo queda intacto, byte por byte: no se escribió nada.
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\nbeta\ngamma\n");
+        assert!(!dir.path().join("real.txt.rej").exists());
+        assert!(!dir.path().join("real.txt.orig").exists());
+    }
+
+    #[test]
+    fn apply_patch_applies_a_valid_hunk_in_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let ok = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            return; // sin git no hay nada que comprobar aquí
+        }
+        let file = root.join("real.txt");
+        fs::write(&file, "alpha\nbeta\ngamma\n").unwrap();
+
+        let out = apply_patch_tool(&args(json!({
+            "path": root.to_string_lossy(),
+            "patch": "--- a/real.txt\n+++ b/real.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n"
+        })))
+        .unwrap();
+
+        assert!(out.contains("applied"), "{out}");
+        // git puede normalizar finales de línea según core.autocrlf; lo que
+        // importa es que el hunk se aplicó.
+        assert_eq!(
+            fs::read_to_string(&file).unwrap().replace("\r\n", "\n"),
+            "alpha\nBETA\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn apply_patch_requires_patch_text() {
+        let err = apply_patch_tool(&args(json!({"path": ".", "patch": "   "})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("patch"), "{err}");
     }
 }

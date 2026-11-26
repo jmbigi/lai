@@ -389,6 +389,17 @@ Se conservaron a propósito `rustls`, `mime`, `percent-encoding` y `rand`: no
 aparecen en el código pero son plausibles como dependencias indirectas o de
 feature, y quitarlas no aportaba nada medible.
 
+**Corrección posterior (misma tanda).** Esa prudencia estaba mal calibrada en un
+caso: la compilación cruzada dentro de `ubuntu:22.04` emitió
+`warning: unused dependency 'rand'`. Se comprobó con
+`grep -E '\brand::|use rand'` sobre todo `lai_rust/` (cero coincidencias) y se
+eliminó. Las otras tres no generan aviso, así que se quedan. `cargo check
+--all-targets` sigue en 0 avisos.
+
+Lección de método: el aviso de Cargo es la fuente de verdad, no la intuición
+sobre qué podría ser una dependencia indirecta. Si Cargo no se queja, se queda;
+si se queja, se va.
+
 `cargo check --all-targets` ya no emite ningún aviso `unused dependency`. Los 103
 tests siguen pasando y `clippy` sigue en 0 avisos, así que la limpieza no cambió
 comportamiento: solo quitó peso.
@@ -410,17 +421,58 @@ cada instancia y, al terminar, encadena `evaluate.py --run-id $RUN_ID --force` y
 lista para `BENCHMARKS.md`. `SKIP_EVAL=1` deja solo la fase de agente y
 `RUN_ID=...` fija el identificador del informe. Verificado con `bash -n`.
 
-## 20. Pendientes
+## 20. El agente no sabía que su parche había fallado
+
+Segunda instancia del piloto (`sphinx-doc__sphinx-8595`, `qwen2.5-coder:7b`).
+Resultado: **timeout a los 1505.5 s con 0 bytes de parche**. El log del agente
+explica por qué, y no es lo que parecía a primera vista.
+
+El modelo propuso un `apply_patch` razonable, el parche no encajó (el contexto
+no existía en el archivo), y el agente recibió `✓ Done`. Repitió **la misma
+llamada idéntica cuatro veces** y agotó el tiempo. Dos bugs encadenados:
+
+**Bug 1 — `apply_patch` devolvía éxito al fallar.** `apply_patch_tool` terminaba
+con `Ok(format!("Patch failed.\ngit apply:\n..."))`. Un `Ok` con texto de error
+dentro es indistinguible de un éxito para el bucle del agente, que imprime
+`✓ Done`. Arreglo: devolver `Err` con el stderr real y una instrucción concreta
+(«lee el archivo primero y construye el diff contra lo que viste»).
+
+**Bug 2 — no había detección de bucles.** El agente no tiene memoria de sus
+propios intentos fallidos. Arreglo en `cmd_auto`: un `HashMap` con la firma
+`herramienta + argumentos`; a partir de la cuarta llamada idéntica no se ejecuta,
+se le devuelve al modelo un mensaje que le dice que no repita y que cambie de
+estrategia.
+
+**Bug 3 (Windows) — un parche fallido ensuciaba el árbol.** Medido con
+`examples/patch_probe.rs`: `patch -p1` reescribe el archivo con CRLF y deja
+`.orig`/`.rej` **aunque el hunk falle**. Arreglo: `git apply --check` primero y
+solo después `git apply`; `patch` queda como último recurso únicamente cuando el
+directorio no es un repositorio, y también con `--dry-run` previo y
+`--no-backup-if-mismatch`. Ahora un parche fallido no escribe nada.
+
+Verificación: `cargo test --lib` → **70 passed** (3 tests nuevos:
+`apply_patch_reports_failure_as_error`, `apply_patch_applies_a_valid_hunk_in_a_repo`,
+`apply_patch_requires_patch_text`). El test de fallo comprueba además que no
+quedan `.rej` ni `.orig`.
+
+**Observación medida sobre el tiempo.** `django__django-12209` completó 10
+iteraciones en 1048.7 s; `sphinx-doc__sphinx-8595` hizo 4 en 1505.5 s. El coste
+por iteración varía con el tamaño del contexto leído, así que 1500 s no es un
+límite universal: para repos grandes con un 7B en CPU hay que subir `TIMEOUT`.
+
+## 21. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|
 | Compilar `swebench/bin/lai` (glibc 2.35) | ✅ `lai 0.1.0`, 6.7 MB |
 | Validar el evaluador con parches oficiales (`oracle5`) | ✅ **5/5 resueltas** |
 | Primera corrida real del agente | ✅ 1 instancia, **no resuelta** |
-| Piloto de 5 instancias | 1/5 hecha; faltan 4 (~17 min cada una) |
+| Piloto de 5 instancias | 2/5 evaluadas (django no resuelta, sphinx timeout); sympy, scikit-learn y pytest en curso |
 | Tabla representativa en `BENCHMARKS.md` | bloqueada hasta terminar el piloto |
-| Dependencias muertas | ✅ 26 eliminadas, 0 avisos |
+| Dependencias muertas | ✅ 27 eliminadas, 0 avisos |
 
-Con una sola instancia no se puede afirmar nada sobre la calidad del modelo
-(Regla 11). Lo que sí se puede afirmar: el agente destruyó un archivo de 1911
-líneas, y esa es una observación medible, no una impresión.
+Con dos instancias no se puede afirmar nada sobre la calidad del modelo
+(Regla 11). Lo que sí se puede afirmar, y está medido: el agente destruyó un
+archivo de 1911 líneas en una instancia, y en otra repitió cuatro veces un
+parche que no se aplicaba. Ambas son observaciones del comportamiento del
+sistema, no impresiones.

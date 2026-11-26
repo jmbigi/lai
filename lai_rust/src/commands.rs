@@ -931,6 +931,13 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     let mut nudges: u32 = 0;
     const MAX_NUDGES: u32 = 2;
 
+    // Detección de bucles: un modelo pequeño puede repetir la misma llamada
+    // idéntica indefinidamente. Medido en el piloto del 2026-11-26: cuatro
+    // iteraciones con el mismo apply_patch, quemando 1500 s sin avanzar.
+    let mut repeated_calls: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    const MAX_IDENTICAL_CALLS: u32 = 3;
+
     for iteration in 1..=max_iterations {
         println!("\n--- Iteration {} of {} ---", iteration, max_iterations);
 
@@ -1024,6 +1031,35 @@ complete corrected file content. Do not reply with analysis or questions — act
                         name_str,
                         serde_json::to_string(&arguments).unwrap_or_default()
                     );
+
+                    // La misma llamada, con los mismos argumentos, ya falló
+                    // varias veces: no la ejecutamos otra vez, se le dice al
+                    // modelo que cambie de estrategia.
+                    let signature = format!(
+                        "{}:{}",
+                        name_str,
+                        serde_json::to_string(&arguments).unwrap_or_default()
+                    );
+                    let seen = repeated_calls.entry(signature).or_insert(0);
+                    *seen += 1;
+                    if *seen > MAX_IDENTICAL_CALLS {
+                        let warning = format!(
+                            "You have already called {} with these exact arguments {} times \
+                             without making progress. Do NOT repeat it. Read the file again \
+                             with read_file (using start_line/end_line) to see its real content, \
+                             then change your approach or explain why you are blocked.",
+                            name_str, *seen
+                        );
+                        println!("  ⚠ repeated call #{}, skipping execution", *seen);
+                        messages.push(crate::llm::Message {
+                            role: "tool".into(),
+                            content: warning,
+                            tool_call_id: call_id.clone(),
+                            name: Some(name_str.to_string()),
+                            tool_calls: None,
+                        });
+                        continue;
+                    }
 
                     let tool_result = if let Some(func) = tools.tools.get(name_str) {
                         match func(arguments).await {
