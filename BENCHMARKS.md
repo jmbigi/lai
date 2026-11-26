@@ -265,13 +265,49 @@ Las corridas de agente anteriores (`astropy__astropy-12907` con `qwen3:8b`, 615 
 se hicieron con un binario que no podía llegar a Ollama desde el contenedor, así
 que **sus parches no están evaluados y no cuentan**.
 
-> **No hay todavía resultados representativos del agente.** Cualquier cifra de
-> esta sección sería prematura. La tabla siguiente se publicará solo cuando
-> exista una corrida real, con hardware, fecha y contexto declarados.
+### Primera corrida real del agente (2026-11-26)
+
+| Dato | Valor |
+|------|-------|
+| Instancia | `django__django-12209` (`parse_log_django`, `pass_and_fail`) |
+| Modelo | `qwen2.5-coder:7b` (Q4_K_M, 7.6B, 6.9 GB) |
+| Runtime | Ollama `host.docker.internal:11434`, **100 % CPU** (`size_vram: 0`) |
+| Contexto cargado | **32768** tokens (leído de `/api/ps`) |
+| Hardware | i7-10510U (4c/8t), 15.8 GB RAM, sin GPU dedicada |
+| Agente | 1048.7 s (17.5 min), 10 iteraciones, `rc=0` |
+| Parche | 81 236 B, **1 archivo** |
+| Evaluación oficial | **no resuelta** (6.5 s) |
+
+**Qué pasó, sin adornos.** El agente no editó el código: reemplazó
+`django/db/models/base.py` completo. El diff es `@@ -1,1911 +1,18 @@` — las 1911
+líneas del core de Django sustituidas por las 18 líneas del ejemplo del issue
+(`from uuid import uuid4`, `class Sample(models.Model)`). El ejemplo ilustraba el
+bug; el modelo lo tomó como la solución.
+
+Consecuencia: `AttributeError: module 'django.db.models' has no attribute
+'Model'` y los tests fallan. El evaluador lo puntúa como **no resuelta**, que es
+lo correcto: un parche que rompe la importación del paquete no arregla nada.
+
+**Tres bugs del harness que esta corrida destapó y que ya están corregidos:**
+
+1. El evaluador marcaba el caso como `no_test_results` (no puntuable) porque el
+   parser no encontraba líneas de test. Descartar un fallo de importación
+   **inflaría** la tasa de resolución. Ahora, si el wrapper capturó un código de
+   salida de tests, la instancia se puntúa y los `FAIL_TO_PASS` fallan.
+2. `summarize.py` y `run_eval.py` calculaban slugs distintos para el mismo
+   modelo, así que el resumen no encontraba los metadatos.
+3. `write_file` no tenía ninguna protección: aceptaba sustituir 1911 líneas por
+   18. Ahora rechaza reducir un archivo de 40+ líneas a menos del 25 % salvo que
+   se pase `allow_shrink: true`.
+
+> **No hay resultados representativos del agente.** 1 instancia no permite decir
+> nada sobre la calidad del modelo. La tabla siguiente se completará solo con la
+> corrida piloto terminada, con hardware, fecha y contexto declarados.
 
 | Modelo | Instancias | Resueltas | Tasa | Tiempo medio | Contexto |
 |--------|-----------|-----------|------|--------------|----------|
-| *(pendiente de corrida piloto)* | — | — | — | — | — |
+| `qwen2.5-coder:7b` | 1 | 0 | 0 % | 1048.7 s | 32768 |
+| *(piloto de 5 en curso)* | — | — | — | — | — |
 
 Metodología prevista (Regla 11): una variable a la vez, `OLLAMA_CONTEXT_LENGTH`
 fijado y documentado, lectura por `grep` + rangos, y separación explícita entre

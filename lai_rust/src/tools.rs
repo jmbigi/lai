@@ -254,6 +254,56 @@ fn find_files_tool(args: &HashMap<String, Value>) -> Result<String> {
     Ok(serde_json::to_string(&matches)?)
 }
 
+/// Umbral de la guarda anti-destrucción de `write_file`.
+///
+/// Medido en el piloto SWE-bench del 2026-11-26: con `qwen2.5-coder:7b`, el
+/// agente reemplazó `django/db/models/base.py` (1911 líneas) por las 18 líneas
+/// del ejemplo del issue, rompiendo la importación de todo el paquete. Sin esta
+/// guarda el error no se detecta hasta que fallan los tests.
+const SHRINK_MIN_ORIGINAL_LINES: usize = 40;
+const SHRINK_RATIO_PERCENT: usize = 25;
+
+fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let path = arg_str(args, "path", "");
+    if path.is_empty() {
+        return Err(anyhow::anyhow!("write_file requiere 'path'"));
+    }
+    let content = arg_str(args, "content", "");
+    let target = Path::new(path);
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    // Guarda anti-destrucción: sobrescribir un archivo existente con una
+    // fracción mínima de su contenido casi siempre significa que el modelo
+    // "escribió un ejemplo" en lugar de editar el archivo real.
+    if target.is_file() {
+        if let Ok(existing) = fs::read_to_string(target) {
+            let old_lines = existing.lines().count();
+            let new_lines = content.lines().count();
+            let shrunk = old_lines >= SHRINK_MIN_ORIGINAL_LINES
+                && new_lines * 100 < old_lines * SHRINK_RATIO_PERCENT;
+            if shrunk && !arg_bool(args, "allow_shrink", false) {
+                return Err(anyhow::anyhow!(
+                    "write_file rechazado: '{}' tiene {} líneas y el contenido nuevo solo {} \
+                     ({:.0}% del original). Esto normalmente destruye el archivo. \
+                     Si de verdad quieres reemplazarlo, repite la llamada con \
+                     \"allow_shrink\": true, o usa apply_patch para cambiar solo lo necesario.",
+                    path,
+                    old_lines,
+                    new_lines,
+                    (new_lines as f64 / old_lines as f64) * 100.0
+                ));
+            }
+        }
+    }
+
+    fs::write(target, content)?;
+    Ok(format!("Written to {} ({} chars)", path, content.len()))
+}
+
 fn list_dir_tool(args: &HashMap<String, Value>) -> Result<String> {
     let path = arg_str(args, "path", ".");
     let mut entries: Vec<String> = fs::read_dir(path)
@@ -360,13 +410,7 @@ impl ToolRegistry {
     }
     fn register_core_tools(&mut self) {
         self.register_tool("read_file", |args| async move { read_file_tool(&args) });
-        self.register_tool("write_file", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            fs::create_dir_all(Path::new(path).parent().unwrap_or(Path::new(".")))?;
-            fs::write(path, content)?;
-            Ok(format!("Written to {} ({} chars)", path, content.len()))
-        });
+        self.register_tool("write_file", |args| async move { write_file_tool(&args) });
         self.register_tool("list_dir", |args| async move { list_dir_tool(&args) });
         self.register_tool("run_command", |args| async move {
             let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
@@ -544,8 +588,8 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "write_file".into(),
-                description: "Write a file".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
+                description: "Write a file, creating parent directories. Refuses to replace an existing file of 40+ lines with less than 25% of its original length unless allow_shrink is true (that pattern usually means an example was written over real code). Prefer apply_patch for targeted edits.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"allow_shrink":{"type":"boolean","description":"Permit replacing a large file with a much smaller one"}},"required":["path","content"]}),
             },
             ToolSchema {
                 name: "list_dir".into(),
@@ -742,5 +786,102 @@ mod tests {
 
         assert_eq!(entries, vec!["alpha/", "beta/", "z.txt"]);
         assert!(text(&out).contains("alpha/"));
+    }
+
+    /// El caso real del piloto: 1911 líneas del core de Django reemplazadas por
+    /// las 18 líneas de un ejemplo. Sin la guarda, el agente destruye el archivo.
+    #[test]
+    fn write_file_refuses_to_destroy_a_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("base.py");
+        let original: String = (0..1911).map(|i| format!("line {i}\n")).collect();
+        fs::write(&path, &original).unwrap();
+
+        let err = write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "from uuid import uuid4\nfrom django.db import models\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("1911"), "{err}");
+        assert!(err.contains("allow_shrink"), "{err}");
+        // El archivo original sigue intacto.
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn write_file_allows_shrink_with_explicit_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.py");
+        let original: String = (0..100).map(|i| format!("line {i}\n")).collect();
+        fs::write(&path, &original).unwrap();
+
+        let out = write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "short\n",
+            "allow_shrink": true
+        })))
+        .unwrap();
+
+        assert!(out.contains("Written to"), "{out}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "short\n");
+    }
+
+    #[test]
+    fn write_file_allows_growing_and_moderate_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mod.rs");
+        fs::write(&path, "a\nb\nc\n").unwrap();
+
+        // Crecer: siempre permitido.
+        write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "a\nb\nc\nd\ne\n"
+        })))
+        .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\nc\nd\ne\n");
+
+        // Archivo pequeño: la guarda no aplica aunque se reduzca mucho.
+        let small = dir.path().join("small.rs");
+        fs::write(&small, "one\ntwo\nthree\n").unwrap();
+        write_file_tool(&args(json!({
+            "path": small.to_string_lossy(),
+            "content": "one\n"
+        })))
+        .unwrap();
+        assert_eq!(fs::read_to_string(&small).unwrap(), "one\n");
+
+        // Reducción por encima del umbral del 25 %: permitida.
+        let mid = dir.path().join("mid.rs");
+        let original: String = (0..100).map(|i| format!("line {i}\n")).collect();
+        fs::write(&mid, &original).unwrap();
+        let kept: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        write_file_tool(&args(json!({
+            "path": mid.to_string_lossy(),
+            "content": kept
+        })))
+        .unwrap();
+        assert_eq!(fs::read_to_string(&mid).unwrap(), kept);
+    }
+
+    #[test]
+    fn write_file_requires_path() {
+        let err = write_file_tool(&args(json!({"content": "x"})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("path"), "{err}");
+    }
+
+    #[test]
+    fn write_file_creates_missing_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("new.rs");
+        write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "fn main() {}\n"
+        })))
+        .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {}\n");
     }
 }

@@ -484,13 +484,24 @@ def evaluate_log(instance: dict, content: str) -> tuple[dict[str, str] | None, d
     if not status_map:
         # Algunos runners emiten resultados fuera de los marcadores.
         status_map = parser(content)
-    if not status_map and not SUITE_RAN.search(content):
-        return None, {
-            "status": "no_test_results",
-            "error": "el parser no encontró resultados y no hay evidencia de que los tests corrieran",
-        }
 
     test_exit = parse_test_exit_code(content)
+
+    if not status_map:
+        if test_exit is not None:
+            # El comando de tests SÍ se ejecutó (el wrapper capturó su código de
+            # salida) pero el parser no reconoció ninguna línea de resultado.
+            # En la práctica esto significa que el parche rompió la importación
+            # del paquete: los tests abortaron antes de recolectar. Es un fallo
+            # del modelo, no de la infraestructura, así que se puntúa como no
+            # resuelta en lugar de descartarse (descartarla inflaría la tasa).
+            return {}, {}
+        if not SUITE_RAN.search(content):
+            return None, {
+                "status": "no_test_results",
+                "error": "el parser no encontró resultados y no hay evidencia de que los tests corrieran",
+            }
+
     if (
         test_exit not in (None, 0)
         and status_map

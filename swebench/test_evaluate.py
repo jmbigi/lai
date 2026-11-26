@@ -181,6 +181,30 @@ class LogEvaluationTests(unittest.TestCase):
         self.assertIn("git apply", script)
         self.assertLess(script.index("git apply"), script.index("echo official"))
 
+    def test_broken_import_is_scored_not_skipped(self):
+        """El parche puede romper el import del paquete antes de recolectar.
+
+        El comando de tests sí se ejecutó (el wrapper capturó su código de
+        salida) pero el parser no encuentra ninguna línea de resultado. Debe
+        puntuarse como no resuelta: descartarla inflaría la tasa de resolución.
+        """
+        log = "\n".join(
+            [
+                ">>>>> Start Test Output",
+                "Traceback (most recent call last):",
+                "AttributeError: module 'django.db.models' has no attribute 'Model'",
+                ">>>>> Test Exit Code: 1",
+                ">>>>> End Test Output",
+            ]
+        )
+        instance = self.instance()
+        status_map, error = evaluate.evaluate_log(instance, log)
+        self.assertEqual(error, {})
+        self.assertEqual(status_map, {})
+        result = evaluate.grade(status_map or {}, instance)
+        self.assertFalse(result["resolved"])
+        self.assertEqual(result["resolution"], "RESOLVED_NO")
+
     def test_slug_does_not_escape_evaluation_directory(self):
         self.assertEqual(evaluate.slug(".."), "run")
         self.assertEqual(evaluate.slug("../evil"), "evil")

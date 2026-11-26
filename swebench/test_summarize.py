@@ -54,7 +54,8 @@ class TempDataMixin(unittest.TestCase):
 
 class SlugTests(unittest.TestCase):
     def test_replaces_separators(self):
-        self.assertEqual(summarize.slug("qwen2.5-coder:7b"), "qwen2_5_coder_7b")
+        # Misma regla que run_eval.slug(): conserva puntos, guiones y guiones bajos.
+        self.assertEqual(summarize.slug("qwen2.5-coder:7b"), "qwen2.5-coder_7b")
 
     def test_strips_leading_dots(self):
         self.assertEqual(summarize.slug("..a.."), "a")
@@ -106,6 +107,27 @@ class LoadJsonTests(TempDataMixin):
         path = self.data / "roto.json"
         path.write_text("{", encoding="utf-8")
         self.assertIsNone(summarize.load_json(path))
+
+
+class LoadMetaTests(TempDataMixin):
+    def test_direct_slug_lookup(self):
+        self.write_meta("qwen2.5-coder:7b", {"i-1": {"status": "patched", "model": "qwen2.5-coder:7b"}})
+        meta = summarize.load_meta("qwen2.5-coder:7b")
+        self.assertIn("i-1", meta)
+
+    def test_slug_keeps_dots_and_dashes_like_run_eval(self):
+        # run_eval.slug("qwen2.5-coder:7b") == "qwen2.5-coder_7b"
+        self.assertEqual(summarize.slug("qwen2.5-coder:7b"), "qwen2.5-coder_7b")
+
+    def test_falls_back_to_scanning_meta_files(self):
+        # Archivo con un nombre que no deriva del slug actual.
+        path = self.preds / "legacy-name.meta.json"
+        path.write_text(json.dumps({"i-9": {"status": "patched", "model": "modelo:x"}}), encoding="utf-8")
+        meta = summarize.load_meta("modelo:x")
+        self.assertIn("i-9", meta)
+
+    def test_missing_meta_returns_empty(self):
+        self.assertEqual(summarize.load_meta("no-existe"), {})
 
 
 class EndToEndTests(TempDataMixin):

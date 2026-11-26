@@ -312,13 +312,68 @@ se suponía, no el que Ollama tenía cargado.
 Medido durante el piloto (i7-10510U, 15.8 GB): `qwen2.5-coder:7b` Q4_K_M, 7.6B,
 6.9 GB de pesos, `size_vram: 0` (**100 % CPU**) y `context_length: 32768`.
 
-## 17. Pendientes
+## 17. Primera corrida real del agente: el parche que destruyó Django
+
+**ANTES:** el harness estaba validado con parches oficiales (oracle5), pero nunca
+había ejecutado el agente contra una instancia real.
+
+**DESPUÉS:** corrida de `django__django-12209` con `qwen2.5-coder:7b`:
+1048.7 s, `rc=0`, parche de 81 236 B en un solo archivo, **no resuelta**.
+
+El parche no edita el código: sustituye `django/db/models/base.py` entero. El
+diff es `@@ -1,1911 +1,18 @@`: las 1911 líneas del core de Django quedaron
+reemplazadas por las 18 líneas del ejemplo del issue. El agente copió el ejemplo
+que ilustraba el bug y lo trató como solución.
+
+### Bug 1 — el evaluador descartaba fallos de importación
+
+**ANTES:** si el parser no encontraba ninguna línea de resultado y `SUITE_RAN` no
+coincidía, `evaluate_log()` devolvía `no_test_results` y la instancia quedaba
+**no puntuable**. Un parche que rompe la importación del paquete desaparecía del
+denominador, lo que **infla** la tasa de resolución.
+
+**DESPUÉS:** el código de salida de los tests se lee antes de esa comprobación.
+Si el wrapper capturó un `SWEBENCH_TEST_EXIT_CODE`, el comando de tests se
+ejecutó y la instancia **se puntúa**: con el mapa de estados vacío, todos los
+`FAIL_TO_PASS` fallan y el resultado es `RESOLVED_NO`. Solo cuando no hay ni
+resultados ni código de salida se devuelve `no_test_results`.
+
+### Bug 2 — slugs distintos entre `run_eval.py` y `summarize.py`
+
+**ANTES:** `run_eval.slug()` conservaba `.`, `-` y `_` (`qwen2.5-coder_7b`)
+mientras `summarize.slug()` los convertía todos en `_` (`qwen2_5_coder_7b`). El
+resumen no encontraba los metadatos y decía «sin datos de agente».
+
+**DESPUÉS:** `summarize.py` usa la misma regex que `run_eval.py`, y además
+`load_meta()` escanea todos los `*.meta.json` si el nombre derivado no existe. Un
+cambio futuro de slug no rompe corridas ya hechas.
+
+### Bug 3 — `write_file` podía destruir un archivo sin avisar
+
+**ANTES:** `write_file` hacía `fs::write` directo. Nada impedía sustituir 1911
+líneas por 18, y el error no se detectaba hasta que fallaban los tests.
+
+**DESPUÉS:** nueva `write_file_tool()` con guarda anti-destrucción: si el archivo
+existe, tiene 40+ líneas y el contenido nuevo es menos del 25 % de la longitud
+original, devuelve un error explicativo que recomienda `apply_patch` o
+`"allow_shrink": true`. La constante `SHRINK_MIN_ORIGINAL_LINES` documenta el
+caso real que la motivó. 5 tests nuevos cubren rechazo, permiso explícito,
+crecimiento, reducción moderada, `path` obligatorio y creación de directorios.
+
+También se actualizó la guía de herramientas del prompt: `apply_patch` pasa a ser
+la vía recomendada para modificar archivos existentes, y se avisa explícitamente
+de que el código de ejemplo del issue **no** es la solución.
+
+## 18. Pendientes
 
 | Pendiente | Estado |
 |-----------|--------|
 | Compilar `swebench/bin/lai` (glibc 2.35) | ✅ `lai 0.1.0`, 6.7 MB |
 | Validar el evaluador con parches oficiales (`oracle5`) | ✅ **5/5 resueltas** |
-| Piloto de 5 instancias con el agente | en curso |
-| Tabla representativa en `BENCHMARKS.md` | depende del piloto |
+| Primera corrida real del agente | ✅ 1 instancia, **no resuelta** |
+| Piloto de 5 instancias | 1/5 hecha; faltan 4 (~17 min cada una) |
+| Tabla representativa en `BENCHMARKS.md` | bloqueada hasta terminar el piloto |
 
-No hay cifras de agente que publicar todavía (Regla 11).
+Con una sola instancia no se puede afirmar nada sobre la calidad del modelo
+(Regla 11). Lo que sí se puede afirmar: el agente destruyó un archivo de 1911
+líneas, y esa es una observación medible, no una impresión.

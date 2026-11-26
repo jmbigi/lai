@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,8 +30,9 @@ EVALUATION = DATA_DIR / "evaluation"
 
 
 def slug(text: str) -> str:
-    cleaned = "".join(c if c.isalnum() else "_" for c in text)
-    return cleaned.strip("._-") or "run"
+    """Debe coincidir con run_eval.slug para localizar los mismos archivos."""
+    value = re.sub(r"[^a-zA-Z0-9._-]+", "_", text)
+    return value.strip("._-") or "run"
 
 
 def load_json(path: Path) -> dict | None:
@@ -70,6 +72,26 @@ def find_report(run_id: str | None, model: str) -> tuple[str | None, dict | None
     return candidates[0]
 
 
+def load_meta(model: str) -> dict:
+    """Metadatos del agente para ese modelo.
+
+    Se prueba primero el nombre derivado de `slug()` y, si no existe, se busca
+    en todos los `*.meta.json` el que contenga filas de ese modelo. Así un cambio
+    futuro en la regla de slug no rompe el resumen de corridas ya hechas.
+    """
+    direct = PREDICTIONS / f"{slug(model)}.meta.json"
+    data = load_json(direct)
+    if data is not None:
+        return data
+    if not PREDICTIONS.is_dir():
+        return {}
+    for path in sorted(PREDICTIONS.glob("*.meta.json")):
+        candidate = load_json(path) or {}
+        if any(row.get("model") == model for row in candidate.values() if isinstance(row, dict)):
+            return candidate
+    return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", required=True, help="Modelo tal como se pasó a run_eval.py")
@@ -77,7 +99,7 @@ def main() -> int:
     parser.add_argument("--md", action="store_true", help="Imprimir solo la tabla markdown")
     args = parser.parse_args()
 
-    meta = load_json(PREDICTIONS / f"{slug(args.model)}.meta.json") or {}
+    meta = load_meta(args.model)
     rows = {iid: row for iid, row in meta.items() if row.get("model") == args.model}
 
     run_id, report = find_report(args.run_id, args.model)

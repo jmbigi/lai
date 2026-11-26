@@ -249,17 +249,28 @@ Ninguna de estas suites usa Docker, HuggingFace ni red.
 
 ## Validación realizada (1 instancia)
 
-`astropy__astropy-12907` con `qwen3:8b`:
+`django__django-12209` con `qwen2.5-coder:7b` (primera corrida completa, 2026-11-26):
 
 | Etapa | Resultado |
 |-------|-----------|
 | Descarga dataset | ✓ 500 instancias |
-| Imagen Docker | ✓ 2.89 GB, repo en commit base verificado |
-| Binario en contenedor | ✓ `lai 0.1.0` ejecuta |
-| Ejecución del agente | ✓ parche producido (615 s, 8 iteraciones) |
-| Evaluación | ⛔ pendiente: sin Docker en el equipo de trabajo |
+| Imagen Docker | ✓ 2.88 GB, repo en commit base verificado |
+| Binario en contenedor | ✓ `lai 0.1.0` (glibc 2.35), alcanza `host.docker.internal:11434` |
+| Ejecución del agente | ✓ 1048.7 s, 10 iteraciones, `rc=0`, parche de 81 236 B |
+| Evaluación oficial | ✓ ejecutada: **no resuelta** (6.5 s) |
 
-**Ese parche no está evaluado todavía** — no se sabe si resuelve el issue.
+**El parche no resuelve el issue, y de una forma muy concreta:** sustituyó las
+1911 líneas de `django/db/models/base.py` por las 18 líneas del ejemplo del
+issue (`@@ -1,1911 +1,18 @@`). El agente copió el código que ilustra el bug y lo
+trató como solución.
+
+De ahí salieron tres arreglos: el evaluador ya no descarta los parches que rompen
+la importación (antes quedaban «no puntuables» e inflaban la tasa), `summarize.py`
+usa el mismo `slug` que `run_eval.py`, y `write_file` tiene una guarda que rechaza
+reducir un archivo de 40+ líneas a menos del 25 % sin `allow_shrink: true`.
+
+Una instancia no dice nada sobre la calidad del modelo. Lo que sí dice: el agente
+destruyó un archivo, y ahora el harness lo detecta y lo puntúa como fallo.
 
 ---
 
@@ -277,6 +288,9 @@ Ninguna de estas suites usa Docker, HuggingFace ni red.
 | `set -e` alrededor de `lai` perdía el diff si el agente fallaba | Captura explícita de `LAI_RC`; el diff se emite siempre |
 | Fallos de infraestructura se guardaban como predicciones vacías | Clasificación `infra_error` y no se escriben |
 | El nombre de imagen se adivinaba por convención | Usar `image` del dataset |
+| El evaluador descartaba parches que rompen la importación (inflaba la tasa) | Puntuar si el wrapper capturó el código de salida de los tests |
+| `summarize.py` no encontraba los metadatos (`qwen2_5` vs `qwen2.5`) | Mismo `slug` que `run_eval.py` + búsqueda por contenido |
+| El agente reemplazó 1911 líneas por 18 y nada lo impidió | Guarda anti-destrucción en `write_file` |
 
 ---
 
@@ -296,9 +310,9 @@ para que no desplace la tarea.
 
 ## Pendientes (en orden)
 
-1. **Corrida piloto de 5 instancias** (django, sphinx, sympy, scikit-learn,
-   pytest: uno por cada parser oficial) con `qwen2.5-coder:3b` o el modelo que
-   elijas. Docker ya funciona en este equipo.
+1. **Terminar el piloto de 5 instancias** (django, sphinx, sympy, scikit-learn,
+   pytest: uno por cada parser oficial). Hecha 1/5: `django__django-12209` con
+   `qwen2.5-coder:7b`, no resuelta. Faltan 4, ~17 min de agente cada una.
 2. **Ampliar a 10–20 instancias** si el piloto termina sin fallos de
    infraestructura, para estimar tasa de resolución con algo más de muestra.
 3. **Contexto del modelo**: medido ya el efecto en throughput (ver arriba): no
@@ -308,9 +322,10 @@ para que no desplace la tarea.
    honestidad que el resto: muestra pequeña, hardware limitado, sin comparación
    directa con cifras frontier.
 
-> El punto 3 está parcialmente cerrado (medición de throughput hecha). Los
-> puntos 1, 2 y 4 dependen de terminar el piloto. **Todavía no hay cifras de
-> SWE-bench que publicar.**
+> El punto 3 está parcialmente cerrado (medición de throughput hecha). Hay 1
+> resultado real publicado en `BENCHMARKS.md` (0 de 1 resuelta), insuficiente
+> para cualquier conclusión sobre el modelo. Los puntos 1, 2 y 4 dependen de
+> terminar el piloto.
 
 ---
 

@@ -843,7 +843,9 @@ You can call multiple tools in one response by including multiple JSON blocks. A
 IMPORTANT: Only output the JSON code block when you want to call a tool. Otherwise, respond normally with text.
 
 TOOL USAGE GUIDE:
-- "write_file": CREATE a new file. Args: {{"path": "file.py", "content": "code here"}}
+- "write_file": CREATE a new file, or REPLACE an existing one entirely. Args: {{"path": "file.py", "content": "code here"}}
+  It refuses to replace an existing file of 40+ lines with less than 25% of its length (that usually means writing an example over real code). If you really mean it, add "allow_shrink": true.
+- "apply_patch": EDIT an existing file with a unified diff. Args: {{"patch": "--- a/f.py\\n+++ b/f.py\\n@@ ..."}}. PREFER THIS for changes to existing files: it keeps the rest of the file intact.
 - "read_file": READ a file or a 1-based line range. Args: {{"path": "file.py"}} or {{"path": "file.py", "start_line": 120, "end_line": 220}}. Use a range for large files; the default is capped at 400 lines.
 - "run_python": RUN PYTHON CODE (not commands). Args: {{"code": "print(2+2)"}} - ONLY valid Python code!
 - "run_command": RUN SHELL COMMANDS. Args: {{"command": "ls -la"}} - Use for shell commands!
@@ -853,6 +855,8 @@ TOOL USAGE GUIDE:
 
 RULES:
 - To CREATE a file: MUST use "write_file" with "path" and "content"
+- To CHANGE an existing file: use "apply_patch" with a minimal diff. NEVER rewrite a whole existing file with "write_file" unless you intend to replace all of it.
+- Never paste example code from the issue into a source file: the example illustrates the bug, it is not the fix.
 - To RUN a Python script file: Use "run_command" with "command": "python file.py"
 - To RUN Python code directly: Use "run_python" with "code": "valid python code"
 - "run_python" does NOT accept shell commands like "python file.py"
