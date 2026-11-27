@@ -99,6 +99,16 @@ exclude = [
     "generate_chess_chunks.py",
     "hola.py",
     "racing.py",
+    # Salidas de demostración de `lai code`/`lai auto` y demos heredadas:
+    # no son código del producto (calc.py contiene C++ en un .py, por ejemplo).
+    "lai_rust/calc.py",
+    "lai_rust/test_new.py",
+    "lai_rust/test_hello.py",
+    "lai_rust/test_factorial.py",
+    "test_project",
+    "lai_fixed.py",
+    "fastapi_server.py",
+    "lai_self_improve.py",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -107,6 +117,11 @@ exclude = [
 "lai_automode.py" = ["T201", "ARG001", "ARG002", "SIM105", "PLW1510", "PLW2901", "PLW0603", "W293", "W291", "PLR0915", "PLR0912", "PLR0913", "PLR0911", "PLR2004", "PLR5501", "PLC0415", "PLC0207", "W292", "UP006", "UP007", "UP012", "UP035", "UP045", "UP024", "UP015", "B007", "TRY300", "W291"]
 "tests/*" = ["S101", "S106", "S113", "T201", "ARG001", "PTH123", "PTH118", "PTH103", "PTH120", "PTH100", "PTH109", "PLC0415", "PLW1510", "W292", "I001", "F401", "PLR2004", "PLR0913"]
 "tests/**" = ["S101", "S106", "S113", "T201", "ARG001", "PTH123", "PTH118", "PTH103", "PTH120", "PTH100", "PTH109", "PLC0415", "PLW1510", "W292", "I001", "F401", "PLR2004", "PLR0913"]
+# El harness SWE-bench son scripts de línea de comandos: `print` es la salida,
+# los imports diferidos evitan coste de arranque y los umbrales numéricos son
+# parte del protocolo del benchmark.
+"swebench/*" = ["T201", "PLW2901", "PLR2004", "PLC0415", "PLW1510", "SIM105", "SIM102", "SIM114", "SIM117", "SIM113", "PLR0912", "PLR0915", "PLR0913", "PLR0911", "TRY003", "ERA001"]
+"swebench/**" = ["T201", "PLW2901", "PLR2004", "PLC0415", "PLW1510", "SIM105", "SIM102", "SIM114", "SIM117", "SIM113", "PLR0912", "PLR0915", "PLR0913", "PLR0911", "TRY003", "ERA001"]
 "fib.py" = ["PLR2004", "W292"]
 
 [tool.ruff.format]

@@ -12,7 +12,6 @@ Uso:
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -236,7 +235,7 @@ class PreflightTests(unittest.TestCase):
         models = {"data": [{"id": "m"}]}
         ps = {"models": [{"name": "m", "context_length": 4096}]}
 
-        def fake(url, payload=None, timeout=5):
+        def fake(url, _payload=None, _timeout=5):
             return models if url.endswith("/models") else ps
 
         with mock.patch.object(run_eval, "http_json", side_effect=fake):

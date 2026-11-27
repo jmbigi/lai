@@ -24,27 +24,15 @@ def _check_service_url(url: str) -> bool:
 
 
 def _check_tool_calling_support(base_url: str = "http://localhost:8081/v1") -> bool:
-    """Check if the model supports native tool calling."""
-    try:
-        import urllib.request
-        import json
+    """Check if the model supports native tool calling.
 
-        # Check model capabilities via /v1/models
-        req = urllib.request.Request(
-            f"{base_url}/models",
-            headers={"Authorization": "Bearer open"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status != 200:
-                return False
-            data = json.loads(resp.read())
-            models = data.get("data", data.get("models", []))
-            for model in models:
-                # Check if model supports tools (some APIs expose this)
-                pass
-    except Exception:
-        pass
-    return False  # Conservative: assume no tool calling support
+    Conservador a propósito: devuelve siempre ``False``, así que los tests de
+    integración que dependen de un servidor con tool calling quedan *skipped*
+    en lugar de fallar en una máquina sin modelo levantado. Si algún día se
+    quiere activarlos, hay que consultar ``/v1/models`` y comprobar la
+    capacidad real del modelo, no solo que el endpoint responda.
+    """
+    return False
 
 
 class TestIsLocalUrl:
