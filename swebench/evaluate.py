@@ -801,9 +801,20 @@ def write_reports(run_dir: Path, run_meta: dict, results: list[dict]) -> None:
         f"- Resueltas: {summary['resolved']}",
     ]
     if summary["resolution_rate"] is not None:
-        lines.append(f"- Tasa de resolución: {summary['resolution_rate']:.1%}")
+        lines.append(
+            f"- Tasa de resolución (sobre instancias puntuadas): "
+            f"{summary['resolution_rate']:.1%}"
+        )
     else:
         lines.append("- Tasa de resolución: no calculable (sin instancias puntuadas)")
+    # La tasa anterior excluye parches vacíos y errores de infraestructura; la
+    # cifra de extremo a extremo es la que un usuario experimenta.
+    if summary["instances"]:
+        end_to_end = summary["resolved"] / summary["instances"]
+        lines.append(
+            f"- Tasa de extremo a extremo (resueltas / intentadas): "
+            f"{summary['resolved']}/{summary['instances']} = {end_to_end:.1%}"
+        )
     lines += [
         f"- Errores de infraestructura: {summary['infra_errors']}",
         f"- Parches vacíos: {summary['empty_patch']}",

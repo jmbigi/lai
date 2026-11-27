@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -80,30 +81,53 @@ class OllamaRootTests(unittest.TestCase):
 
 
 class ContainerBaseUrlTests(unittest.TestCase):
-    def test_loopback_becomes_host_docker_internal(self):
+    """La traducción depende de la plataforma y del modo de red.
+
+    Medido el 2026-11-27 en Linux: con --network host el loopback del
+    contenedor ES el del host, así que traducir a host.docker.internal rompía
+    la conexión con llama.cpp.
+    """
+
+    def test_bridge_translates_loopback(self):
         self.assertEqual(
-            run_eval.container_base_url("http://127.0.0.1:11434/v1"),
+            run_eval.container_base_url("http://127.0.0.1:11434/v1", "bridge"),
             "http://host.docker.internal:11434/v1",
         )
 
-    def test_localhost_and_ipv6(self):
-        self.assertEqual(
-            run_eval.container_base_url("http://localhost:11434/v1"),
-            "http://host.docker.internal:11434/v1",
-        )
-        self.assertEqual(
-            run_eval.container_base_url("http://[::1]:11434/v1"),
-            "http://host.docker.internal:11434/v1",
-        )
+    def test_bridge_translates_localhost_and_ipv6(self):
+        for url in ("http://localhost:11434/v1", "http://[::1]:11434/v1"):
+            self.assertEqual(
+                run_eval.container_base_url(url, "bridge"),
+                "http://host.docker.internal:11434/v1",
+            )
 
     def test_non_loopback_is_untouched(self):
         for url in ("http://host.docker.internal:11434/v1", "http://192.168.1.50:11434/v1"):
-            self.assertEqual(run_eval.container_base_url(url), url)
+            self.assertEqual(run_eval.container_base_url(url, "bridge"), url)
 
-    def test_warning_only_for_loopback(self):
-        self.assertIsNotNone(run_eval.container_base_url_warning("http://127.0.0.1:11434/v1"))
-        self.assertIsNone(run_eval.container_base_url_warning("http://host.docker.internal:11434/v1"))
+    def test_linux_host_network_keeps_loopback(self):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("solo aplica a Linux")
+        self.assertEqual(
+            run_eval.container_base_url("http://127.0.0.1:8080/v1", "host"),
+            "http://127.0.0.1:8080/v1",
+        )
 
+    def test_uses_host_network_only_on_linux(self):
+        self.assertEqual(run_eval.uses_host_network("host"), sys.platform.startswith("linux"))
+        self.assertFalse(run_eval.uses_host_network("bridge"))
+
+    def test_warning_only_when_translating(self):
+        self.assertIsNotNone(
+            run_eval.container_base_url_warning("http://127.0.0.1:11434/v1", "bridge")
+        )
+        self.assertIsNone(
+            run_eval.container_base_url_warning("http://host.docker.internal:11434/v1", "bridge")
+        )
+        if sys.platform.startswith("linux"):
+            self.assertIsNone(
+                run_eval.container_base_url_warning("http://127.0.0.1:11434/v1", "host")
+            )
 
 class ExtractPatchTests(unittest.TestCase):
     def test_extracts_between_markers(self):
@@ -112,6 +136,13 @@ class ExtractPatchTests(unittest.TestCase):
 
     def test_missing_markers_returns_empty(self):
         self.assertEqual(run_eval.extract_patch("just output"), "")
+
+    def test_trailing_empty_context_line_is_preserved(self):
+        # Un hunk puede terminar con una línea de contexto vacía (" "). Si se
+        # recorta ese espacio, git responde "corrupt patch at line N".
+        patch = "diff --git a/x b/x\n@@ -1,2 +1,3 @@\n a\n+b\n "
+        stdout = f"{B}\n{patch}\n{E}"
+        self.assertEqual(run_eval.extract_patch(stdout), patch)
 
     def test_empty_patch_returns_empty(self):
         self.assertEqual(run_eval.extract_patch(f"{B}\n\n{E}"), "")

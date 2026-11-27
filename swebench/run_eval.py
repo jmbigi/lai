@@ -133,9 +133,38 @@ def build_task(instance: dict) -> str:
         "with start_line/end_line instead of reading whole files.\n"
         "- Change only what is necessary to fix the issue.\n"
         "- Do not modify test files.\n"
+        "- Use `edit` (exact fragment, old_string/new_string) to change an existing "
+        "file; `write_file` only for new files or full rewrites.\n"
         "- When you are done, reply with a short summary of the change.\n\n"
+        f"{test_hint(instance)}"
         "ISSUE:\n"
         f"{instance['problem_statement']}\n"
+    )
+
+
+def test_hint(instance: dict) -> str:
+    """Nombres de los tests que deben pasar, para que el agente pueda verificar.
+
+    No revela el arreglo: son los tests del issue, que en un flujo real el
+    desarrollador también ejecutaría. Sin esta pista un modelo pequeño se limita
+    a leer archivos y nunca comprueba nada (medido el 2026-11-27).
+    """
+    failing = instance.get("FAIL_TO_PASS") or []
+    if isinstance(failing, str):
+        try:
+            failing = json.loads(failing)
+        except json.JSONDecodeError:
+            failing = []
+    failing = [str(name) for name in failing][:8]
+    if not failing:
+        return ""
+    listing = "\n".join(f"- {name}" for name in failing)
+    return (
+        "These tests currently fail and must pass after your change "
+        "(do not modify them):\n"
+        f"{listing}\n"
+        "You can run one of them from /testbed with: "
+        "python -m pytest -q <file>::<test>\n\n"
     )
 
 
@@ -186,7 +215,16 @@ def http_json(url: str, payload: dict | None = None, timeout: int = 5) -> dict |
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
-def container_base_url_warning(base_url: str) -> str | None:
+def uses_host_network(network: str) -> bool:
+    """¿El contenedor comparte la red del host?
+
+    En Linux, `--network host` significa que `127.0.0.1` dentro del contenedor
+    **es** el loopback del host. En Docker Desktop (Windows/macOS) la red host
+    es emulada y el loopback no llega al host, así que allí hay que traducir.
+    """
+    return network == "host" and sys.platform.startswith("linux")
+
+def container_base_url_warning(base_url: str, network: str = "host") -> str | None:
     """Aviso informativo si el base-url se va a traducir para el contenedor.
 
     Medido el 2026-11-26 en Docker Desktop (Windows): con `--network host` el
@@ -195,26 +233,35 @@ def container_base_url_warning(base_url: str) -> str | None:
     automática; el aviso solo deja constancia para que el log sea interpretable.
     """
     host = (urllib.parse.urlparse(base_url).hostname or "").lower()
-    if host in LOOPBACK_HOSTS:
+    if host in LOOPBACK_HOSTS and not uses_host_network(network):
         return (
-            f"ℹ base-url {host}: dentro del contenedor es el propio contenedor, "
-            "así que se traduce automáticamente a host.docker.internal."
+            f"ℹ base-url {host}: con red '{network}' dentro del contenedor es el "
+            "propio contenedor, así que se traduce automáticamente a host.docker.internal."
         )
     return None
 
 
-def container_base_url(base_url: str) -> str:
+def container_base_url(base_url: str, network: str = "host") -> str:
     """Traduce el base-url para usarlo DENTRO del contenedor.
 
     Medido el 2026-11-26 en Docker Desktop (Windows): con `--network host` el
     contenedor no ve el loopback del host, así que `127.0.0.1:11434` no llega a
-    Ollama; `host.docker.internal` sí resuelve en red host y en bridge. En Linux
-    nativo `--network host` sí comparte el loopback, y esta traducción también
-    funciona porque Docker añade la entrada.
+    Ollama; `host.docker.internal` sí resuelve en red host y en bridge.
+
+    Medido el 2026-11-27 en Linux nativo: con `--network host` el loopback SÍ
+    se comparte, y traducir a `host.docker.internal` rompe la conexión porque
+    el nombre no resuelve sin `--add-host`. Por eso la traducción depende de la
+    plataforma y del modo de red.
     """
     parsed = urllib.parse.urlparse(base_url)
     host = (parsed.hostname or "").lower()
     if host not in LOOPBACK_HOSTS:
+        return base_url
+    # En Linux con --network host el loopback es el del host: traducir a
+    # host.docker.internal rompería la conexión (ese nombre no resuelve sin
+    # --add-host, y el gateway no acepta tráfico desde la IP del host si el
+    # servidor escucha solo en 127.0.0.1).
+    if uses_host_network(network):
         return base_url
     netloc = "host.docker.internal"
     if parsed.port:
@@ -244,7 +291,7 @@ def read_context(model: str, base_url: str) -> int | None:
     return None
 
 
-def preflight_ollama(base_url: str, model: str) -> bool:
+def preflight_ollama(base_url: str, model: str, network: str = "host") -> bool:
     host = (urllib.parse.urlparse(base_url).hostname or "").lower()
     if host not in LOCAL_HOSTS:
         print(
@@ -252,7 +299,7 @@ def preflight_ollama(base_url: str, model: str) -> bool:
             "continúa bajo tu responsabilidad.",
             file=sys.stderr,
         )
-    container_warning = container_base_url_warning(base_url)
+    container_warning = container_base_url_warning(base_url, network)
     if container_warning:
         print(container_warning, file=sys.stderr)
 
@@ -290,10 +337,12 @@ def preflight_ollama(base_url: str, model: str) -> bool:
     return True
 
 
-def preflight(instances: list[dict], base_url: str, model: str) -> bool:
+def preflight(
+    instances: list[dict], base_url: str, model: str, network: str = "host"
+) -> bool:
     if not docker_available():
         return False
-    if not preflight_ollama(base_url, model):
+    if not preflight_ollama(base_url, model, network):
         return False
     missing = [inst for inst in instances if not image_present(image_name(inst))]
     if missing:
@@ -324,7 +373,11 @@ def extract_patch(stdout: str) -> str:
     end = stdout.find(DIFF_END, start)
     if end == -1:
         return ""
-    return stdout[start:end].strip()
+    # Solo se quitan los saltos de línea que separan el diff de los marcadores.
+    # `.strip()` completo borraba el espacio de una línea de contexto vacía
+    # (" ") al final del hunk y git rechazaba el parche con
+    # "corrupt patch at line N" (medido el 2026-11-27 en astropy-13236).
+    return stdout[start:end].strip("\r\n")
 
 
 def classify_result(stdout: str, stderr: str, rc: int) -> tuple[str, str]:
@@ -376,6 +429,8 @@ def run_instance(
     timeout: int,
     platform: str | None,
     network: str,
+    profile: str = "full",
+    context_window: int | None = None,
 ) -> dict:
     iid = instance["instance_id"]
     image = image_name(instance)
@@ -394,9 +449,9 @@ def run_instance(
         "cp /tmp/lai_bin/lai /usr/local/bin/lai && chmod +x /usr/local/bin/lai || exit 91; "
         "cd /testbed || exit 90; "
         "git checkout -- . 2>/dev/null || true; git clean -fdq 2>/dev/null || true; "
-        f"lai --model {shlex.quote(model)} --base-url {shlex.quote(container_base_url(base_url))} "
+        f"lai --model {shlex.quote(model)} --base-url {shlex.quote(container_base_url(base_url, network))} "
         'auto "$(cat /tmp/lai_problem.txt)" '
-        f"--max-iterations {int(max_iter)} 2>&1; "
+        f"--max-iterations {int(max_iter)} --profile {shlex.quote(profile)} 2>&1; "
         "LAI_RC=$?; "
         "git add -A 2>/dev/null || true; "
         f"echo {DIFF_BEGIN}; git diff --cached; echo {DIFF_END}; "
@@ -410,6 +465,15 @@ def run_instance(
     cmd += [
         "--network",
         network,
+    ]
+    if not uses_host_network(network):
+        # Docker >= 20.10 resuelve este alias en Linux; en Docker Desktop ya
+        # existe de serie. Declararlo explícitamente no rompe ninguno de los dos.
+        cmd += ["--add-host", "host.docker.internal:host-gateway"]
+    if context_window:
+        # Presupuesto de contexto del agente dentro del contenedor.
+        cmd += ["-e", f"LAI_CONTEXT_WINDOW={int(context_window)}"]
+    cmd += [
         "--mount",
         # as_posix(): Docker Desktop no acepta bien las barras invertidas en
         # --mount type=bind,source=...
@@ -505,6 +569,18 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
     parser.add_argument("--max-iterations", type=int, default=10)
     parser.add_argument("--timeout", type=int, default=1800, help="Timeout por instancia (s)")
+    parser.add_argument(
+        "--profile",
+        default="full",
+        choices=["full", "bash"],
+        help="Perfil de herramientas del agente (bash = una sola herramienta)",
+    )
+    parser.add_argument(
+        "--context-window",
+        type=int,
+        default=0,
+        help="Ventana de contexto del modelo en tokens (0 = la del binario)",
+    )
     parser.add_argument("--platform", default=None, help="Plataforma Docker, p. ej. linux/amd64")
     parser.add_argument("--network", default="host", help="Red del contenedor (host para Ollama)")
     parser.add_argument("--skip-preflight", action="store_true", help="No comprobar Docker/Ollama/imágenes")
@@ -566,7 +642,7 @@ def main() -> int:
         print("No hay instancias pendientes para este modelo.")
     elif not args.skip_preflight:
         # Solo comprobamos las imágenes que realmente se van a usar.
-        if not preflight(pending, args.base_url, args.model):
+        if not preflight(pending, args.base_url, args.model, args.network):
             print("Usa --skip-preflight para saltarte estas comprobaciones.", file=sys.stderr)
             return 2
 
@@ -586,6 +662,8 @@ def main() -> int:
             args.timeout,
             args.platform,
             args.network,
+            args.profile,
+            args.context_window or None,
         )
         ran += 1
 

@@ -288,6 +288,10 @@ pub struct LlmClient {
     model: String,
     api_key: Option<String>,
     allow_remote: bool,
+    /// Temperatura de muestreo. Los agentes de código necesitan determinismo:
+    /// con 0.7 el mismo issue resolvía o no según la tirada (medido el
+    /// 2026-11-27 en pytest-5809). `auto` usa 0.2 por defecto.
+    temperature: f64,
     /// Compartido con la política de redirecciones de reqwest: una redirección
     /// también es una petición saliente y debe respetar la Regla 4.
     allow_remote_redirects: Arc<AtomicBool>,
@@ -323,9 +327,16 @@ impl LlmClient {
                 .ok()
                 .filter(|key| !key.is_empty()),
             allow_remote: false,
+            temperature: 0.7,
             allow_remote_redirects,
             client,
         }
+    }
+
+    /// Ajusta la temperatura de muestreo (0.0 = determinista).
+    pub fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = temperature.clamp(0.0, 2.0);
+        self
     }
 
     /// Regla 4: permite endpoints no locales con consentimiento explícito.
@@ -373,7 +384,7 @@ impl LlmClient {
             tools: None,
             tool_choice: Some("none".to_string()),
             stream: Some(false),
-            temperature: Some(0.7),
+            temperature: Some(self.temperature),
             max_tokens: Some(4096),
             top_p: Some(0.95),
             top_k: Some(20),
@@ -414,7 +425,7 @@ impl LlmClient {
             tools,
             tool_choice,
             stream: Some(false),
-            temperature: Some(0.7),
+            temperature: Some(self.temperature),
             max_tokens: Some(4096),
             top_p: Some(0.95),
             top_k: Some(20),
@@ -456,7 +467,7 @@ impl LlmClient {
             tools,
             tool_choice,
             stream: Some(false),
-            temperature: Some(0.7),
+            temperature: Some(self.temperature),
             max_tokens: Some(4096),
             top_p: Some(0.95),
             top_k: Some(20),
@@ -497,7 +508,7 @@ impl LlmClient {
             tools,
             tool_choice,
             stream: Some(true),
-            temperature: Some(0.7),
+            temperature: Some(self.temperature),
             max_tokens: Some(4096),
             top_p: Some(0.95),
             top_k: Some(20),

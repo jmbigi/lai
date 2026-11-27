@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Corrida SWE-bench con llama.cpp en GPU (2026-11-27)**: 10 instancias, 8 parches, **2 resueltas** (`pytest-dev__pytest-5809`, `matplotlib__matplotlib-13989`), 0 errores de infraestructura. Tasa de extremo a extremo 2/10 (20 %). Tabla completa en `BENCHMARKS.md`; registro antes/después en `DOCS/CAMBIOS_2026-11-27_SWEBENCH.md`.
+- **DOCS/CAMBIOS_2026-11-27_SWEBENCH.md**: registro antes/después (Regla 10) de la puesta en marcha de llama.cpp, la revisión de la aplicación y las correcciones que destapó el benchmark.
+- **`lai auto`: escalada por presupuesto de turnos**: si pasa la mitad del presupuesto sin ninguna edición, se le indica al modelo cuántos turnos quedan y se le pide aplicar el arreglo. Medido: los parches producidos pasaron de 5/10 a 8/10.
+- **`LlmClient::with_temperature` + `LAI_TEMPERATURE`**: `auto` usa 0.2 por defecto en lugar de 0.7 fijo.
 - **DOCS/CAMBIOS_2026-11-27_MEJORAS.md**: registro antes/después (Regla 10) de la tanda de eficiencia: perfil `bash`, presupuesto de contexto, `edit`, comandos reales y deadlock de telemetría.
 - **Perfil de herramientas `bash`** (`lai auto --profile bash`): expone una sola herramienta y un prompt de ~800 caracteres en lugar de 14 esquemas. Inspirado en mini-SWE-agent (cifra externa, no reproducida por lai): un agente bash-only es competitivo y arranca más rápido. `--profile full` sigue siendo el valor por defecto. Medido contra un servidor [OI] falso: `tools: 1` frente a 14.
 - **`context_budget.rs`**: presupuesto de contexto para modelos pequeños. Antes de cada llamada de `auto` se eliden las salidas de herramientas antiguas (conservando sistema, tarea y los 4 turnos recientes), sin borrar mensajes `tool` para no romper el protocolo de function calling. Ventana configurable con `LAI_CONTEXT_WINDOW` (por defecto 32768). 6 tests.
@@ -37,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Regla 10 (Documentación obligatoria de cambios):** Nueva regla que exige crear documento de cambios propuestos antes de modificar código, documentar estado ANTES y DESPUÉS de cada cambio individual, y mantener trazabilidad para favorecer el trabajo en equipo. Prohíbe cambios silenciosos o en batch sin documentación intermedia.
 
 ### Fixed
+- **`lai bench` presentaba resultados mock como éxito**: `bench all` y `bench run` usaban `MockBenchmarkAdapter` y mostraban «✅ Success: true … 100 %» con latencia 0 ms. Ahora avisan de que no miden nada y cada línea lleva `⚠ MOCK` (Regla 6).
+- **`edit` podía destruir un archivo**: un `old_string` igual a casi todo el archivo dejaba 5 líneas de 71 (medido en `pytest-5809`). Ahora aplica la misma guarda anti-destrucción que `write_file`.
+- **`grep`/`find_files` con una ruta inexistente devolvían «No matches»**, así que el modelo probaba rutas inventadas hasta agotar las iteraciones. Ahora devuelven un error explícito.
+- **El bucle de `auto` giraba hasta el final repitiendo la misma llamada**: en `pytest-10081` fueron 9 repeticiones del mismo `read_file`. Ahora se detiene con un mensaje claro.
+- **`auto` empujaba al modelo a seguir trabajando después de editar**, repitiendo `write_file` dos veces. Ahora una respuesta en prosa tras una edición se acepta como final.
+- **`swebench/run_eval.py` — la traducción del base-url rompía Linux**: se traducía siempre a `host.docker.internal`, que no resuelve con `--network host` en Linux nativo. Ahora depende de la plataforma y del modo de red, y en bridge se añade `--add-host host.docker.internal:host-gateway`.
+- **`swebench/run_eval.py` — `extract_patch` corrompía diffs** que terminaban con una línea de contexto vacía (`.strip()` borraba el espacio): `git apply` respondía `corrupt patch at line 12`. Ahora solo se quitan los saltos de línea del delimitador.
+- **`swebench/evaluate.py` — el informe ocultaba los parches vacíos**: la «tasa de resolución» se calculaba solo sobre instancias puntuadas. Ahora muestra también la tasa de extremo a extremo.
+- **`swebench/run_eval.py` — el enunciado no indicaba los tests**: el agente leía archivos y nunca comprobaba nada. Ahora incluye los nombres de los `FAIL_TO_PASS` y cómo ejecutarlos (no revela el parche).
 - **`telemetry.rs` — deadlock en todos los `record_*`**: el guard del `if let` mantenía el mutex y el segundo `lock()` colgaba el proceso. Medido: `lai verify` no terminaba nunca (código 124 a los 20 s). Ahora un helper `with_telemetry` toma el guard una sola vez. Test de regresión incluido; `lai verify --level 1` termina en 156 ms.
 - **`verification_engine.rs` — todo proyecto Python reprobaba la sintaxis**: se ejecutaba `python3 -m py_compile .`, que no acepta directorios (`[Errno 21] Is a directory`). Ahora se usa `compileall -q .`. Además, si `ruff`/`mypy`/`eslint` no están instalados, el nivel pasa como omitido en lugar de fallar.
 - **`commands.rs` — siete subcomandos eran stubs**: `repo-map`, `verify`, `diagnose`, `metrics`, `baseline`, `memory` y `checkpoint` imprimían «to be implemented» aunque sus motores existían. Ahora ejecutan el motor real (verificado a mano). `repair` diagnostica el `--error` y `plan` explica que necesita modelo local.

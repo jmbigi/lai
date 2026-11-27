@@ -209,6 +209,14 @@ fn grep_tool(args: &HashMap<String, Value>) -> Result<String> {
         return Err(anyhow::anyhow!("grep requires a non-empty 'pattern'"));
     }
     let path = arg_str(args, "path", ".");
+    // Un `path` inexistente devolvía "No matches", y el modelo interpretaba que
+    // el patrón no estaba y probaba rutas inventadas (medido el 2026-11-27 en
+    // pytest-5809: 10 iteraciones con /testbed/src/_pytest/terminal/pytest/...).
+    if !Path::new(path).exists() {
+        return Err(anyhow::anyhow!(
+            "grep: la ruta '{path}' no existe. Usa una ruta real del proyecto              (por ejemplo '.' o 'src') o find_files para localizar el archivo."
+        ));
+    }
     let use_regex = arg_bool(args, "regex", false);
     let case_insensitive = arg_bool(args, "case_insensitive", false);
     let glob_filter = {
@@ -302,6 +310,11 @@ fn grep_tool(args: &HashMap<String, Value>) -> Result<String> {
 fn find_files_tool(args: &HashMap<String, Value>) -> Result<String> {
     let pattern = arg_str(args, "pattern", "*");
     let path = arg_str(args, "path", ".");
+    if !Path::new(path).exists() {
+        return Err(anyhow::anyhow!(
+            "find_files: la ruta '{path}' no existe. Usa una ruta real del proyecto              (por ejemplo '.') o list_dir para ver qué hay."
+        ));
+    }
     let max_results = arg_usize(args, "max_results", 200).clamp(1, 1_000);
     let glob_pattern = glob::Pattern::new(pattern)
         .map_err(|e| anyhow::anyhow!("invalid glob {pattern:?}: {e}"))?;
@@ -410,9 +423,13 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
         ));
     }
     if old == new {
-        return Err(anyhow::anyhow!(
-            "edit: 'old_string' y 'new_string' son iguales; no hay nada que cambiar"
-        ));
+        return Err(anyhow::anyhow!(concat!(
+            "edit: 'old_string' y 'new_string' son idénticos, así que el archivo no cambiaría. ",
+            "Reescribe SOLO las líneas del arreglo: cambia el valor, la condición o la ",
+            "llamada concreta que causa el bug y deja el resto del fragmento igual. ",
+            "Si aún no sabes qué línea cambiar, lee el rango exacto con read_file ",
+            "(start_line/end_line) antes de editar."
+        )));
     }
 
     let content = fs::read_to_string(path).map_err(|e| anyhow::anyhow!("edit {path}: {e}"))?;
@@ -436,6 +453,22 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     } else {
         content.replacen(old, new, 1)
     };
+
+    // Misma guarda anti-destrucción que `write_file`: con `old_string` igual a
+    // casi todo el archivo, `edit` puede borrarlo igual que un write_file.
+    // Medido el 2026-11-27: qwen3-8b redujo src/_pytest/pastebin.py de 71 a 5
+    // líneas con un único `edit`, y el parche resultante no podía pasar nada.
+    let old_lines = content.lines().count();
+    let new_lines = updated.lines().count();
+    let shrunk = old_lines >= SHRINK_MIN_ORIGINAL_LINES
+        && new_lines * 100 < old_lines * SHRINK_RATIO_PERCENT;
+    if shrunk && !arg_bool(args, "allow_shrink", false) {
+        return Err(anyhow::anyhow!(
+            "edit rechazado: el reemplazo dejaría '{path}' con {new_lines} líneas de {old_lines}              ({:.0}% del original). Eso casi siempre destruye el archivo. Cambia solo el              fragmento necesario, o repite con \"allow_shrink\": true si de verdad quieres              borrar la mayor parte del archivo.",
+            (new_lines as f64 / old_lines as f64) * 100.0
+        ));
+    }
+
     fs::write(path, &updated)?;
     Ok(format!(
         "Edited {path}: {} reemplazo(s), {} → {} líneas",
@@ -848,8 +881,8 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "edit".into(),
-                description: "Edit an existing file by replacing an exact fragment. Args: path, old_string (copied exactly from read_file), new_string. Fails if old_string is missing or appears more than once (use replace_all or more context). PREFERRED over write_file for existing files.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","description":"Replace every occurrence (default false)"}},"required":["path","old_string","new_string"]}),
+                description: "Edit an existing file by replacing an exact fragment. Args: path, old_string (copied exactly from read_file), new_string. Fails if old_string is missing or appears more than once (use replace_all or more context). Refuses to shrink a 40+ line file below 25% of its length unless allow_shrink is true. PREFERRED over write_file for existing files.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","description":"Replace every occurrence (default false)"},"allow_shrink":{"type":"boolean","description":"Permit a replacement that removes most of the file"}},"required":["path","old_string","new_string"]}),
             },
             ToolSchema {
                 name: "list_dir".into(),
@@ -997,6 +1030,32 @@ mod tests {
         assert!(out.contains("a.rs:2:"), "{out}");
         assert!(!out.contains("target"), "{out}");
         assert!(!out.contains("node_modules"), "{out}");
+    }
+
+    #[test]
+    fn grep_reports_missing_path_instead_of_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-existe");
+        let err = grep_tool(&args(json!({
+            "pattern": "x",
+            "path": missing.to_string_lossy()
+        })))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("no existe"), "{err}");
+    }
+
+    #[test]
+    fn find_files_reports_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-existe");
+        let err = find_files_tool(&args(json!({
+            "pattern": "*.rs",
+            "path": missing.to_string_lossy()
+        })))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("no existe"), "{err}");
     }
 
     #[test]
@@ -1205,6 +1264,25 @@ mod tests {
     }
 
     #[test]
+    fn edit_refuses_to_destroy_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pastebin.py");
+        let original: String = (0..71).map(|i| format!("line {i}\n")).collect();
+        fs::write(&path, &original).unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": original,
+            "new_string": "import sys\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("edit rechazado"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
     fn edit_rejects_identical_strings() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.py");
@@ -1218,7 +1296,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(err.contains("iguales"), "{err}");
+        assert!(err.contains("idénticos"), "{err}");
     }
 
     #[test]

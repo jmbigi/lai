@@ -265,6 +265,65 @@ Las corridas de agente anteriores (`astropy__astropy-12907` con `qwen3:8b`, 615 
 se hicieron con un binario que no podía llegar a Ollama desde el contenedor, así
 que **sus parches no están evaluados y no cuentan**.
 
+### Corrida real 2026-11-27 (llama.cpp + GPU, 10 instancias)
+
+Primera corrida completa con **llama.cpp en GPU** en este equipo (las anteriores
+fueron CPU con Ollama) y con el binario que incluye las correcciones de
+`apply_patch`, `edit`, timeouts y presupuesto de contexto.
+
+| Dato | Valor |
+|------|-------|
+| Modelo | `qwen3-8b` = Qwen3-8B-Q4_K_M.gguf (4.7 GiB) |
+| Runtime | llama.cpp build **12567** (`bed8ec2f8`), `--host 127.0.0.1 --port 8080` |
+| Contexto | **18432** tokens (`-c 18432`, `n_ctx_slot` del log) |
+| GPU | RTX 3070 Laptop 8 GB, `-ngl 50` + 49 capas en CPU; **7399/8192 MiB** de VRAM en uso |
+| CPU | 16 hilos, `--batch-size 2048 --ubatch-size 512`, flash-attn on |
+| Extras | `--spec-type ngram-simple` (n-12/m-48), `--reasoning-format deepseek` |
+| Throughput medido (486 peticiones del log) | prompt eval **p50 1109 t/s** (min 80, max 2283); generación **p50 65 t/s** (min 12, max 615) |
+| Agente | `lai auto --profile full`, temperatura 0.2, 30 iteraciones máximas |
+| Evaluador | `swebench/evaluate.py`, `eval_script` oficial por instancia |
+| Fecha | 2026-11-27 |
+
+**Resultado: 2/10 resueltas de extremo a extremo (20 %); 8/10 produjeron un
+parche evaluable y 2/10 quedaron vacías. 0 errores de infraestructura.**
+
+| Instancia | Repo | Parche | Evaluación | F2P | P2P | Agente |
+|---|---|---|:---:|---|---|---:|
+| `pytest-dev__pytest-5809` | pytest | ✅ | **resuelta** | 1/1 | 3/3 | 35.4 s |
+| `matplotlib__matplotlib-13989` | matplotlib | ✅ | **resuelta** | 1/1 | 411/411 | 174.0 s |
+| `astropy__astropy-13236` | astropy | ✅ | no resuelta | 0/2 | 644/644 | 36.0 s |
+| `sphinx-doc__sphinx-8595` | sphinx | ✅ | no resuelta | 0/1 | 0/0 | 96.6 s |
+| `pylint-dev__pylint-4970` | pylint | ✅ | no resuelta | 0/1 | 17/17 | 56.1 s |
+| `astropy__astropy-13033` | astropy | ✅ | no resuelta | 0/1 | 0/20 | 36.5 s |
+| `psf__requests-1142` | requests | ✅ | no resuelta | 0/1 | 5/5 | 116.8 s |
+| `pytest-dev__pytest-10081` | pytest | ✅ | no resuelta | 0/1 | 63/63 | 113.7 s |
+| `astropy__astropy-12907` | astropy | ❌ vacío | no puntuable | — | — | 34.4 s |
+| `pydata__xarray-4075` | xarray | ❌ vacío | no puntuable | — | — | 219.0 s |
+
+**Qué demuestra y qué no.**
+
+- Demuestra que la cadena completa funciona: agente → `git diff` → evaluación
+  oficial → `resolved`, con **cero errores de infraestructura**. Dos parches
+  reales, escritos por un modelo local, pasan los tests oficiales del benchmark.
+- **No** demuestra capacidad general: 10 instancias es una muestra pequeña
+  (1 de cada 12 repos del dataset) y el intervalo de confianza es enorme.
+- La tasa de 20 % es de **extremo a extremo** (resueltas / intentadas). El
+  informe automático calcula además «sobre puntuadas» (25 %), que excluye las
+  dos predicciones vacías; ambas cifras aparecen ahora en `report.md`.
+- Las 8 instancias no resueltas no son un fallo del harness: el parche se aplicó
+  y los tests oficiales dictaminaron. En varios casos el modelo cambió el
+  archivo correcto con la lógica equivocada.
+
+**Dos fallos reales que esta corrida destapó y ya están corregidos:**
+
+1. **`extract_patch` corrompía diffs** que terminaban con una línea de contexto
+   vacía (`" "`): `.strip()` borraba ese espacio y `git apply` respondía
+   `corrupt patch at line 12`. Se vio en `astropy__astropy-13236`, que pasó de
+   `apply_failed` a evaluable.
+2. **`edit` podía destruir un archivo**: en `pytest-5809` el modelo reemplazó
+   `src/_pytest/pastebin.py` (71 líneas) por 5 líneas con un solo `edit`. Ahora
+   `edit` aplica la misma guarda anti-destrucción que `write_file`.
+
 ### Primera corrida real del agente (2026-11-26)
 
 | Dato | Valor |

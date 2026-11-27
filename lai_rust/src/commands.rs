@@ -941,8 +941,17 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
         )
     };
 
-    let llm =
-        LlmClient::new(base_url.to_string(), model.to_string()).with_allow_remote(allow_remote);
+    // Temperatura baja: un agente de código debe repetir el mismo camino ante
+    // el mismo estado. `LAI_TEMPERATURE` permite subirla si se prefiere
+    // exploración; por defecto 0.2.
+    let temperature = std::env::var("LAI_TEMPERATURE")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .unwrap_or(0.2);
+    println!("   Temperature: {}", temperature);
+    let llm = LlmClient::new(base_url.to_string(), model.to_string())
+        .with_allow_remote(allow_remote)
+        .with_temperature(temperature);
 
     let mut messages = vec![
         crate::llm::Message {
@@ -974,7 +983,39 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
         std::collections::HashMap::new();
     const MAX_IDENTICAL_CALLS: u32 = 3;
 
-    for iteration in 1..=max_iterations {
+    // Escalada por presupuesto de turnos: medido el 2026-11-27 con
+    // qwen3-8b en astropy-12907, el modelo gastó las 8 iteraciones leyendo
+    // archivos y nunca editó. Cuando se agota la mitad del presupuesto sin
+    // ningún cambio, se le dice explícitamente cuántos turnos quedan y se le
+    // pide que actúe. Una sola vez, para no convertir el bucle en ruido.
+    let mut edits_made: u32 = 0;
+    let mut escalation_sent = false;
+    let escalation_at = (max_iterations / 2).max(1);
+
+    'agent: for iteration in 1..=max_iterations {
+        if !escalation_sent && edits_made == 0 && iteration > escalation_at {
+            escalation_sent = true;
+            let remaining = max_iterations.saturating_sub(iteration) + 1;
+            println!(
+                "⏳ Sin cambios tras {} iteraciones: pidiendo al modelo que aplique el arreglo",
+                iteration - 1
+            );
+            messages.push(crate::llm::Message {
+                role: "user".into(),
+                content: format!(
+                    "You have {remaining} turn(s) left and you have not modified any file yet.\n\n\
+                     Stop exploring. Apply the fix NOW with a tool call:\n\
+                     - Use `edit` with the exact fragment you already read (path, old_string, new_string), or\n\
+                     - use `write_file` if the file must be replaced entirely.\n\n\
+                     If you are missing a piece of information, read only that specific range \
+                     (read_file with start_line/end_line) in the same turn and then edit."
+                ),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            });
+        }
+
         println!("\n--- Iteration {} of {} ---", iteration, max_iterations);
 
         // Presupuesto de contexto: antes de cada llamada se eliden los
@@ -1016,7 +1057,12 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                 }
 
                 if tool_calls.is_empty() {
-                    if nudges < MAX_NUDGES && iteration < max_iterations {
+                    // Si el modelo ya trabajó y ahora responde en prosa, lo más
+                    // probable es que sea su respuesta final: no se le empuja a
+                    // repetir trabajo. Solo se insiste cuando aún no ha usado
+                    // ninguna herramienta (el caso de "describir en vez de actuar").
+                    let has_worked = edits_made > 0;
+                    if !has_worked && nudges < MAX_NUDGES && iteration < max_iterations {
                         nudges += 1;
                         println!(
                             "↻ No tool call emitted; asking the model to act ({}/{})",
@@ -1101,6 +1147,16 @@ complete corrected file content. Do not reply with analysis or questions — act
                             name_str, *seen
                         );
                         println!("  ⚠ repeated call #{}, skipping execution", *seen);
+                        // Tras varias repeticiones el modelo no está leyendo la
+                        // advertencia: seguir girando solo quema tiempo. Medido
+                        // el 2026-11-27 en pytest-10081: 9 repeticiones del
+                        // mismo read_file y parche vacío al final.
+                        if *seen > MAX_IDENTICAL_CALLS + 3 {
+                            println!(
+                                "⛔ El modelo repite la misma llamada sin avanzar: se detiene el bucle."
+                            );
+                            break 'agent;
+                        }
                         messages.push(crate::llm::Message {
                             role: "tool".into(),
                             content: warning,
@@ -1127,6 +1183,9 @@ complete corrected file content. Do not reply with analysis or questions — act
                     let tool_result = match result {
                         Ok(r) => {
                             println!("  ✓ Done");
+                            if matches!(name_str, "write_file" | "apply_patch" | "edit") {
+                                edits_made += 1;
+                            }
                             r
                         }
                         Err(e) => {
@@ -2142,6 +2201,10 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
             iterations,
         } => {
             println!("🏃 Running all standard benchmarks...");
+            println!(
+                "⚠ Los adaptadores reales no están registrados: estos resultados provienen de \
+                 MockBenchmarkAdapter y NO miden nada del sistema (Regla 6)."
+            );
 
             let benchmarks = standard_benchmarks::all_benchmarks();
             let mut all_results = Vec::new();
@@ -2171,7 +2234,7 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                 match runner.run().await {
                     Ok(result) => {
                         println!(
-                            "✅ {} - Success: {} - Details: {}",
+                            "⚠ MOCK {} - Success: {} - Details: {}",
                             result.benchmark_name, result.success, result.success_details
                         );
                         all_results.push(result);
@@ -2191,6 +2254,7 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
             iterations,
         } => {
             println!("🏃 Running benchmark for capability: {}", capability);
+            println!("⚠ Adaptador mock: el resultado NO es una medición real (Regla 6).");
 
             let benchmarks = standard_benchmarks::all_benchmarks();
             if let Some(config) = benchmarks
@@ -2221,7 +2285,7 @@ pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
                 match runner.run().await {
                     Ok(result) => {
                         println!(
-                            "✅ {} - Success: {} - Details: {}",
+                            "⚠ MOCK {} - Success: {} - Details: {}",
                             result.benchmark_name, result.success, result.success_details
                         );
                     }
