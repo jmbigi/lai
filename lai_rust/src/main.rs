@@ -56,6 +56,12 @@ enum Commands {
         max_iterations: u32,
         #[arg(long, help = "Output directory")]
         output: Option<String>,
+        #[arg(
+            long,
+            default_value = "full",
+            help = "Tool profile: full (14 tools) or bash (one shell tool, better for small models)"
+        )]
+        profile: String,
     },
     /// Run RepoMap indexer
     RepoMap {
@@ -186,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
             task,
             max_iterations,
             output,
+            profile,
         }) => {
             commands::cmd_auto(
                 &task,
@@ -194,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
                 &cli.model,
                 &cli.base_url,
                 cli.allow_remote,
+                &profile,
             )
             .await;
         }

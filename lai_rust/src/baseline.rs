@@ -33,7 +33,7 @@ pub enum BaselineCommands {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaselineMetric {
     TestPassRate,
     TestCount,
@@ -45,6 +45,29 @@ pub enum BaselineMetric {
     SecurityFindings,
     PerformanceScore,
     Custom(String),
+}
+
+// Serializar como cadena permite usar `BaselineMetric` como clave de un
+// `HashMap` en JSON. Con la implementación derivada, `Custom(String)` se
+// convertía en `{"Custom": "x"}`, que no es una clave válida, y
+// `lai baseline create` fallaba con «key must be a string».
+impl Serialize for BaselineMetric {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for BaselineMetric {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(BaselineMetric::from_string(&value))
+    }
 }
 
 impl BaselineMetric {

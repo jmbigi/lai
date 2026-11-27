@@ -7,6 +7,7 @@ pub mod benchmark;
 pub mod change_engine;
 pub mod commands;
 pub mod context;
+pub mod context_budget;
 pub mod diagnostic_engine;
 pub mod init_wizard;
 pub mod llm;

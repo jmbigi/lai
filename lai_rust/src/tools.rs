@@ -1,4 +1,5 @@
 use crate::policy::{PolicyConfig, PolicyEngine};
+use crate::repomap::{extract_symbols, is_skipped_dir};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -8,6 +9,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex as SyncMutex};
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolSchema {
@@ -19,31 +21,7 @@ type BoxedToolFuture = Pin<Box<dyn Future<Output = Result<String>> + Send>>;
 type ToolFunc = Arc<dyn Fn(HashMap<String, Value>) -> BoxedToolFuture + Send + Sync>;
 
 /// Directories that are never useful for code search and can be huge.
-fn is_skipped_dir(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | ".hg"
-            | ".svn"
-            | "target"
-            | "node_modules"
-            | "__pycache__"
-            | ".venv"
-            | "venv"
-            | "env"
-            | ".tox"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | "dist"
-            | "build"
-            | ".next"
-            | ".cache"
-            | "coverage"
-            | "vendor"
-    )
-}
-
+/// (Implementación compartida con `repomap`.)
 fn arg_str<'a>(args: &'a HashMap<String, Value>, key: &str, default: &'a str) -> &'a str {
     args.get(key).and_then(|v| v.as_str()).unwrap_or(default)
 }
@@ -57,6 +35,104 @@ fn arg_usize(args: &HashMap<String, Value>, key: &str, default: usize) -> usize 
 
 fn arg_bool(args: &HashMap<String, Value>, key: &str, default: bool) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+/// Mata el proceso y, en Unix, todo su grupo (hijos incluidos).
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        // El hijo se lanzó con process_group(0), así que su PID es el PGID.
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// Ejecuta un proceso con un límite de tiempo real.
+///
+/// `Command::output()` no tiene timeout: si un test o un servidor se cuelga,
+/// el bucle del agente espera para siempre. El esquema de las herramientas ya
+/// anunciaba `timeout`, pero se ignoraba. Los pipes se leen en hilos separados
+/// para que un proceso que escribe mucho no bloquee el `wait`.
+fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<std::process::Output> {
+    use std::io::Read;
+
+    // En Unix, `sh -c "sleep 5"` crea un hijo; matar solo al shell deja vivo
+    // al nieto y los pipes abiertos. Un grupo de procesos propio permite
+    // matar el árbol completo al agotar el timeout.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+
+    let stdout_reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                kill_process_tree(&mut child);
+                if let Some(reader) = stdout_reader {
+                    let _ = reader.join();
+                }
+                if let Some(reader) = stderr_reader {
+                    let _ = reader.join();
+                }
+                return Err(e.into());
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            kill_process_tree(&mut child);
+            if let Some(reader) = stdout_reader {
+                let _ = reader.join();
+            }
+            if let Some(reader) = stderr_reader {
+                let _ = reader.join();
+            }
+            anyhow::bail!(
+                "command timed out after {}s and was killed",
+                timeout.as_secs().max(1)
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(20));
+    };
+
+    let stdout = stdout_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Read a whole file or a 1-based line range.
@@ -268,7 +344,12 @@ fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     if path.is_empty() {
         return Err(anyhow::anyhow!("write_file requiere 'path'"));
     }
-    let content = arg_str(args, "content", "");
+    // No usar "" por defecto: un modelo que olvida `content` borraría el
+    // archivo (o crearía uno vacío) y el resultado parecería correcto.
+    let content = args
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("write_file requiere 'content'"))?;
     let target = Path::new(path);
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() {
@@ -304,6 +385,66 @@ fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     Ok(format!("Written to {} ({} chars)", path, content.len()))
 }
 
+/// Edita un archivo reemplazando un fragmento exacto por otro.
+///
+/// Es la vía más fiable para modelos pequeños: no tienen que reproducir el
+/// archivo completo (`write_file`) ni generar un diff con números de línea
+/// (`apply_patch`), solo copiar el texto que acaban de leer. Si el fragmento no
+/// existe o es ambiguo, falla en voz alta y no escribe nada.
+fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let path = arg_str(args, "path", "");
+    if path.is_empty() {
+        return Err(anyhow::anyhow!("edit requiere 'path'"));
+    }
+    let old = args
+        .get("old_string")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("edit requiere 'old_string'"))?;
+    let new = args
+        .get("new_string")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("edit requiere 'new_string'"))?;
+    if old.is_empty() {
+        return Err(anyhow::anyhow!(
+            "edit: 'old_string' no puede estar vacío; usa write_file para crear un archivo"
+        ));
+    }
+    if old == new {
+        return Err(anyhow::anyhow!(
+            "edit: 'old_string' y 'new_string' son iguales; no hay nada que cambiar"
+        ));
+    }
+
+    let content = fs::read_to_string(path).map_err(|e| anyhow::anyhow!("edit {path}: {e}"))?;
+    let occurrences = content.matches(old).count();
+    if occurrences == 0 {
+        return Err(anyhow::anyhow!(
+            "edit: el texto no aparece en '{path}'. Cópialo exactamente de read_file \
+             (incluida la indentación) o usa apply_patch."
+        ));
+    }
+    let replace_all = arg_bool(args, "replace_all", false);
+    if occurrences > 1 && !replace_all {
+        return Err(anyhow::anyhow!(
+            "edit: el texto aparece {occurrences} veces en '{path}'. Añade más contexto \
+             para que sea único o pasa \"replace_all\": true."
+        ));
+    }
+
+    let updated = if replace_all {
+        content.replace(old, new)
+    } else {
+        content.replacen(old, new, 1)
+    };
+    fs::write(path, &updated)?;
+    Ok(format!(
+        "Edited {path}: {} reemplazo(s), {} → {} líneas",
+        if replace_all { occurrences } else { 1 },
+        content.lines().count(),
+        updated.lines().count()
+    ))
+}
+
 fn list_dir_tool(args: &HashMap<String, Value>) -> Result<String> {
     let path = arg_str(args, "path", ".");
     let mut entries: Vec<String> = fs::read_dir(path)
@@ -329,7 +470,17 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
     if patch.trim().is_empty() {
         return Err(anyhow::anyhow!("apply_patch requires a non-empty 'patch'"));
     }
-    let cwd = if Path::new(path).is_dir() { path } else { "." };
+    // Antes, una ruta que no fuese un directorio caía silenciosamente a ".",
+    // así que un modelo que pasaba el archivo en vez del repositorio podía
+    // aplicar el parche en el directorio equivocado. Fallar en voz alta.
+    if !Path::new(path).is_dir() {
+        return Err(anyhow::anyhow!(
+            "apply_patch: 'path' debe ser un directorio existente (la raíz del \
+             repositorio), no '{}'. Usa el directorio del proyecto.",
+            path
+        ));
+    }
+    let cwd = path;
 
     let run = |program: &str, extra: &[&str]| -> Result<std::process::Output> {
         let mut child = Command::new(program)
@@ -370,10 +521,12 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
         Err(e) => e.to_string(),
     };
 
-    // Solo se recurre a `patch` si git no puede trabajar aquí (directorio que
-    // no es un repositorio). En ese caso se usa --dry-run para no escribir nada.
+    // Solo se recurre a `patch` si git no está instalado o no puede trabajar
+    // aquí (directorio que no es un repositorio). En ese caso se usa
+    // --dry-run para no escribir nada.
+    let git_unavailable = git_check.is_err();
     let not_a_repo = git_stderr.contains("not a git repository");
-    if not_a_repo {
+    if git_unavailable || not_a_repo {
         let dry = run(
             "patch",
             &["-p1", "--forward", "--dry-run", "--no-backup-if-mismatch"],
@@ -399,6 +552,85 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
          Read the real file first with read_file (start_line/end_line) and build the diff \
          against the content you actually saw."
     ))
+}
+
+/// Símbolos del repo map con el formato de una línea por símbolo.
+///
+/// Delega en `repomap::extract_symbols` para que `lai repo-map` y la
+/// herramienta `repo_map` del agente no diverjan.
+fn symbols_in_source(content: &str) -> Vec<String> {
+    extract_symbols(content)
+        .into_iter()
+        .map(|symbol| format!("  {} {}", symbol.kind, symbol.name))
+        .collect()
+}
+
+/// Perfil de herramientas que se anuncia al modelo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolProfile {
+    /// Todas las herramientas especializadas (lectura por rangos, grep, patch…).
+    Full,
+    /// Solo `bash`, para modelos pequeños y contextos ajustados.
+    BashOnly,
+}
+
+impl ToolProfile {
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "full" => Some(ToolProfile::Full),
+            "bash" | "bash-only" | "bash_only" | "minimal" => Some(ToolProfile::BashOnly),
+            _ => None,
+        }
+    }
+}
+
+/// Ejecuta un comando de shell con timeout. Compartido por `run_command` y
+/// `bash` (perfil mínimo).
+fn run_shell_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let command = arg_str(args, "command", "");
+    if command.trim().is_empty() {
+        return Err(anyhow::anyhow!("bash requiere 'command'"));
+    }
+    let cwd = args.get("cwd").and_then(|v| v.as_str());
+    let timeout_secs = arg_usize(args, "timeout", 300).clamp(1, 3_600);
+    // Use appropriate shell for the OS
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(command);
+        cmd
+    };
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut result = stdout.to_string();
+    if !stderr.is_empty() {
+        result.push_str("\nSTDERR:\n");
+        result.push_str(&stderr);
+    }
+    if !output.status.success() {
+        result.push_str(&format!(
+            "\nEXIT CODE: {}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    if result.trim().is_empty() {
+        result = format!(
+            "(no output, exit code {})",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+    Ok(result)
 }
 
 #[derive(Clone)]
@@ -443,42 +675,13 @@ impl ToolRegistry {
     fn register_core_tools(&mut self) {
         self.register_tool("read_file", |args| async move { read_file_tool(&args) });
         self.register_tool("write_file", |args| async move { write_file_tool(&args) });
+        self.register_tool("edit", |args| async move { edit_file_tool(&args) });
         self.register_tool("list_dir", |args| async move { list_dir_tool(&args) });
-        self.register_tool("run_command", |args| async move {
-            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let cwd = args.get("cwd").and_then(|v| v.as_str());
-            // Use appropriate shell for the OS
-            #[cfg(target_os = "windows")]
-            let mut cmd = {
-                let mut cmd = Command::new("cmd");
-                cmd.arg("/C").arg(command);
-                cmd
-            };
-            #[cfg(not(target_os = "windows"))]
-            let mut cmd = {
-                let mut cmd = Command::new("sh");
-                cmd.arg("-c").arg(command);
-                cmd
-            };
-            if let Some(cwd) = cwd {
-                cmd.current_dir(cwd);
-            }
-            let output = cmd.output()?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let mut result = stdout.to_string();
-            if !stderr.is_empty() {
-                result.push_str("\nSTDERR:\n");
-                result.push_str(&stderr);
-            }
-            if result.trim().is_empty() {
-                result = format!(
-                    "(no output, exit code {})",
-                    output.status.code().unwrap_or(-1)
-                );
-            }
-            Ok(result)
-        });
+        self.register_tool("run_command", |args| async move { run_shell_tool(&args) });
+        // Perfil mínimo (inspirado en mini-SWE-agent): una sola herramienta de
+        // shell reduce el prompt de 13 esquemas a 1, que es lo que más pesa en
+        // modelos de 8k-32k tokens.
+        self.register_tool("bash", |args| async move { run_shell_tool(&args) });
         self.register_tool("grep", |args| async move { grep_tool(&args) });
         self.register_tool("find_files", |args| async move { find_files_tool(&args) });
         self.register_tool("repo_map", |args| async move {
@@ -489,7 +692,13 @@ impl ToolRegistry {
                 .unwrap_or(8000) as usize;
             let mut blocks = Vec::new();
             let mut used = 0;
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+            let walker = WalkDir::new(path)
+                .sort_by_file_name()
+                .into_iter()
+                .filter_entry(|e| {
+                    !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy())
+                });
+            for entry in walker.filter_map(|e| e.ok()) {
                 let p = entry.path();
                 if !p.is_file() {
                     continue;
@@ -499,27 +708,7 @@ impl ToolRegistry {
                     continue;
                 }
                 if let Ok(content) = fs::read_to_string(p) {
-                    let mut symbols = Vec::new();
-                    for line in content.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.starts_with("def ")
-                            || trimmed.starts_with("fn ")
-                            || trimmed.starts_with("async fn ")
-                        {
-                            if let Some(ne) = trimmed.find('(') {
-                                symbols.push(format!("  fn {}", trimmed[4..ne].trim()));
-                            }
-                        } else if trimmed.starts_with("class ") || trimmed.starts_with("struct ") {
-                            if let Some(ne) = trimmed.find([':', '(']) {
-                                let _kind = if trimmed.starts_with("class ") {
-                                    "class"
-                                } else {
-                                    "struct"
-                                };
-                                symbols.push(format!("  {}", trimmed[6..ne].trim()));
-                            }
-                        }
-                    }
+                    let symbols = symbols_in_source(&content);
                     if !symbols.is_empty() {
                         let rel = p.strip_prefix(path).unwrap_or(p);
                         let block = format!("{}:\n{}", rel.display(), symbols.join("\n"));
@@ -541,9 +730,18 @@ impl ToolRegistry {
         });
         self.register_tool("run_python", |args| async move {
             let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
-            let temp_path = tempfile::NamedTempFile::new()?.path().to_path_buf();
+            if code.trim().is_empty() {
+                return Err(anyhow::anyhow!("run_python requiere 'code'"));
+            }
+            let timeout_secs = arg_usize(&args, "timeout", 60).clamp(1, 600);
+            // `into_temp_path()` cierra el handle antes de ejecutar (en Windows
+            // un NamedTempFile abierto puede impedir que Python lo lea) y sigue
+            // borrando el archivo al salir del ámbito.
+            let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
             fs::write(&temp_path, code)?;
-            let output = Command::new("python3").arg(&temp_path).output()?;
+            let mut cmd = Command::new("python3");
+            cmd.arg(&temp_path);
+            let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let mut result = stdout.to_string();
@@ -551,7 +749,18 @@ impl ToolRegistry {
                 result.push_str("\nSTDERR:\n");
                 result.push_str(&stderr);
             }
-            let _ = fs::remove_file(&temp_path);
+            if !output.status.success() {
+                result.push_str(&format!(
+                    "\nEXIT CODE: {}",
+                    output.status.code().unwrap_or(-1)
+                ));
+            }
+            if result.trim().is_empty() {
+                result = format!(
+                    "(no output, exit code {})",
+                    output.status.code().unwrap_or(-1)
+                );
+            }
             Ok(result)
         });
         self.register_tool("apply_patch", |args| async move { apply_patch_tool(&args) });
@@ -611,6 +820,20 @@ impl ToolRegistry {
             Err(anyhow::anyhow!("Tool not found: {}", name))
         }
     }
+    /// Perfil de herramientas expuesto al modelo.
+    ///
+    /// `Full` son las 14 herramientas especializadas. `BashOnly` expone solo
+    /// `bash`: el prompt pesa mucho menos y los modelos pequeños no tienen que
+    /// elegir entre 14 esquemas (mini-SWE-agent demuestra que un agente
+    /// bash-only es competitivo y arranca más rápido).
+    pub fn get_tools_schema_for(&self, profile: ToolProfile) -> Vec<ToolSchema> {
+        let all = self.get_tools_schema();
+        match profile {
+            ToolProfile::Full => all,
+            ToolProfile::BashOnly => all.into_iter().filter(|tool| tool.name == "bash").collect(),
+        }
+    }
+
     pub fn get_tools_schema(&self) -> Vec<ToolSchema> {
         vec![
             ToolSchema {
@@ -624,14 +847,24 @@ impl ToolRegistry {
                 parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"allow_shrink":{"type":"boolean","description":"Permit replacing a large file with a much smaller one"}},"required":["path","content"]}),
             },
             ToolSchema {
+                name: "edit".into(),
+                description: "Edit an existing file by replacing an exact fragment. Args: path, old_string (copied exactly from read_file), new_string. Fails if old_string is missing or appears more than once (use replace_all or more context). PREFERRED over write_file for existing files.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","description":"Replace every occurrence (default false)"}},"required":["path","old_string","new_string"]}),
+            },
+            ToolSchema {
                 name: "list_dir".into(),
                 description: "List a directory (sorted; directories end with '/')".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
             },
             ToolSchema {
                 name: "run_command".into(),
-                description: "Run shell command".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}),
+                description: "Run a shell command. The process is killed if it exceeds the timeout.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"}},"required":["command"]}),
+            },
+            ToolSchema {
+                name: "bash".into(),
+                description: "Run one shell command (same as run_command). Use it to inspect the repo and edit files with heredocs.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"}},"required":["command"]}),
             },
             ToolSchema {
                 name: "grep".into(),
@@ -645,13 +878,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "repo_map".into(),
-                description: "Repo symbol map".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+                description: "Repo symbol map for Python/Rust files (skips build/VCS directories)".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"max_chars":{"type":"integer","description":"Maximum output size (default 8000)"}},"required":["path"]}),
             },
             ToolSchema {
                 name: "run_python".into(),
-                description: "Run Python".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer"}},"required":["code"]}),
+                description: "Run Python code in a temporary file. The process is killed if it exceeds the timeout.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"}},"required":["code"]}),
             },
             ToolSchema {
                 name: "apply_patch".into(),
@@ -898,11 +1131,236 @@ mod tests {
     }
 
     #[test]
+    fn edit_replaces_a_unique_fragment() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.py");
+        fs::write(&path, "def suma(a, b):\n    return a - b\n").unwrap();
+
+        let out = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "return a - b",
+            "new_string": "return a + b"
+        })))
+        .unwrap();
+
+        assert!(out.contains("1 reemplazo"), "{out}");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "def suma(a, b):\n    return a + b\n"
+        );
+    }
+
+    #[test]
+    fn edit_refuses_ambiguous_fragments_without_replace_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.py");
+        let original = "x = 1\ny = 1\n";
+        fs::write(&path, original).unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "= 1",
+            "new_string": "= 2"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("2 veces"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn edit_reports_missing_fragment_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.py");
+        fs::write(&path, "hola\n").unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "adios",
+            "new_string": "hola"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("no aparece"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "hola\n");
+    }
+
+    #[test]
+    fn edit_replace_all_changes_every_occurrence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.py");
+        fs::write(&path, "x = 1\ny = 1\n").unwrap();
+
+        edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "= 1",
+            "new_string": "= 2",
+            "replace_all": true
+        })))
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "x = 2\ny = 2\n");
+    }
+
+    #[test]
+    fn edit_rejects_identical_strings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.py");
+        fs::write(&path, "hola\n").unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "hola",
+            "new_string": "hola"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("iguales"), "{err}");
+    }
+
+    #[test]
     fn write_file_requires_path() {
         let err = write_file_tool(&args(json!({"content": "x"})))
             .unwrap_err()
             .to_string();
         assert!(err.contains("path"), "{err}");
+    }
+
+    #[test]
+    fn write_file_requires_content_instead_of_truncating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keep.txt");
+        fs::write(&path, "important\n").unwrap();
+
+        let err = write_file_tool(&args(json!({"path": path.to_string_lossy()})))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("content"), "{err}");
+        // Un `content` ausente no puede convertirse en un archivo vacío.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "important\n");
+    }
+
+    #[test]
+    fn apply_patch_rejects_a_file_instead_of_silently_using_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("real.txt");
+        fs::write(&file, "alpha\n").unwrap();
+
+        let err = apply_patch_tool(&args(json!({
+            "path": file.to_string_lossy(),
+            "patch": "--- a/real.txt\n+++ b/real.txt\n@@ -1 +1 @@\n-alpha\n+beta\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("directorio"), "{err}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn repo_map_extracts_rust_visibility_and_async_symbols() {
+        let source = "\
+pub async fn fetch() {}\n\
+async fn load() {}\n\
+pub fn run() {}\n\
+fn private() {}\n\
+struct Foo {\n\
+}\n\
+pub struct Bar<T> {}\n\
+class Baz(Base):\n\
+    pass\n\
+async def go():\n\
+    pass\n\
+";
+        let symbols = symbols_in_source(source);
+
+        for expected in [
+            "  fn fetch",
+            "  fn load",
+            "  fn run",
+            "  fn private",
+            "  struct Foo",
+            "  struct Bar",
+            "  class Baz",
+            "  def go",
+        ] {
+            assert!(
+                symbols.iter().any(|s| s == expected),
+                "missing {expected:?} in {symbols:?}"
+            );
+        }
+        assert!(
+            !symbols.iter().any(|s| s.contains("c fn")),
+            "async fn was sliced incorrectly: {symbols:?}"
+        );
+    }
+
+    #[test]
+    fn bash_profile_exposes_only_the_shell_tool() {
+        let registry = ToolRegistry::new();
+        let full = registry.get_tools_schema_for(ToolProfile::Full);
+        let bash = registry.get_tools_schema_for(ToolProfile::BashOnly);
+
+        assert!(full.len() > 10);
+        assert_eq!(bash.len(), 1, "el perfil mínimo debe exponer una sola tool");
+        assert_eq!(bash[0].name, "bash");
+        assert!(registry.tools.contains_key("bash"));
+    }
+
+    #[test]
+    fn tool_profile_parses_known_names() {
+        assert_eq!(ToolProfile::from_str("full"), Some(ToolProfile::Full));
+        assert_eq!(ToolProfile::from_str("bash"), Some(ToolProfile::BashOnly));
+        assert_eq!(
+            ToolProfile::from_str("MINIMAL"),
+            Some(ToolProfile::BashOnly)
+        );
+        assert_eq!(ToolProfile::from_str("otro"), None);
+    }
+
+    #[tokio::test]
+    async fn bash_tool_runs_a_command() {
+        let registry = ToolRegistry::new();
+        let func = registry.tools.get("bash").unwrap();
+        let out = func(args(json!({"command": "echo hola"}))).await.unwrap();
+        assert!(out.contains("hola"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn run_command_requires_a_command() {
+        let registry = ToolRegistry::new();
+        let func = registry.tools.get("run_command").unwrap();
+        let err = func(args(json!({"timeout": 1}))).await.unwrap_err();
+        assert!(err.to_string().contains("command"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn run_command_honours_the_timeout() {
+        let registry = ToolRegistry::new();
+        let func = registry.tools.get("run_command").unwrap();
+        let started = Instant::now();
+        let err = func(args(json!({"command": "sleep 5", "timeout": 1})))
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "timeout took too long: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_python_requires_code() {
+        let registry = ToolRegistry::new();
+        let func = registry.tools.get("run_python").unwrap();
+        let err = func(args(json!({"timeout": 1}))).await.unwrap_err();
+        assert!(err.to_string().contains("code"), "{err}");
     }
 
     #[test]

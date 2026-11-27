@@ -132,6 +132,14 @@ impl Default for VerificationConfig {
     }
 }
 
+/// ¿El fallo es "la herramienta no está instalada"?
+///
+/// Un proyecto Python sin `ruff`/`mypy` instalado no debe reprobar la
+/// verificación: la herramienta no está disponible, no hay hallazgos.
+fn tool_missing(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+}
+
 impl VerificationEngine {
     pub fn new(working_dir: &Path) -> Self {
         Self {
@@ -268,8 +276,10 @@ impl VerificationEngine {
             || self.working_dir.join("setup.py").exists()
         {
             let output = Command::new("python3")
-                .args(["-m", "py_compile"])
-                .arg(".")
+                // `py_compile` recibe archivos, no directorios: pasarle "."
+                // fallaba siempre con "Is a directory". `compileall` sí recorre
+                // el árbol.
+                .args(["-m", "compileall", "-q", "."])
                 .current_dir(&self.working_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -283,7 +293,7 @@ impl VerificationEngine {
                         (
                             true,
                             100.0,
-                            "Syntax check passed (py_compile)".to_string(),
+                            "Syntax check passed (compileall)".to_string(),
                             vec![],
                         )
                     } else {
@@ -439,6 +449,12 @@ impl VerificationEngine {
                         (true, 100.0, "Ruff check passed".to_string(), vec![])
                     }
                 }
+                Err(e) if tool_missing(&e) => (
+                    true,
+                    100.0,
+                    "ruff no instalado: lint de Python omitido".to_string(),
+                    vec![],
+                ),
                 Err(e) => (false, 0.0, format!("ruff failed: {}", e), vec![]),
             }
         }
@@ -482,6 +498,12 @@ impl VerificationEngine {
                         (true, 100.0, "ESLint passed".to_string(), vec![])
                     }
                 }
+                Err(e) if tool_missing(&e) => (
+                    true,
+                    100.0,
+                    "eslint no instalado: lint de JS/TS omitido".to_string(),
+                    vec![],
+                ),
                 Err(e) => (false, 0.0, format!("eslint failed: {}", e), vec![]),
             }
         } else {
@@ -537,6 +559,12 @@ impl VerificationEngine {
                         vec![],
                     )
                 }
+                Err(e) if tool_missing(&e) => (
+                    true,
+                    100.0,
+                    "mypy no instalado: type check de Python omitido".to_string(),
+                    vec![],
+                ),
                 Err(e) => (false, 0.0, format!("mypy failed: {}", e), vec![]),
             }
         }

@@ -36,7 +36,8 @@ lai_rust/
     ├── main.rs              # clap CLI: 19 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
     ├── commands.rs          # implementations of the CLI subcommands
     ├── llm.rs               # HTTP client for llama.cpp / Ollama; Rule 4 local-only guard
-    ├── tools.rs             # ToolRegistry (13 tools) + JSON schemas
+    ├── tools.rs             # ToolRegistry (15 tools) + JSON schemas + perfiles (full/bash)
+    ├── context_budget.rs    # presupuesto de contexto: elide salidas antiguas
     ├── context.rs           # project understanding (structure, docs, patterns, objectives)
     ├── planner.rs           # DAG planner + SPEC.md generation
     ├── change_engine.rs     # controlled changes, diff/patch, checkpoints, rollback
@@ -90,6 +91,8 @@ cargo test                  # Run tests
 cargo run -- --help
 cargo run -- status
 cargo run -- auto "task" --max-iterations 3
+cargo run -- auto "task" --profile bash          # una sola herramienta, para modelos pequeños
+LAI_CONTEXT_WINDOW=8192 cargo run -- auto "task"  # presupuesto de contexto explícito
 cargo run -- serve --port 8082
 
 # Install

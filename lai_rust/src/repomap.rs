@@ -1,6 +1,89 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Directorios que nunca aportan símbolos útiles y pueden ser enormes.
+pub fn is_skipped_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | "target"
+            | "node_modules"
+            | "__pycache__"
+            | ".venv"
+            | "venv"
+            | "env"
+            | ".tox"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".cache"
+            | "coverage"
+            | "vendor"
+    )
+}
+
+/// Extrae declaraciones de Python y Rust de un archivo.
+///
+/// Antes el `repo_map` de `tools.rs` cortaba en el byte 4 (`async fn foo` se
+/// convertía en `fn c fn foo`) y no veía `pub fn`/`pub struct`/`enum`/`trait`.
+/// Una sola implementación evita que las dos rutas diverjan.
+pub fn extract_symbols(content: &str) -> Vec<SymbolInfo> {
+    let mut symbols = Vec::new();
+
+    for (index, line) in content.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let (kind, rest) = if let Some(r) = trimmed.strip_prefix("pub async fn ") {
+            ("fn", r)
+        } else if let Some(r) = trimmed.strip_prefix("async fn ") {
+            ("fn", r)
+        } else if let Some(r) = trimmed.strip_prefix("pub fn ") {
+            ("fn", r)
+        } else if let Some(r) = trimmed.strip_prefix("fn ") {
+            ("fn", r)
+        } else if let Some(r) = trimmed.strip_prefix("pub struct ") {
+            ("struct", r)
+        } else if let Some(r) = trimmed.strip_prefix("struct ") {
+            ("struct", r)
+        } else if let Some(r) = trimmed.strip_prefix("pub enum ") {
+            ("enum", r)
+        } else if let Some(r) = trimmed.strip_prefix("enum ") {
+            ("enum", r)
+        } else if let Some(r) = trimmed.strip_prefix("pub trait ") {
+            ("trait", r)
+        } else if let Some(r) = trimmed.strip_prefix("trait ") {
+            ("trait", r)
+        } else if let Some(r) = trimmed.strip_prefix("async def ") {
+            ("def", r)
+        } else if let Some(r) = trimmed.strip_prefix("def ") {
+            ("def", r)
+        } else if let Some(r) = trimmed.strip_prefix("class ") {
+            ("class", r)
+        } else {
+            continue;
+        };
+
+        let name = rest
+            .split(|c: char| c == '(' || c == '{' || c == '<' || c == ':' || c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !name.is_empty() {
+            symbols.push(SymbolInfo {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                line: index + 1,
+            });
+        }
+    }
+
+    symbols
+}
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub path: PathBuf,
@@ -26,25 +109,16 @@ impl RepoMap {
     }
     pub fn build(root: &Path) -> Self {
         let mut map = Self::new(root);
-        let skip_dirs = [
-            "__pycache__",
-            "node_modules",
-            ".git",
-            "venv",
-            "env",
-            ".venv",
-            ".ruff_cache",
-            "target",
-        ];
-        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(root)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|e| {
+                !e.file_type().is_dir() || !is_skipped_dir(&e.file_name().to_string_lossy())
+            })
+            .filter_map(|e| e.ok())
+        {
             let p = entry.path();
             if !p.is_file() {
-                continue;
-            }
-            if skip_dirs.iter().any(|s| {
-                p.components()
-                    .any(|c| c.as_os_str().to_string_lossy() == *s)
-            }) {
                 continue;
             }
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -56,37 +130,9 @@ impl RepoMap {
                 "rs" => Some("rust".to_string()),
                 _ => None,
             };
-            let mut symbols = Vec::new();
-            if let Ok(content) = fs::read_to_string(p) {
-                for (i, line) in content.lines().enumerate() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("def ")
-                        || trimmed.starts_with("fn ")
-                        || trimmed.starts_with("async fn ")
-                    {
-                        if let Some(ne) = trimmed.find('(') {
-                            symbols.push(SymbolInfo {
-                                kind: "fn".into(),
-                                name: trimmed[4..ne].trim().to_string(),
-                                line: i + 1,
-                            });
-                        }
-                    } else if trimmed.starts_with("class ") || trimmed.starts_with("struct ") {
-                        if let Some(ne) = trimmed.find([':', '(']) {
-                            let kind = if trimmed.starts_with("class ") {
-                                "class"
-                            } else {
-                                "struct"
-                            };
-                            symbols.push(SymbolInfo {
-                                kind: kind.into(),
-                                name: trimmed[6..ne].trim().to_string(),
-                                line: i + 1,
-                            });
-                        }
-                    }
-                }
-            }
+            let symbols = fs::read_to_string(p)
+                .map(|content| extract_symbols(&content))
+                .unwrap_or_default();
             map.files.push(FileInfo {
                 path: p.to_path_buf(),
                 language,

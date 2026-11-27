@@ -82,6 +82,37 @@ cargo test --test swe_bench
 
 ## Commands
 
+> **Vigencia (2026-11-27).** La tabla de abajo describe el CLI **Python
+> legado** (`lai.py`), en mantenimiento. La implementación principal es
+> **Rust** (`lai_rust/`), con 19 subcomandos:
+
+| Comando Rust | Descripción |
+|---|---|
+| `chat` | Chat interactivo o de un solo prompt, con tool calling |
+| `code` | Genera un archivo de código con ciclos de validación |
+| `auto` | Agente autónomo (`--profile full` o `--profile bash`) |
+| `status` | Estado de llama.cpp / gateway / ollama |
+| `repo-map` | Mapa de símbolos del repositorio |
+| `verify` | Verificación por niveles (sintaxis, lint, tipos, tests…) |
+| `diagnose` | Diagnóstico de un error o log |
+| `repair` | Diagnóstico + guía de reparación |
+| `baseline` | Baselines y detección de regresiones |
+| `memory` | Memoria local (semántica, episódica, de trabajo) |
+| `checkpoint` | Checkpoints de la sesión actual |
+| `metrics` | Métricas del workspace y telemetría de sesión |
+| `plan` | Planificador DAG (requiere modelo local) |
+| `bench` / `bench-swe` | Benchmarks de capacidad y estilo SWE-bench |
+| `init` / `doctor` | Asistente de instalación y diagnóstico |
+| `tui` | Interfaz de terminal |
+| `mcp` | Servidor MCP (stdio o `127.0.0.1`) |
+
+Ejemplo para equipos con poca memoria (una sola herramienta `bash`, prompt
+corto y contexto ajustado):
+
+```bash
+LAI_CONTEXT_WINDOW=8192 lai auto "arregla el bug" --profile bash --max-iterations 12
+```
+
 | Command | Description |
 |---------|-------------|
 | `chat` | Interactive or single-prompt chat |

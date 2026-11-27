@@ -46,6 +46,69 @@ fn test_policy_engine_protected_path() {
 }
 
 #[test]
+fn test_policy_engine_protected_paths_use_components_not_substrings() {
+    let mut engine = PolicyEngine::default();
+
+    // `notsrc` no es el directorio protegido `src`.
+    let decision = engine.check(&Operation::FileWrite {
+        path: "notsrc/main.rs".to_string(),
+    });
+    assert!(decision.allowed, "{:?}", decision.reason);
+
+    // Un backup de Cargo.toml no es Cargo.toml.
+    let decision = engine.check(&Operation::FileWrite {
+        path: "Cargo.toml.bak".to_string(),
+    });
+    assert!(decision.allowed, "{:?}", decision.reason);
+
+    // .git sí lo es.
+    let decision = engine.check(&Operation::FileWrite {
+        path: ".git/config".to_string(),
+    });
+    assert!(!decision.allowed);
+    assert!(decision.reason.contains("Protected"));
+}
+
+#[test]
+fn test_policy_engine_blocks_parent_traversal_for_new_files() {
+    let mut engine = PolicyEngine::default();
+
+    // El archivo no existe todavía, así que no se puede canonicalizar: la
+    // comprobación debe colapsar `..` igualmente.
+    for path in ["../outside.txt", "subdir/../../outside.txt"] {
+        let decision = engine.check(&Operation::FileWrite {
+            path: path.to_string(),
+        });
+        assert!(
+            !decision.allowed,
+            "{path} debería estar fuera del workspace"
+        );
+    }
+}
+
+#[test]
+fn test_policy_engine_allows_src_in_a_user_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+
+    let config = PolicyConfig {
+        workspace_root: dir.path().to_path_buf(),
+        ..Default::default()
+    };
+    let mut engine = PolicyEngine::new(config);
+
+    let decision = engine.check(&Operation::FileWrite {
+        path: "src/main.rs".to_string(),
+    });
+    assert!(decision.allowed, "{:?}", decision.reason);
+}
+
+#[test]
 fn test_policy_engine_outside_workspace() {
     let mut engine = PolicyEngine::default();
 

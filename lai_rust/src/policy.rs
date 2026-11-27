@@ -101,7 +101,7 @@ impl PolicyEngine {
     }
     fn check_tool_value(&self, tool: &str, args: &Value) -> PolicyDecision {
         match tool {
-            "write_file" | "apply_patch" => {
+            "write_file" | "apply_patch" | "edit" => {
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 self.check_write(path)
             }
@@ -294,12 +294,11 @@ impl PolicyEngine {
             self.config.workspace_root.join(p)
         };
 
-        // For non-existent paths, we can't canonicalize. Use the absolute path directly.
-        // Ensure both paths are normalized consistently (strip \\?\ prefix on Windows)
-        let canon = abs
-            .canonicalize()
-            .map(|p| normalize_path(&p))
-            .unwrap_or_else(|_| normalize_path(&abs));
+        // Para rutas existentes, canonicalize resuelve `..` y symlinks. Para
+        // las que aún no existen (write_file crea archivos nuevos), hay que
+        // normalizar `..` lexicamente: si no, `../fuera.txt` pasaba el
+        // `starts_with` porque el prefijo del workspace coincidía.
+        let canon = resolve_for_policy(&abs);
         let ws = self
             .config
             .workspace_root
@@ -319,21 +318,84 @@ impl PolicyEngine {
         starts_with
     }
     fn is_protected(&self, path: &str) -> bool {
-        // Paths are relative to workspace root. When tests run from lai_rust/, paths are relative to lai_rust/.
-        // Protected paths that matter within the lai_rust/ workspace:
-        const PROTECTED: &[&str] = &["src/", ".git/", "Cargo.toml", "Cargo.lock"];
-        let ps = path.to_string();
-        for p in PROTECTED {
-            if ps.contains(p) {
+        // Comparar por componentes, no por subcadena: `notsrc/main.rs` no es
+        // `src/` y `Cargo.toml.bak` no es `Cargo.toml`.
+        let p = Path::new(path);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.config.workspace_root.join(p)
+        };
+        let ws = self
+            .config
+            .workspace_root
+            .canonicalize()
+            .map(|p| normalize_path(&p))
+            .unwrap_or_else(|_| normalize_path(&self.config.workspace_root));
+        let rel = resolve_for_policy(&abs)
+            .strip_prefix(&ws)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| PathBuf::from(path));
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let rel = rel.trim_start_matches("./").trim_end_matches('/');
+
+        // Credenciales y metadatos de VCS: nunca deben escribirse, ni siquiera
+        // en un proyecto ajeno.
+        const ALWAYS_PROTECTED: &[&str] = &[
+            ".git",
+            ".env",
+            ".ssh",
+            ".netrc",
+            ".npmrc",
+            ".pypirc",
+            "id_rsa",
+            "id_ed25519",
+        ];
+        for protected in ALWAYS_PROTECTED {
+            if path_has_component(rel, protected) {
                 return true;
             }
         }
+
+        // El código fuente de lai solo se protege cuando el workspace es el
+        // propio repositorio de lai. En un proyecto de usuario, `src/` es
+        // precisamente lo que el asistente debe poder editar.
+        if self.is_lai_workspace() {
+            const LAI_PROTECTED: &[&str] = &["src", "Cargo.toml", "Cargo.lock"];
+            for protected in LAI_PROTECTED {
+                if path_has_component(rel, protected) {
+                    return true;
+                }
+            }
+        }
+
         for extra in &self.config.extra_protected_paths {
-            if ps.contains(extra) {
+            let extra = extra.replace('\\', "/");
+            let extra = extra.trim_start_matches("./").trim_end_matches('/');
+            if !extra.is_empty() && (rel == extra || rel.starts_with(&format!("{extra}/"))) {
                 return true;
             }
         }
         false
+    }
+
+    /// ¿El workspace es el repositorio de lai (crate `lai` o raíz con
+    /// `lai_rust/Cargo.toml`)? Solo entonces se protege `src/` y los Cargo.*.
+    fn is_lai_workspace(&self) -> bool {
+        let candidates = [
+            self.config.workspace_root.clone(),
+            self.config.workspace_root.join("lai_rust"),
+        ];
+        candidates.iter().any(|root| {
+            std::fs::read_to_string(root.join("Cargo.toml"))
+                .map(|text| {
+                    text.lines().any(|line| {
+                        let line = line.trim();
+                        line.starts_with("name") && line.contains("\"lai\"")
+                    })
+                })
+                .unwrap_or(false)
+        })
     }
     fn is_allowed(&self, cmd: &str) -> bool {
         const ALLOWED: &[&str] = &[
@@ -347,6 +409,51 @@ impl PolicyEngine {
     fn has_secrets(&self, text: &str) -> bool {
         text.contains("api_key") || text.contains("password") || text.contains("secret")
     }
+}
+
+/// Resuelve una ruta para compararla con el workspace.
+///
+/// Si existe, `canonicalize` resuelve `..` y symlinks. Si no existe (por
+/// ejemplo, un archivo nuevo), se canonicaliza el directorio padre y se
+/// conserva el nombre; si el padre tampoco existe, se normaliza `..` de forma
+/// léxica para no aceptar `../fuera.txt` por accidente.
+fn resolve_for_policy(path: &Path) -> PathBuf {
+    if let Ok(canon) = path.canonicalize() {
+        return normalize_path(&canon);
+    }
+    if let Some(parent) = path.parent() {
+        if let Ok(parent) = parent.canonicalize() {
+            if let Some(name) = path.file_name() {
+                return normalize_path(&parent.join(name));
+            }
+        }
+    }
+    normalize_lexically(path)
+}
+
+/// Colapsa `.` y `..` sin tocar el sistema de archivos.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() && !out.has_root() {
+                    out.push("..");
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
+            Component::Normal(part) => out.push(part),
+        }
+    }
+    normalize_path(&out)
+}
+
+/// ¿La ruta relativa contiene `name` como componente completo?
+fn path_has_component(path: &str, name: &str) -> bool {
+    path.split('/').any(|component| component == name)
 }
 
 /// Strip the Windows verbatim prefix (`\\?\`) so canonicalized paths compare

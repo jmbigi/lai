@@ -784,6 +784,7 @@ pub async fn cmd_auto(
     model: &str,
     base_url: &str,
     allow_remote: bool,
+    profile: &str,
 ) {
     println!("🤖 Auto mode: {}", task);
     println!("   Max iterations: {}", max_iterations);
@@ -792,6 +793,18 @@ pub async fn cmd_auto(
     }
     println!("   Model: {}", model);
     println!("   Base URL: {}", base_url);
+
+    let tool_profile = match crate::tools::ToolProfile::from_str(profile) {
+        Some(profile) => profile,
+        None => {
+            eprintln!(
+                "Aviso: perfil '{}' desconocido; se usa 'full' (opciones: full, bash).",
+                profile
+            );
+            crate::tools::ToolProfile::Full
+        }
+    };
+    println!("   Tool profile: {:?}", tool_profile);
 
     // Load project context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -805,7 +818,7 @@ pub async fn cmd_auto(
     let tools = ToolRegistry::new();
 
     // Build tool schema descriptions for the system prompt
-    let tool_schemas = tools.get_tools_schema();
+    let tool_schemas = tools.get_tools_schema_for(tool_profile);
     let tools_description = build_tools_description(&tool_schemas);
 
     // Native function-calling schemas ([OI]-compatible) for models that support tools
@@ -821,8 +834,29 @@ pub async fn cmd_auto(
         })
         .collect();
 
-    let system_prompt = format!(
-        r#"You are an AI assistant with access to tools. You can use tools by responding with JSON in a code block.
+    let system_prompt = if tool_profile == crate::tools::ToolProfile::BashOnly {
+        // Prompt corto a propósito: en 8k-32k tokens cada línea del prompt
+        // compite con el código. Un solo comando por turno, edición con
+        // heredoc y `git diff` para comprobar el resultado.
+        r#"You are a coding agent working inside a git repository (your current directory).
+You have ONE tool: `bash`. Call it with a single shell command per turn.
+
+How to work:
+- Explore: `ls`, `grep -rn "symbol" .`, `sed -n '1,80p' file`.
+- Edit: `python - <<'EOF' ... EOF` or `sed -i`, or `cat > file <<'EOF' ... EOF`.
+  Never paste example code from the issue: change the real file.
+- Verify: `python -m py_compile file.py`, `pytest -q path::test`, `cargo check`.
+- Finish: reply with a short summary and no tool call.
+
+Rules:
+- One command per turn; the result comes back to you.
+- Only change what is necessary to fix the issue. Do not modify tests.
+- If a command fails, read the error and try a different approach; do not repeat it.
+"#
+        .to_string()
+    } else {
+        format!(
+            r#"You are an AI assistant with access to tools. You can use tools by responding with JSON in a code block.
 
 {tools_description}
 
@@ -845,7 +879,8 @@ IMPORTANT: Only output the JSON code block when you want to call a tool. Otherwi
 TOOL USAGE GUIDE:
 - "write_file": CREATE a new file, or REPLACE an existing one entirely. Args: {{"path": "file.py", "content": "code here"}}
   It refuses to replace an existing file of 40+ lines with less than 25% of its length (that usually means writing an example over real code). If you really mean it, add "allow_shrink": true.
-- "apply_patch": EDIT an existing file with a unified diff. Args: {{"patch": "--- a/f.py\\n+++ b/f.py\\n@@ ..."}}. PREFER THIS for changes to existing files: it keeps the rest of the file intact.
+- "edit": EDIT an existing file by replacing an exact fragment. Args: {{"path": "f.py", "old_string": "exact text", "new_string": "new text"}}. PREFERRED for existing files: copy the fragment exactly from read_file. Fails if it is missing or ambiguous.
+- "apply_patch": EDIT an existing file with a unified diff. Args: {{"patch": "--- a/f.py\n+++ b/f.py\n@@ ..."}}. PREFER THIS for changes to existing files: it keeps the rest of the file intact.
 - "read_file": READ a file or a 1-based line range. Args: {{"path": "file.py"}} or {{"path": "file.py", "start_line": 120, "end_line": 220}}. Use a range for large files; the default is capped at 400 lines.
 - "run_python": RUN PYTHON CODE (not commands). Args: {{"code": "print(2+2)"}} - ONLY valid Python code!
 - "run_command": RUN SHELL COMMANDS. Args: {{"command": "ls -la"}} - Use for shell commands!
@@ -855,7 +890,7 @@ TOOL USAGE GUIDE:
 
 RULES:
 - To CREATE a file: MUST use "write_file" with "path" and "content"
-- To CHANGE an existing file: use "apply_patch" with a minimal diff. NEVER rewrite a whole existing file with "write_file" unless you intend to replace all of it.
+- To CHANGE an existing file: use "edit" with the exact fragment, or "apply_patch" with a minimal diff. NEVER rewrite a whole existing file with "write_file" unless you intend to replace all of it.
 - Never paste example code from the issue into a source file: the example illustrates the bug, it is not the fix.
 - To RUN a Python script file: Use "run_command" with "command": "python file.py"
 - To RUN Python code directly: Use "run_python" with "code": "valid python code"
@@ -903,7 +938,8 @@ EXAMPLE - Reading a file:
 ```
 
 If the user asks you to create a file, your FIRST tool call MUST be "write_file"."#
-    );
+        )
+    };
 
     let llm =
         LlmClient::new(base_url.to_string(), model.to_string()).with_allow_remote(allow_remote);
@@ -940,6 +976,20 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
 
     for iteration in 1..=max_iterations {
         println!("\n--- Iteration {} of {} ---", iteration, max_iterations);
+
+        // Presupuesto de contexto: antes de cada llamada se eliden los
+        // resultados de herramientas antiguos. Sin esto, en una ventana de 8k
+        // el primer `read_file` grande expulsa la tarea y el modelo deja de
+        // editar código. Se conservan sistema, tarea y los 4 turnos recientes.
+        let context_window = crate::context_budget::context_window_from_env();
+        let budget = crate::context_budget::budget_chars_from_window(context_window);
+        let condensed = crate::context_budget::condense(&mut messages, budget, 4);
+        if condensed.changed() {
+            println!(
+                "  🧹 Contexto condensado: {} → {} caracteres ({} salidas elididas, ventana {} tokens)",
+                condensed.chars_before, condensed.chars_after, condensed.elided, context_window
+            );
+        }
 
         // Prefer native function calling; models without tool support answer in
         // plain text and we fall back to the JSON-block protocol below.
@@ -1061,20 +1111,28 @@ complete corrected file content. Do not reply with analysis or questions — act
                         continue;
                     }
 
-                    let tool_result = if let Some(func) = tools.tools.get(name_str) {
-                        match func(arguments).await {
-                            Ok(r) => {
-                                println!("  ✓ Done");
-                                r
-                            }
-                            Err(e) => {
-                                println!("  ✗ Error: {}", e);
-                                format!("Error executing {}: {}", name_str, e)
-                            }
-                        }
+                    // Las escrituras pasan por el PolicyEngine (frontera del
+                    // workspace, .git, credenciales y fuentes de lai). Los
+                    // comandos se dejan como estaban: la allowlist es más
+                    // restrictiva que lo que necesita un agente de código y
+                    // bloquearía `python`, `cd`, `sed`, etc.
+                    let result = if matches!(name_str, "write_file" | "apply_patch" | "edit") {
+                        tools.call_tool(name_str, arguments).await
+                    } else if let Some(func) = tools.tools.get(name_str) {
+                        func(arguments).await
                     } else {
-                        println!("  ✗ Unknown tool: {}", name_str);
-                        format!("Unknown tool: {}", name_str)
+                        Err(anyhow::anyhow!("Unknown tool: {}", name_str))
+                    };
+
+                    let tool_result = match result {
+                        Ok(r) => {
+                            println!("  ✓ Done");
+                            r
+                        }
+                        Err(e) => {
+                            println!("  ✗ Error: {}", e);
+                            format!("Error executing {}: {}", name_str, e)
+                        }
                     };
 
                     // Bound the tool output: reading a large file can otherwise
@@ -1096,6 +1154,61 @@ complete corrected file content. Do not reply with analysis or questions — act
             }
         }
     }
+
+    // `--output` escribía solo un mensaje por pantalla. Ahora deja un registro
+    // legible de la sesión: qué leyó el agente, qué ejecutó y con qué resultado.
+    if let Some(dir) = output {
+        if let Err(e) = write_auto_transcript(Path::new(dir), task, model, &messages) {
+            eprintln!("Aviso: no se pudo escribir el registro en '{}': {e}", dir);
+        }
+    }
+}
+
+/// Escribe la transcripción de una sesión de `auto` en el directorio indicado.
+fn write_auto_transcript(
+    dir: &Path,
+    task: &str,
+    model: &str,
+    messages: &[crate::llm::Message],
+) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("lai-auto-{stamp}.md"));
+
+    let mut out = String::new();
+    out.push_str(&format!("# lai auto — {stamp}\n\n"));
+    out.push_str(&format!("- Modelo: `{model}`\n"));
+    out.push_str(&format!("- Tarea: {task}\n\n"));
+
+    for message in messages {
+        match message.role.as_str() {
+            "system" => continue,
+            "user" => out.push_str(&format!("## Usuario\n\n{}\n\n", message.content)),
+            "assistant" => {
+                if !message.content.trim().is_empty() {
+                    out.push_str(&format!("## Asistente\n\n{}\n\n", message.content));
+                }
+                if let Some(calls) = &message.tool_calls {
+                    for call in calls {
+                        out.push_str(&format!(
+                            "### → `{}`\n\n```json\n{}\n```\n\n",
+                            call.function.name, call.function.arguments
+                        ));
+                    }
+                }
+            }
+            "tool" => out.push_str(&format!(
+                "### ← resultado de `{}`\n\n```\n{}\n```\n\n",
+                message.name.as_deref().unwrap_or("tool"),
+                message.content
+            )),
+            _ => {}
+        }
+    }
+
+    fs::write(&path, out)?;
+    println!("📝 Registro de la sesión: {}", path.display());
+    Ok(path)
 }
 
 /// Maximum characters of a tool result kept in the conversation history.
@@ -1305,86 +1418,111 @@ fn parse_tool_call_json(json_str: &str) -> Option<Value> {
     Some(serde_json::json!({ "tool": name, "arguments": args }))
 }
 
+/// Heurística para distinguir una orden de shell de código Python cuando el
+/// modelo usa el campo equivocado. `python3` se incluye porque es el nombre
+/// habitual del intérprete en Linux.
+fn looks_like_shell_command(text: &str) -> bool {
+    [
+        "python ", "python3 ", "ls ", "cat ", "echo ", "cd ", "mkdir ", "rm ", "cp ", "mv ",
+    ]
+    .iter()
+    .any(|prefix| text.starts_with(prefix))
+}
+
 fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap<String, Value> {
     match tool {
         // Normalise write_file: keep path/content as strings and repair payloads
         // where the model double-escaped newlines (whole file on one line).
         "write_file" => {
-            let mut normalized = HashMap::new();
-            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                normalized.insert("path".to_string(), Value::String(path.to_string()));
+            // Conservar argumentos como `allow_shrink`: la guarda de
+            // write_file le pide al modelo reintentar con esa bandera, y el
+            // normalizador la borraba, así que el reintento nunca funcionaba.
+            let mut normalized = args;
+            if let Some(path) = normalized
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                normalized.insert("path".to_string(), Value::String(path));
             }
-            if let Some(content) = args.get("content").and_then(|v| v.as_str()) {
+            if let Some(content) = normalized
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
                 normalized.insert(
                     "content".to_string(),
-                    Value::String(unescape_literal_escapes(content)),
+                    Value::String(unescape_literal_escapes(&content)),
                 );
             }
             normalized
         }
         "run_python" => {
             // Model often passes "command" or "path" instead of "code"
-            if let Some(code) = args.get("code").cloned() {
+            let result = if let Some(code) = args.get("code").cloned() {
                 // Check if it's a shell command (starts with python, ls, cat, etc.)
                 if let Some(code_str) = code.as_str() {
                     let trimmed = code_str.trim();
-                    if trimmed.starts_with("python ")
-                        || trimmed.starts_with("ls ")
-                        || trimmed.starts_with("cat ")
-                        || trimmed.starts_with("echo ")
-                        || trimmed.starts_with("cd ")
-                        || trimmed.starts_with("mkdir ")
-                        || trimmed.starts_with("rm ")
-                        || trimmed.starts_with("cp ")
-                        || trimmed.starts_with("mv ")
-                    {
+                    if looks_like_shell_command(trimmed) {
                         // This is a shell command, not Python code!
                         // Return error by putting it in a special key that will be caught
-                        return hashmap!["_error".to_string() => Value::String(format!(
+                        hashmap!["_error".to_string() => Value::String(format!(
                             "ERROR: '{}' is a shell command, not Python code. Use 'run_command' tool instead with 'command' argument.",
                             trimmed
-                        ))];
+                        ))]
+                    } else {
+                        hashmap!["code".to_string() => code]
                     }
+                } else {
+                    hashmap!["code".to_string() => code]
                 }
-                return hashmap!["code".to_string() => code];
-            }
-            if let Some(cmd) = args.get("command").cloned() {
+            } else if let Some(cmd) = args.get("command").cloned() {
                 // Check if it's a shell command
                 if let Some(cmd_str) = cmd.as_str() {
                     let trimmed = cmd_str.trim();
-                    if trimmed.starts_with("python ")
-                        || trimmed.starts_with("ls ")
-                        || trimmed.starts_with("cat ")
-                        || trimmed.starts_with("echo ")
-                        || trimmed.starts_with("cd ")
-                        || trimmed.starts_with("mkdir ")
-                        || trimmed.starts_with("rm ")
-                        || trimmed.starts_with("cp ")
-                        || trimmed.starts_with("mv ")
-                    {
-                        return hashmap!["_error".to_string() => Value::String(format!(
+                    if looks_like_shell_command(trimmed) {
+                        hashmap!["_error".to_string() => Value::String(format!(
                             "ERROR: '{}' is a shell command, not Python code. Use 'run_command' tool instead with 'command' argument.",
                             trimmed
-                        ))];
+                        ))]
+                    } else {
+                        // Assume it's Python code if not detected as shell command
+                        hashmap!["code".to_string() => cmd]
                     }
+                } else {
+                    hashmap!["code".to_string() => cmd]
                 }
-                // Assume it's Python code if not detected as shell command
-                return hashmap!["code".to_string() => cmd];
+            } else if let Some(path) = args.get("path").cloned() {
+                // If it has path but no code, create a simple write
+                hashmap!["code".to_string() => format!("print('Writing to {}')", path)]
+            } else {
+                // Default fallback
+                hashmap!["code".to_string() => Value::String("print('Hello')".to_string())]
+            };
+
+            // Preservar el timeout explícito del modelo.
+            let mut result = result;
+            if let Some(timeout) = args.get("timeout").cloned() {
+                result.insert("timeout".to_string(), timeout);
             }
-            // If it has path but no code, create a simple write
-            if let Some(path) = args.get("path").cloned() {
-                return hashmap!["code".to_string() => format!("print('Writing to {}')", path)];
-            }
-            // Default fallback
-            hashmap!["code".to_string() => Value::String("print('Hello')".to_string())]
+            result
         }
         "run_command" => {
-            let mut normalized = HashMap::new();
-            if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-                normalized.insert("command".to_string(), Value::String(cmd.to_string()));
+            // Conservar `timeout` y cualquier otro argumento futuro.
+            let mut normalized = args;
+            if let Some(cmd) = normalized
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                normalized.insert("command".to_string(), Value::String(cmd));
             }
-            if let Some(cwd) = args.get("cwd").and_then(|v| v.as_str()) {
-                normalized.insert("cwd".to_string(), Value::String(cwd.to_string()));
+            if let Some(cwd) = normalized
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                normalized.insert("cwd".to_string(), Value::String(cwd));
             }
             normalized
         }
@@ -1392,58 +1530,604 @@ fn normalize_tool_arguments(tool: &str, args: HashMap<String, Value>) -> HashMap
     }
 }
 
+/// Métricas simples y verificables de un workspace (sin LLM).
+///
+/// Se usan para `lai metrics` y para `lai baseline create/compare`: archivos
+/// Python/Rust, símbolos y líneas. No son un benchmark: son datos del árbol.
+fn workspace_metrics(root: &Path) -> std::collections::HashMap<String, f64> {
+    use std::collections::HashMap;
+    let map = crate::repomap::RepoMap::build(root);
+    let mut metrics: HashMap<String, f64> = HashMap::new();
+    let mut lines = 0usize;
+    let mut symbols = 0usize;
+    for file in &map.files {
+        symbols += file.symbols.len();
+        if let Ok(content) = fs::read_to_string(&file.path) {
+            lines += content.lines().count();
+        }
+    }
+    metrics.insert("files".to_string(), map.files.len() as f64);
+    metrics.insert("symbols".to_string(), symbols as f64);
+    metrics.insert("lines".to_string(), lines as f64);
+    metrics
+}
+
 pub async fn cmd_repomap(path: Option<&str>, file: Option<&str>) {
-    println!("📦 RepoMap");
-    if let Some(p) = path {
-        println!("   Path: {}", p);
+    let root = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    if !root.exists() {
+        eprintln!("RepoMap: la ruta '{}' no existe", root.display());
+        return;
     }
-    if let Some(f) = file {
-        println!("   File: {}", f);
+    let map = crate::repomap::RepoMap::build(&root);
+    let symbols: usize = map.files.iter().map(|f| f.symbols.len()).sum();
+
+    if let Some(file) = file {
+        // Acepta ruta relativa, absoluta o solo el nombre del archivo.
+        let wanted = file.trim_start_matches("./");
+        let found: Vec<_> = map
+            .files
+            .iter()
+            .filter(|info| {
+                let rel = info.path.strip_prefix(&root).unwrap_or(&info.path);
+                rel.to_string_lossy() == wanted
+                    || info.path.file_name().map(|n| n == wanted).unwrap_or(false)
+            })
+            .collect();
+        if found.is_empty() {
+            println!(
+                "RepoMap: no se encontró '{}' ({} archivos indexados)",
+                file,
+                map.files.len()
+            );
+            return;
+        }
+        for info in found {
+            let rel = info.path.strip_prefix(&root).unwrap_or(&info.path);
+            println!("{}", rel.display());
+            if info.symbols.is_empty() {
+                println!("  (sin símbolos detectados)");
+            }
+            for symbol in &info.symbols {
+                println!("  {:>5}  {} {}", symbol.line, symbol.kind, symbol.name);
+            }
+        }
+        return;
     }
-    println!("   (RepoMap functionality to be implemented)");
+
+    println!(
+        "📦 RepoMap: {} archivos, {} símbolos en {}",
+        map.files.len(),
+        symbols,
+        root.display()
+    );
+    println!();
+    println!("{}", map.to_text(8_000));
 }
 
 pub async fn cmd_baseline(command: crate::baseline::BaselineCommands) {
-    println!("📊 Baseline command: {:?}", command);
-    println!("   (Baseline functionality to be implemented)");
+    use crate::baseline::{Baseline, BaselineMetric, BaselineStore};
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let store = match BaselineStore::new(&cwd) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("Baseline: no se pudo abrir la base de datos: {e}");
+            return;
+        }
+    };
+
+    // `list` muestra IDs de 8 caracteres: aceptar prefijos evita tener que
+    // copiar el UUID completo.
+    let resolve_id = |id: &str| -> Option<String> {
+        if let Ok(Some(_)) = store.get(id) {
+            return Some(id.to_string());
+        }
+        store
+            .list(200)
+            .ok()
+            .and_then(|baselines| {
+                baselines
+                    .into_iter()
+                    .find(|baseline| baseline.id.starts_with(id))
+            })
+            .map(|baseline| baseline.id)
+    };
+
+    let to_metric_map = |raw: &std::collections::HashMap<String, f64>| {
+        raw.iter()
+            .map(|(name, value)| (BaselineMetric::Custom(name.clone()), *value))
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+
+    match command {
+        crate::baseline::BaselineCommands::List => match store.list(20) {
+            Ok(baselines) if baselines.is_empty() => {
+                println!("No hay baselines. Crea uno con: lai baseline create <nombre> <ruta>");
+            }
+            Ok(baselines) => {
+                println!("{:<10} {:<24} {:<26} COMMIT", "ID", "NOMBRE", "FECHA");
+                for baseline in baselines {
+                    println!(
+                        "{:<10} {:<24} {:<26} {}",
+                        &baseline.id[..8.min(baseline.id.len())],
+                        baseline.name,
+                        baseline.created_at,
+                        &baseline.git_commit[..8.min(baseline.git_commit.len())]
+                    );
+                }
+            }
+            Err(e) => eprintln!("Baseline: {e}"),
+        },
+        crate::baseline::BaselineCommands::Show { id } => match resolve_id(&id)
+            .ok_or_else(|| format!("Baseline no encontrado: {id}"))
+            .and_then(|full| store.get(&full))
+        {
+            Ok(Some(baseline)) => {
+                println!("Baseline {}", baseline.id);
+                println!("  Nombre:   {}", baseline.name);
+                println!("  Ruta:     {}", baseline.project_path);
+                println!("  Commit:   {}", baseline.git_commit);
+                println!("  Rama:     {}", baseline.git_branch);
+                println!("  Creado:   {}", baseline.created_at);
+                if baseline.metrics.is_empty() {
+                    println!("  Métricas: (ninguna)");
+                } else {
+                    println!("  Métricas:");
+                    let mut entries: Vec<_> = baseline.metrics.iter().collect();
+                    entries.sort_by_key(|a| a.0.as_str());
+                    for (metric, value) in entries {
+                        println!("    {:<20} {:.2}", metric.as_str(), value);
+                    }
+                }
+            }
+            Ok(None) => eprintln!("Baseline no encontrado: {id}"),
+            Err(e) => eprintln!("Baseline: {e}"),
+        },
+        crate::baseline::BaselineCommands::Create { name, path } => {
+            let project = PathBuf::from(&path);
+            if !project.exists() {
+                eprintln!("Baseline: la ruta '{}' no existe", path);
+                return;
+            }
+            let mut baseline = match Baseline::new(&name, "workspace metrics", &project) {
+                Ok(baseline) => baseline,
+                Err(e) => {
+                    eprintln!(
+                        "Baseline: no se pudo leer git en '{}': {e}. \
+                         Crea el baseline dentro de un repositorio git.",
+                        path
+                    );
+                    return;
+                }
+            };
+            for (metric, value) in workspace_metrics(&project) {
+                baseline.add_metric(BaselineMetric::Custom(metric), value);
+            }
+            match store.create(&baseline) {
+                Ok(()) => {
+                    println!("Baseline creado: {}", baseline.id);
+                    println!("  Nombre: {}", baseline.name);
+                    for (metric, value) in &baseline.metrics {
+                        println!("  {:<12} {:.0}", metric.as_str(), value);
+                    }
+                }
+                Err(e) => eprintln!("Baseline: {e}"),
+            }
+        }
+        crate::baseline::BaselineCommands::Compare { id, path } => {
+            let project = PathBuf::from(&path);
+            let current = to_metric_map(&workspace_metrics(&project));
+            let full_id = match resolve_id(&id) {
+                Some(full) => full,
+                None => {
+                    eprintln!("Baseline no encontrado: {id}");
+                    return;
+                }
+            };
+            match store.compare(&full_id, &current) {
+                Ok(report) => {
+                    println!("{}", report.summary);
+                    println!(
+                        "  métricas comparadas: {}, sin cambios: {}",
+                        report.metrics_compared, report.unchanged
+                    );
+                    for alert in &report.regressions {
+                        println!(
+                            "  ⚠ {}: {:.0} → {:.0} ({:+.1}%) [{}]",
+                            alert.metric.as_str(),
+                            alert.baseline_value,
+                            alert.current_value,
+                            alert.delta_percent,
+                            alert.severity.as_str()
+                        );
+                    }
+                    for alert in &report.improvements {
+                        println!(
+                            "  ✅ {}: {:.0} → {:.0} ({:+.1}%)",
+                            alert.metric.as_str(),
+                            alert.baseline_value,
+                            alert.current_value,
+                            alert.delta_percent
+                        );
+                    }
+                }
+                Err(e) => eprintln!("Baseline: {e}"),
+            }
+        }
+    }
 }
 
 pub async fn cmd_verify(path: &str, level: Option<u32>) {
-    println!("✅ Verify: {} (level: {:?})", path, level);
-    println!("   (Verification functionality to be implemented)");
+    use crate::planner::{VerificationLevel, VerificationScope};
+    use crate::verification_engine::{VerificationEngine, VerificationVerdict};
+
+    let root = PathBuf::from(path);
+    if !root.exists() {
+        eprintln!("Verify: la ruta '{}' no existe", path);
+        return;
+    }
+
+    let scope = match level {
+        Some(number) => match VerificationLevel::from_u32(number) {
+            Some(level) => VerificationScope {
+                in_scope: vec![level],
+                out_of_scope: vec![],
+                rationale: format!("--level {number}"),
+            },
+            None => {
+                eprintln!("Verify: nivel inválido '{}' (válidos: 1-8)", number);
+                return;
+            }
+        },
+        None => VerificationScope::default(),
+    };
+
+    let engine = VerificationEngine::new(&root);
+    match engine.verify("cli-verify", None, scope).await {
+        Ok(report) => {
+            println!("✅ Verificación de {}", root.display());
+            for result in &report.results {
+                println!(
+                    "  {} [{}] {:.0}/100 en {:?}: {}",
+                    if result.passed { "PASS" } else { "FAIL" },
+                    result.level.name(),
+                    result.score,
+                    result.duration,
+                    result.details.lines().next().unwrap_or("")
+                );
+            }
+            println!(
+                "Veredicto: {:?} en {:?}",
+                report.overall_verdict, report.total_duration
+            );
+            if matches!(
+                report.overall_verdict,
+                VerificationVerdict::Failed | VerificationVerdict::Blocked
+            ) {
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("Verify: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Extrae rutas de archivo mencionadas en un mensaje de error.
+fn files_in_error(text: &str) -> Vec<String> {
+    let regex = regex::Regex::new(r#"[\w./\\-]+\.(py|rs|go|js|ts|tsx|jsx|java|c|cc|cpp|h)"#)
+        .expect("regex válida");
+    let mut files: Vec<String> = regex
+        .find_iter(text)
+        .map(|m| m.as_str().to_string())
+        .collect();
+    files.sort();
+    files.dedup();
+    files.truncate(20);
+    files
 }
 
 pub async fn cmd_diagnose(input: &str, root: Option<&str>) {
-    println!("🔍 Diagnose: {} (root: {:?})", input, root);
-    println!("   (Diagnosis functionality to be implemented)");
+    use crate::diagnostic_engine::{DiagnosticConfig, DiagnosticContext, DiagnosticEngine};
+
+    let workspace = root
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    // `input` puede ser el mensaje de error o un archivo que lo contiene.
+    let error_text = if Path::new(input).is_file() {
+        match fs::read_to_string(input) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("Diagnose: no se pudo leer '{}': {e}", input);
+                return;
+            }
+        }
+    } else {
+        input.to_string()
+    };
+
+    let engine = match DiagnosticEngine::new(workspace.clone(), DiagnosticConfig::default()) {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("Diagnose: {e}");
+            return;
+        }
+    };
+    let context = DiagnosticContext {
+        related_files: files_in_error(&error_text),
+        ..Default::default()
+    };
+
+    match engine.diagnose(&error_text, context).await {
+        Ok(result) => {
+            if result.diagnoses.is_empty() {
+                println!("Diagnose: no se reconoció ningún patrón en el error.");
+                println!("Sugerencia: pega el mensaje completo o pasa un archivo con el log.");
+                return;
+            }
+            println!(
+                "🔍 Diagnose: {} candidato(s) en {} ms",
+                result.diagnoses.len(),
+                result.execution_time_ms
+            );
+            for (index, diagnosis) in result.diagnoses.iter().enumerate() {
+                println!(
+                    "\n{}. [{}] {} (confianza {:.0}%)",
+                    index + 1,
+                    diagnosis.category.name(),
+                    diagnosis.message,
+                    diagnosis.confidence * 100.0
+                );
+                if let Some(location) = &diagnosis.location {
+                    println!(
+                        "   Ubicación: {}:{}",
+                        location.file.display(),
+                        location.line
+                    );
+                }
+                if let Some(cause) = &diagnosis.root_cause {
+                    println!("   Causa raíz: {cause}");
+                }
+                if let Some(fix) = &diagnosis.suggested_fix {
+                    println!("   Arreglo sugerido: {fix}");
+                }
+            }
+        }
+        Err(e) => eprintln!("Diagnose: {e}"),
+    }
 }
 
 pub async fn cmd_repair(file: &str, error: Option<&str>, max_attempts: u32) {
-    println!("🔧 Repair: {} (attempts: {})", file, max_attempts);
-    if let Some(e) = error {
-        println!("   Error context: {}", e);
+    // La reparación automática real (aplicar cambios + verificar + rollback)
+    // vive en `RepairEngine`, pero necesita un diagnóstico con id estable y un
+    // modelo local para proponer el parche. Sin `--error` no hay nada que
+    // diagnosticar, así que se dice explícitamente en vez de simular trabajo.
+    println!("🔧 Repair: {} (intentos: {})", file, max_attempts);
+    if !Path::new(file).exists() {
+        eprintln!("Repair: el archivo '{}' no existe", file);
+        return;
     }
-    println!("   (Repair functionality to be implemented)");
+    match error {
+        Some(error) => {
+            println!("   Diagnóstico del error:");
+            cmd_diagnose(error, None).await;
+            println!(
+                "\n   Para aplicar un arreglo, usa `lai auto` con la tarea y el error: \
+                 el bucle aplica cambios, verifica y revierte si falla."
+            );
+        }
+        None => {
+            println!(
+                "   Falta --error: sin el mensaje de error no hay diagnóstico que reparar.\n   \
+                 Ejemplo: lai repair src/main.rs --error \"E0308 mismatched types\""
+            );
+        }
+    }
 }
 
 pub async fn cmd_checkpoint(command: crate::memory_store::CheckpointCommands) {
-    println!("📌 Checkpoint command: {:?}", command);
-    println!("   (Checkpoint functionality to be implemented)");
+    use crate::change_engine::{ChangeEngine, ChangeEngineConfig};
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let engine = match ChangeEngine::new(cwd, ChangeEngineConfig::default()) {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("Checkpoint: {e}");
+            return;
+        }
+    };
+    let checkpoints = engine.list_checkpoints();
+    match command {
+        crate::memory_store::CheckpointCommands::List => {
+            if checkpoints.is_empty() {
+                println!(
+                    "No hay checkpoints en esta sesión. Los checkpoints se crean al aplicar \
+                     cambios con `lai auto` y viven en el proceso que los creó."
+                );
+                return;
+            }
+            println!("{:<10} {:<26} DESCRIPCIÓN", "ID", "FECHA");
+            for checkpoint in checkpoints {
+                println!(
+                    "{:<10} {:<26} {}",
+                    &checkpoint.id[..8.min(checkpoint.id.len())],
+                    checkpoint.timestamp,
+                    checkpoint
+                        .metadata
+                        .get("description")
+                        .cloned()
+                        .unwrap_or_default()
+                );
+            }
+        }
+        crate::memory_store::CheckpointCommands::Show { id } => {
+            match checkpoints.iter().find(|c| c.id == id) {
+                Some(checkpoint) => {
+                    println!("Checkpoint {}", checkpoint.id);
+                    println!(
+                        "  Descripción: {}",
+                        checkpoint
+                            .metadata
+                            .get("description")
+                            .cloned()
+                            .unwrap_or_default()
+                    );
+                    println!("  Creado:      {}", checkpoint.timestamp);
+                    println!("  Archivos:    {}", checkpoint.file_snapshots.len());
+                    for file in checkpoint.file_snapshots.keys() {
+                        println!("    {}", file.display());
+                    }
+                }
+                None => eprintln!(
+                    "Checkpoint no encontrado en esta sesión: {id} (los checkpoints no \
+                     persisten entre procesos)"
+                ),
+            }
+        }
+        crate::memory_store::CheckpointCommands::Create { description } => {
+            match engine.create_checkpoint("cli", &description) {
+                Ok(id) => println!("Checkpoint creado: {id} ({description})"),
+                Err(e) => eprintln!("Checkpoint: {e}"),
+            }
+        }
+        crate::memory_store::CheckpointCommands::Rollback { id } => match engine.rollback(&id) {
+            Ok(()) => println!("Rollback aplicado al checkpoint {id}"),
+            Err(e) => eprintln!("Checkpoint: {e}"),
+        },
+    }
 }
 
 pub async fn cmd_memory(command: crate::memory_store::MemoryCommands) {
-    println!("🧠 Memory command: {:?}", command);
-    println!("   (Memory functionality to be implemented)");
+    use crate::memory_store::{MemoryEntry, MemoryStore, MemoryType};
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let store = match MemoryStore::new(&cwd) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("Memory: {e}");
+            return;
+        }
+    };
+
+    let parse_type =
+        |value: Option<&str>| -> Option<MemoryType> { value.and_then(MemoryType::from_string) };
+
+    match command {
+        crate::memory_store::MemoryCommands::List { r#type } => {
+            match store.list_memories(parse_type(r#type.as_deref()), 20) {
+                Ok(entries) if entries.is_empty() => {
+                    println!(
+                        "No hay memorias guardadas en {}/.lai/memory.db",
+                        cwd.display()
+                    );
+                }
+                Ok(entries) => {
+                    for entry in entries {
+                        println!(
+                            "{} [{}] {} ({})",
+                            &entry.id[..8.min(entry.id.len())],
+                            entry.memory_type.as_str(),
+                            entry.content.lines().next().unwrap_or(""),
+                            entry.source
+                        );
+                    }
+                }
+                Err(e) => eprintln!("Memory: {e}"),
+            }
+        }
+        crate::memory_store::MemoryCommands::Search {
+            query,
+            r#type,
+            limit,
+        } => match store.search(&query, parse_type(r#type.as_deref()), limit, false) {
+            Ok(results) if results.is_empty() => println!("Sin resultados para '{query}'"),
+            Ok(results) => {
+                for result in results {
+                    println!(
+                        "{:.2} [{}] {}",
+                        result.score,
+                        result.entry.memory_type.as_str(),
+                        result.entry.content.lines().next().unwrap_or("")
+                    );
+                }
+            }
+            Err(e) => eprintln!("Memory: {e}"),
+        },
+        crate::memory_store::MemoryCommands::Store {
+            content,
+            r#type,
+            source,
+            tags,
+        } => {
+            let memory_type = match MemoryType::from_string(&r#type) {
+                Some(memory_type) => memory_type,
+                None => {
+                    eprintln!(
+                        "Memory: tipo inválido '{}' (semantic, episodic, working, documentary)",
+                        r#type
+                    );
+                    return;
+                }
+            };
+            let tags: Vec<String> = tags
+                .map(|tags| {
+                    tags.split(',')
+                        .map(|tag| tag.trim().to_string())
+                        .filter(|tag| !tag.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let entry = MemoryEntry::new(memory_type, content, source, None, None, tags, 1.0, None);
+            match store.store(entry) {
+                Ok(id) => println!("Memoria guardada: {id}"),
+                Err(e) => eprintln!("Memory: {e}"),
+            }
+        }
+    }
 }
 
 pub async fn cmd_plan(command: crate::planner::PlanCommands) {
     println!("📋 Plan command: {:?}", command);
-    println!("   (Planner functionality to be implemented)");
+    println!(
+        "   El planificador requiere un modelo local para generar el DAG y SPEC.md.\n   \
+         Usa `lai auto` con la tarea: genera el plan, aplica cambios y verifica."
+    );
 }
 
 pub async fn cmd_metrics() {
-    println!("📈 Metrics");
-    println!("   (Telemetry/metrics functionality to be implemented)");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    println!("📈 Métricas del workspace: {}", cwd.display());
+    let metrics = workspace_metrics(&cwd);
+    for key in ["files", "symbols", "lines"] {
+        if let Some(value) = metrics.get(key) {
+            println!("  {:<10} {:.0}", key, value);
+        }
+    }
+
+    // La telemetría en proceso solo tiene datos si algo la inicializó; se
+    // muestra tal cual en vez de inventar cifras.
+    let telemetry = crate::telemetry::Telemetry::instance().lock().unwrap();
+    match telemetry.as_ref() {
+        Some(telemetry)
+            if telemetry.metrics().requests > 0 || telemetry.metrics().tool_calls > 0 =>
+        {
+            let metrics = telemetry.metrics();
+            println!("  Sesión:");
+            println!("    peticiones   {}", metrics.requests);
+            println!("    tool calls   {}", metrics.tool_calls);
+            println!("    llm calls    {}", metrics.llm_calls);
+            println!("    errores      {}", metrics.errors);
+            println!("    uptime       {:?}", metrics.uptime);
+        }
+        _ => println!(
+            "  Telemetría: sin actividad en este proceso (los contadores son por sesión; \
+             `lai auto` y `lai chat` los alimentan)."
+        ),
+    }
 }
 
 pub async fn cmd_bench(command: crate::benchmark::BenchCommands) {
@@ -1728,6 +2412,43 @@ mod normalization_tests {
     }
 
     #[test]
+    fn normalize_write_file_preserves_allow_shrink() {
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), Value::String("src/lib.rs".into()));
+        args.insert("content".to_string(), Value::String("short\n".into()));
+        args.insert("allow_shrink".to_string(), Value::Bool(true));
+
+        let out = normalize_tool_arguments("write_file", args);
+
+        assert_eq!(out.get("allow_shrink"), Some(&Value::Bool(true)));
+        assert_eq!(out.get("content").unwrap(), "short\n");
+    }
+
+    #[test]
+    fn normalize_run_command_preserves_timeout() {
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("cargo test".into()));
+        args.insert("timeout".to_string(), Value::from(42));
+
+        let out = normalize_tool_arguments("run_command", args);
+
+        assert_eq!(out.get("timeout"), Some(&Value::from(42)));
+        assert_eq!(out.get("command").unwrap(), "cargo test");
+    }
+
+    #[test]
+    fn normalize_run_python_preserves_timeout() {
+        let mut args = HashMap::new();
+        args.insert("code".to_string(), Value::String("print(1)".into()));
+        args.insert("timeout".to_string(), Value::from(7));
+
+        let out = normalize_tool_arguments("run_python", args);
+
+        assert_eq!(out.get("timeout"), Some(&Value::from(7)));
+        assert_eq!(out.get("code").unwrap(), "print(1)");
+    }
+
+    #[test]
     fn native_tool_calls_are_parsed_with_ids() {
         let calls = Some(vec![crate::llm::ToolCall {
             id: "call_1".to_string(),
@@ -1800,6 +2521,87 @@ mod normalization_tests {
         let repaired = repair_json_control_chars(raw);
         let val: Value = serde_json::from_str(&repaired).unwrap();
         assert_eq!(val["content"], "let s = \"a\";\nlet t = 1;");
+    }
+}
+
+#[cfg(test)]
+mod cli_helper_tests {
+    use super::*;
+
+    #[test]
+    fn files_in_error_extracts_paths_with_line_numbers() {
+        let error = "Traceback (most recent call last):\n  File \"django/db/models/base.py\", line 42\n  File \"./src/lib.rs\", line 7";
+        let files = files_in_error(error);
+        assert!(files.contains(&"django/db/models/base.py".to_string()));
+        assert!(files.contains(&"./src/lib.rs".to_string()));
+    }
+
+    #[test]
+    fn files_in_error_ignores_plain_words() {
+        assert!(files_in_error("NameError: name 'foo' is not defined").is_empty());
+    }
+
+    #[test]
+    fn auto_transcript_records_task_calls_and_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let messages = vec![
+            Message {
+                role: "system".into(),
+                content: "reglas internas".into(),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+            Message {
+                role: "user".into(),
+                content: "arregla el bug".into(),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(vec![crate::llm::ToolCall {
+                    id: "c1".into(),
+                    call_type: "function".into(),
+                    function: crate::llm::ToolFunction {
+                        name: "read_file".into(),
+                        arguments: "{\"path\":\"a.py\"}".into(),
+                    },
+                }]),
+                tool_call_id: None,
+                name: None,
+            },
+            Message {
+                role: "tool".into(),
+                content: "contenido".into(),
+                tool_calls: None,
+                tool_call_id: Some("c1".into()),
+                name: Some("read_file".into()),
+            },
+        ];
+
+        let path = write_auto_transcript(dir.path(), "arregla el bug", "m", &messages).unwrap();
+        let text = fs::read_to_string(path).unwrap();
+
+        assert!(text.contains("arregla el bug"));
+        assert!(text.contains("`read_file`"));
+        assert!(text.contains("contenido"));
+        assert!(!text.contains("reglas internas"), "el system no se duplica");
+    }
+
+    #[test]
+    fn workspace_metrics_counts_python_and_rust() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.py"), "def uno():\n    pass\n").unwrap();
+        fs::write(dir.path().join("b.rs"), "pub fn dos() {}\n").unwrap();
+        fs::write(dir.path().join("ignored.txt"), "x\n").unwrap();
+
+        let metrics = workspace_metrics(dir.path());
+        assert_eq!(metrics.get("files"), Some(&2.0));
+        assert_eq!(metrics.get("symbols"), Some(&2.0));
+        assert_eq!(metrics.get("lines"), Some(&3.0));
     }
 }
 

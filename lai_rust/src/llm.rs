@@ -5,6 +5,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Regla 4: comprueba si una URL apunta a un endpoint local.
 ///
@@ -75,9 +77,19 @@ pub fn is_local_url(url: &str) -> bool {
     }
 }
 
+fn null_to_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub role: String,
+    // OpenAI/llama.cpp envían `content: null` cuando el mensaje solo lleva
+    // tool_calls. Sin esto, la respuesta entera falla al deserializar.
+    #[serde(default, deserialize_with = "null_to_empty_string")]
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -89,16 +101,36 @@ pub struct Message {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    #[serde(default)]
     pub id: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_call_type")]
     pub call_type: String,
     pub function: ToolFunction,
+}
+
+fn default_call_type() -> String {
+    "function".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFunction {
     pub name: String,
+    // Algunos servidores locales devuelven los argumentos como objeto JSON en
+    // vez de como string. Normalizarlos aquí evita que falle toda la respuesta.
+    #[serde(default, deserialize_with = "string_or_json_string")]
     pub arguments: String,
+}
+
+fn string_or_json_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Null => "{}".to_string(),
+        other => other.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,8 +184,7 @@ pub struct FunctionSchema {
     pub parameters: serde_json::Value, // JSON Schema
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum ToolChoice {
     None,
     Auto,
@@ -164,6 +195,68 @@ pub enum ToolChoice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolChoiceFunction {
     pub name: String,
+}
+
+// `#[serde(untagged)]` serializa las variantes unitarias como `null`, pero la
+// API de OpenAI/llama.cpp espera las cadenas "none"/"auto"/"required" y, para
+// una función concreta, {"type":"function","function":{"name":...}}. Un
+// `tool_choice: null` funcionaba por accidente con algunos servidores, pero no
+// es el contrato que anunciamos.
+impl Serialize for ToolChoice {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        match self {
+            ToolChoice::None => serializer.serialize_str("none"),
+            ToolChoice::Auto => serializer.serialize_str("auto"),
+            ToolChoice::Required => serializer.serialize_str("required"),
+            ToolChoice::Specific { function } => {
+                let mut state = serializer.serialize_struct("ToolChoice", 2)?;
+                state.serialize_field("type", "function")?;
+                state.serialize_field("function", function)?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolChoice {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Named(String),
+            Specific {
+                #[serde(rename = "type")]
+                kind: String,
+                function: ToolChoiceFunction,
+            },
+        }
+
+        match Repr::deserialize(deserializer)? {
+            Repr::Named(name) => match name.as_str() {
+                "none" => Ok(ToolChoice::None),
+                "auto" => Ok(ToolChoice::Auto),
+                "required" => Ok(ToolChoice::Required),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &["none", "auto", "required", "function"],
+                )),
+            },
+            Repr::Specific { kind, function } if kind == "function" => {
+                Ok(ToolChoice::Specific { function })
+            }
+            Repr::Specific { .. } => Err(serde::de::Error::custom(
+                "tool_choice type must be 'function'",
+            )),
+        }
+    }
 }
 
 /// Native chat request with OpenAI-compatible function calling
@@ -195,11 +288,34 @@ pub struct LlmClient {
     model: String,
     api_key: Option<String>,
     allow_remote: bool,
+    /// Compartido con la política de redirecciones de reqwest: una redirección
+    /// también es una petición saliente y debe respetar la Regla 4.
+    allow_remote_redirects: Arc<AtomicBool>,
     client: reqwest::Client,
 }
 
 impl LlmClient {
     pub fn new(base_url: String, model: String) -> Self {
+        let allow_remote_redirects = Arc::new(AtomicBool::new(false));
+        let redirect_flag = Arc::clone(&allow_remote_redirects);
+        let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.error("too many redirects");
+            }
+            if redirect_flag.load(Ordering::Relaxed) || is_local_url(attempt.url().as_str()) {
+                attempt.follow()
+            } else {
+                attempt.error(
+                    "Regla 4: redirección a un endpoint no local bloqueada; usa \
+                     --allow-remote para permitirla explícitamente",
+                )
+            }
+        });
+        let client = reqwest::Client::builder()
+            .redirect(redirect_policy)
+            .build()
+            .expect("failed to build HTTP client");
+
         Self {
             base_url,
             model,
@@ -207,13 +323,16 @@ impl LlmClient {
                 .ok()
                 .filter(|key| !key.is_empty()),
             allow_remote: false,
-            client: reqwest::Client::new(),
+            allow_remote_redirects,
+            client,
         }
     }
 
     /// Regla 4: permite endpoints no locales con consentimiento explícito.
     pub fn with_allow_remote(mut self, allow_remote: bool) -> Self {
         self.allow_remote = allow_remote;
+        self.allow_remote_redirects
+            .store(allow_remote, Ordering::Relaxed);
         self
     }
 
@@ -467,6 +586,44 @@ mod tests {
         assert!(is_local_url("http://user:pass@127.0.0.1:11434/v1"));
         assert!(!is_local_url("http://user:pass@evil.example.com/v1"));
         assert!(is_local_url("http://localhost:11434/v1?x=1"));
+    }
+
+    #[test]
+    fn tool_call_accepts_object_arguments_and_missing_fields() {
+        let call: ToolCall = serde_json::from_str(
+            r#"{"function":{"name":"read_file","arguments":{"path":"a.rs"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(call.id, "");
+        assert_eq!(call.call_type, "function");
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments).unwrap();
+        assert_eq!(args["path"], "a.rs");
+    }
+
+    #[test]
+    fn null_message_content_deserializes_as_empty() {
+        let message: Message =
+            serde_json::from_str(r#"{"role":"assistant","content":null}"#).unwrap();
+        assert_eq!(message.content, "");
+
+        let message: Message = serde_json::from_str(r#"{"role":"assistant"}"#).unwrap();
+        assert_eq!(message.content, "");
+    }
+
+    #[test]
+    fn tool_choice_serializes_to_openai_strings() {
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            "\"none\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Required).unwrap(),
+            "\"required\""
+        );
     }
 
     #[test]

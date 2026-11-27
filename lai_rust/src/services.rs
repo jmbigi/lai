@@ -141,6 +141,19 @@ fn check_service(port: u16, health_path: &str) -> bool {
     .is_ok()
 }
 
+/// Resuelve un ejecutable que puede ser una ruta o un nombre del PATH.
+///
+/// Antes se usaba `Path::new(script).exists()`, que falla para los valores por
+/// defecto (`llama-server`, `gateway`, `ollama`) porque no son rutas relativas
+/// al directorio actual aunque estén en el PATH.
+fn resolve_executable(script: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(script);
+    if path.is_absolute() || script.contains('/') || script.contains('\\') {
+        return path.is_file().then(|| path.to_path_buf());
+    }
+    which::which(script).ok()
+}
+
 fn start_service(svc: &ServiceInfo) -> bool {
     if svc.is_running() {
         return true;
@@ -150,13 +163,16 @@ fn start_service(svc: &ServiceInfo) -> bool {
         None => return false,
     };
 
-    if !std::path::Path::new(script).exists() {
-        eprintln!("No executable found for service: {}", script);
-        return false;
-    }
+    let executable = match resolve_executable(script) {
+        Some(path) => path,
+        None => {
+            eprintln!("No executable found for service: {}", script);
+            return false;
+        }
+    };
 
     println!("Starting service on port {}...", svc.port);
-    let mut cmd = Command::new(script);
+    let mut cmd = Command::new(executable);
     cmd.args(&svc.args);
     if let Some(cwd) = &svc.cwd {
         cmd.current_dir(cwd);
@@ -270,13 +286,16 @@ async fn _start_service_async(svc: &ServiceInfo) -> bool {
         None => return false,
     };
 
-    if !std::path::Path::new(script).exists() {
-        eprintln!("No executable found for service: {}", script);
-        return false;
-    }
+    let executable = match resolve_executable(script) {
+        Some(path) => path,
+        None => {
+            eprintln!("No executable found for service: {}", script);
+            return false;
+        }
+    };
 
     println!("Starting service on port {}...", svc.port);
-    let mut cmd = Command::new(script);
+    let mut cmd = Command::new(executable);
     cmd.args(&svc.args);
     if let Some(cwd) = &svc.cwd {
         cmd.current_dir(cwd);
@@ -301,4 +320,23 @@ async fn _start_service_async(svc: &ServiceInfo) -> bool {
 
     eprintln!("Failed to start service on port {} (timeout)", svc.port);
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_executable_accepts_absolute_paths() {
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(resolve_executable(&exe.to_string_lossy()), Some(exe));
+    }
+
+    #[test]
+    fn resolve_executable_finds_binaries_in_path() {
+        if let Ok(cargo) = which::which("cargo") {
+            assert_eq!(resolve_executable("cargo"), Some(cargo));
+        }
+        assert!(resolve_executable("lai-binary-that-does-not-exist").is_none());
+    }
 }

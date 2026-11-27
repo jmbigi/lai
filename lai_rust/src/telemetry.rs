@@ -199,6 +199,21 @@ pub struct TelemetryMetrics {
     pub uptime: Duration,
 }
 
+/// Aplica una mutación a la telemetría global si está inicializada.
+///
+/// **Por qué existe:** las versiones anteriores hacían
+/// `if let Some(mut t) = TELEMETRY.lock().unwrap().take() { … *TELEMETRY.lock().unwrap() = Some(t); }`.
+/// El guard del `if let` vive hasta el final del bloque, así que el segundo
+/// `lock()` bloqueaba el mismo mutex y el proceso se colgaba para siempre en la
+/// primera llamada a `record_*`. Medido el 2026-11-27: `lai verify` no
+/// terminaba nunca.
+fn with_telemetry<F: FnOnce(&mut Telemetry)>(f: F) {
+    let mut guard = TELEMETRY.lock().unwrap();
+    if let Some(telemetry) = guard.as_mut() {
+        f(telemetry);
+    }
+}
+
 pub fn record_policy_decision(
     task_id: &str,
     tool: &str,
@@ -206,7 +221,7 @@ pub fn record_policy_decision(
     reason: &str,
     policy: &str,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         let event = TelemetryEvent {
             timestamp: now(),
             session_id: t.session_id.clone(),
@@ -220,8 +235,7 @@ pub fn record_policy_decision(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -236,7 +250,7 @@ pub fn record_tool_call(
     success: bool,
     error: Option<String>,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         t.inc_tool_calls();
         let event = TelemetryEvent {
             timestamp: now(),
@@ -255,8 +269,7 @@ pub fn record_tool_call(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn record_llm_call(
@@ -268,7 +281,7 @@ pub fn record_llm_call(
     success: bool,
     error: Option<String>,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         t.inc_llm_calls();
         let event = TelemetryEvent {
             timestamp: now(),
@@ -285,8 +298,7 @@ pub fn record_llm_call(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn record_error(
@@ -296,7 +308,7 @@ pub fn record_error(
     context: HashMap<String, serde_json::Value>,
     recoverable: bool,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         t.inc_errors();
         let event = TelemetryEvent {
             timestamp: now(),
@@ -311,8 +323,7 @@ pub fn record_error(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn record_checkpoint(
@@ -322,7 +333,7 @@ pub fn record_checkpoint(
     files: Vec<String>,
     state_snapshot: serde_json::Value,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         let event = TelemetryEvent {
             timestamp: now(),
             session_id: t.session_id.clone(),
@@ -336,8 +347,7 @@ pub fn record_checkpoint(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn record_repair_cycle(
@@ -348,7 +358,7 @@ pub fn record_repair_cycle(
     issues_fixed: u32,
     success: bool,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         let event = TelemetryEvent {
             timestamp: now(),
             session_id: t.session_id.clone(),
@@ -363,8 +373,7 @@ pub fn record_repair_cycle(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn record_verification(
@@ -375,7 +384,7 @@ pub fn record_verification(
     details: String,
     artifacts: Vec<String>,
 ) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         let event = TelemetryEvent {
             timestamp: now(),
             session_id: t.session_id.clone(),
@@ -390,12 +399,11 @@ pub fn record_verification(
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn task_span(task_id: &str, task_type: &str, description: &str) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         t.inc_requests();
         let event = TelemetryEvent {
             timestamp: now(),
@@ -408,12 +416,11 @@ pub fn task_span(task_id: &str, task_type: &str, description: &str) {
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 pub fn end_task_span(task_id: &str, success: bool, duration: Duration, summary: &str) {
-    if let Some(mut t) = TELEMETRY.lock().unwrap().take() {
+    with_telemetry(|t| {
         let event = TelemetryEvent {
             timestamp: now(),
             session_id: t.session_id.clone(),
@@ -426,10 +433,46 @@ pub fn end_task_span(task_id: &str, success: bool, duration: Duration, summary: 
             data: serde_json::json!({}),
         };
         t.record_event(event);
-        *TELEMETRY.lock().unwrap() = Some(t);
-    }
+    });
 }
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regresión del deadlock: antes, el guard del `if let` mantenía el mutex
+    /// y el segundo `lock()` colgaba el proceso. Si este test termina, el
+    /// registro de eventos no se bloquea.
+    #[test]
+    fn recording_events_does_not_deadlock() {
+        Telemetry::init(TelemetryConfig::default()).unwrap();
+
+        task_span("t1", "test", "recording");
+        record_tool_call(
+            "t1",
+            "read_file",
+            None,
+            true,
+            serde_json::json!({"path": "a.rs"}),
+            None,
+            Duration::from_millis(1),
+            true,
+            None,
+        );
+        record_verification("t1", "Syntax", 1, true, "ok".into(), vec![]);
+        record_error(None, "Test", "boom", HashMap::new(), true);
+        end_task_span("t1", true, Duration::from_millis(2), "done");
+
+        let guard = Telemetry::instance().lock().unwrap();
+        let telemetry = guard.as_ref().expect("telemetría inicializada");
+        let metrics = telemetry.metrics();
+        assert_eq!(metrics.requests, 1);
+        assert_eq!(metrics.tool_calls, 1);
+        assert_eq!(metrics.errors, 1);
+        assert_eq!(telemetry.events.len(), 5);
+    }
 }

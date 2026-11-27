@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -136,11 +137,62 @@ struct PromptArgument {
     required: bool,
 }
 
+/// Resuelve un URI MCP a un archivo real dentro del workspace.
+///
+/// Acepta `file:///workspace/...` (formato histórico), `file:///ruta/absoluta`
+/// y rutas relativas. La comprobación se hace sobre la ruta **canonicalizada**:
+/// un simple `starts_with("/workspace")` dejaba pasar
+/// `file:///workspace/../../etc/passwd`.
+fn resolve_workspace_path(uri: &str, workspace_root: &Path) -> Result<PathBuf, String> {
+    let candidate = if let Some(rest) = uri.strip_prefix("file:///workspace/") {
+        workspace_root.join(rest)
+    } else if uri.starts_with("file://") {
+        let url = url::Url::parse(uri).map_err(|e| format!("Invalid file URI: {e}"))?;
+        url.to_file_path()
+            .map_err(|_| "Invalid file URI".to_string())?
+    } else if let Ok(url) = url::Url::parse(uri) {
+        if url.scheme() == "file" {
+            url.to_file_path()
+                .map_err(|_| "Invalid file URI".to_string())?
+        } else {
+            return Err(format!("Unsupported URI scheme: {}", url.scheme()));
+        }
+    } else if Path::new(uri).is_absolute() {
+        PathBuf::from(uri)
+    } else {
+        workspace_root.join(uri)
+    };
+
+    let workspace = workspace_root
+        .canonicalize()
+        .map_err(|e| format!("Workspace unavailable: {e}"))?;
+    let target = candidate
+        .canonicalize()
+        .map_err(|e| format!("Resource not found: {e}"))?;
+
+    if !target.starts_with(&workspace) {
+        return Err("Access denied: path outside workspace".to_string());
+    }
+    if !target.is_file() {
+        return Err("Resource is not a file".to_string());
+    }
+
+    Ok(target)
+}
+
+/// URI `file://` absoluto para un recurso del workspace.
+fn file_uri(path: &Path) -> Option<String> {
+    url::Url::from_file_path(path)
+        .ok()
+        .map(|url| url.to_string())
+}
+
 /// MCP server state
 pub struct McpServer {
     tool_registry: Arc<ToolRegistry>,
     addr: SocketAddr,
     initialized: Arc<Mutex<bool>>,
+    workspace_root: PathBuf,
 }
 
 impl McpServer {
@@ -149,6 +201,7 @@ impl McpServer {
             tool_registry,
             addr,
             initialized: Arc::new(Mutex::new(false)),
+            workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
     }
 
@@ -362,21 +415,33 @@ impl McpServer {
     }
 
     async fn handle_resources_list(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        // Expose key project files as resources
-        let resources = vec![
-            McpResource {
-                uri: "file:///workspace/AGENTS.md".to_string(),
-                name: "AGENTS.md".to_string(),
-                description: Some("Agent instructions and project rules".to_string()),
-                mime_type: Some("text/markdown".to_string()),
-            },
-            McpResource {
-                uri: "file:///workspace/README.md".to_string(),
-                name: "README.md".to_string(),
-                description: Some("Project overview".to_string()),
-                mime_type: Some("text/markdown".to_string()),
-            },
+        // Exponer solo archivos que existen en el workspace real. Antes las
+        // URIs apuntaban siempre a /workspace, una ruta que en Linux nativo no
+        // existe, así que resources/read fallaba siempre.
+        let candidates = [
+            (
+                "AGENTS.md",
+                "Agent instructions and project rules",
+                "text/markdown",
+            ),
+            ("README.md", "Project overview", "text/markdown"),
         ];
+        let resources: Vec<McpResource> = candidates
+            .iter()
+            .filter_map(|(name, description, mime)| {
+                let path = self.workspace_root.join(name);
+                if !path.is_file() {
+                    return None;
+                }
+                let uri = file_uri(&path)?;
+                Some(McpResource {
+                    uri,
+                    name: (*name).to_string(),
+                    description: Some((*description).to_string()),
+                    mime_type: Some((*mime).to_string()),
+                })
+            })
+            .collect();
 
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -406,23 +471,23 @@ impl McpServer {
             }
         };
 
-        // Read file from URI (only allow workspace files)
-        let path = uri.strip_prefix("file:///workspace/").unwrap_or(uri);
-        let full_path = std::path::Path::new("/workspace").join(path);
-
-        // Security: ensure path is within workspace
-        if !full_path.starts_with("/workspace") {
-            return JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32602,
-                    message: "Access denied: path outside workspace".to_string(),
-                    data: None,
-                }),
-            };
-        }
+        // Resolver el URI contra el workspace real y comprobar la ruta
+        // canonicalizada (evita `../` y enlaces simbólicos que escapan).
+        let full_path = match resolve_workspace_path(uri, &self.workspace_root) {
+            Ok(path) => path,
+            Err(message) => {
+                return JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32602,
+                        message,
+                        data: None,
+                    }),
+                };
+            }
+        };
 
         let content = match std::fs::read_to_string(&full_path) {
             Ok(c) => c,
@@ -607,6 +672,7 @@ impl Clone for McpServer {
             tool_registry: self.tool_registry.clone(),
             addr: self.addr,
             initialized: self.initialized.clone(),
+            workspace_root: self.workspace_root.clone(),
         }
     }
 }
@@ -681,4 +747,69 @@ pub async fn cmd_mcp(port: Option<u16>, stdio: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolves_legacy_and_absolute_file_uris() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("AGENTS.md");
+        std::fs::write(&file, "instructions").unwrap();
+
+        let legacy = resolve_workspace_path("file:///workspace/AGENTS.md", dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(legacy).unwrap(), "instructions");
+
+        let absolute = file_uri(&file).unwrap();
+        let resolved = resolve_workspace_path(&absolute, dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(resolved).unwrap(), "instructions");
+    }
+
+    #[test]
+    fn rejects_paths_outside_the_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        std::fs::write(&secret, "do not read").unwrap();
+
+        assert!(resolve_workspace_path("file:///workspace/../../etc/passwd", dir.path()).is_err());
+        let uri = file_uri(&secret).unwrap();
+        assert!(resolve_workspace_path(&uri, dir.path()).is_err());
+    }
+
+    #[tokio::test]
+    async fn resources_read_does_not_escape_the_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "project rules").unwrap();
+
+        let mut server = McpServer::new(
+            Arc::new(ToolRegistry::new()),
+            "127.0.0.1:0".parse().unwrap(),
+        );
+        server.workspace_root = dir.path().to_path_buf();
+
+        let ok = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(json!(1)),
+                method: "resources/read".to_string(),
+                params: Some(json!({"uri": "file:///workspace/AGENTS.md"})),
+            })
+            .await;
+        assert!(ok.error.is_none(), "{:?}", ok.error);
+        assert_eq!(ok.result.unwrap()["contents"][0]["text"], "project rules");
+
+        let denied = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(json!(2)),
+                method: "resources/read".to_string(),
+                params: Some(json!({"uri": "file:///workspace/../../etc/passwd"})),
+            })
+            .await;
+        assert!(denied.error.is_some());
+    }
 }
