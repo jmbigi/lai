@@ -61,6 +61,16 @@ El agente **no** tiene un planificador fijo ni un bucle "hasta que pasen los
 tests": itera con las herramientas hasta que decide terminar o agota
 `--max-iterations`. Si quieres que verifique, pídeselo en la tarea.
 
+### Verificación acotada
+
+```bash
+lai auto "arregla el bug" --verify
+```
+
+Al terminar ejecuta la comprobación de sintaxis y los tests unitarios del
+proyecto y emite un veredicto. Sale con código 2 si no pasan. Si el proyecto no
+tiene tests, lo dice explícitamente: solo se verificó la sintaxis.
+
 ### Sandbox (recomendado para código que no es tuyo)
 
 ```bash

@@ -161,11 +161,47 @@ por sí sola.
 | `timeout` (opcional) | SUCCESS_WITH_DECLARED_GAPS | 0 |
 | `counterexample` (opcional) | FAILED | 2 |
 
-## 12. Verificación completa
+## 12. `lai auto --verify` y arreglo del motor de verificación
+
+**ANTES (defecto real):** `verification_engine::verify_unit_tests` ejecutaba
+`cargo test --message-format=json` y buscaba eventos `reason == "test"`. Cargo
+**no emite esos eventos** en ese formato (solo mensajes de compilación), así que
+el parser siempre obtenía 0 tests y reportaba `"No tests found"` con
+`passed = true, score = 100`. Es decir: **los tests unitarios de Rust nunca se
+verificaron**. La rama de Python dependía de `pytest-json-report`; si el plugin
+no estaba instalado, también reportaba "Tests passed" sin mirar nada.
+
+**DESPUÉS**
+
+- Rust: `cargo test --quiet` y `parse_cargo_test_summary()` lee las líneas
+  `test result: ok. N passed; M failed;`; el éxito exige código de salida 0 y
+  tasa ≥ umbral.
+- Python: `pytest --tb=no -q` y `parse_pytest_summary()` lee el resumen
+  (`3 passed, 1 failed`); sin plugin externo. Código 5 (no tests) se distingue.
+- Sin tests: `passed = true` pero `score = 0` y mensaje
+  `"No tests found (nothing verified)"`, para no romper proyectos sin tests
+  pero sin fingir una verificación.
+- `lai auto ... --verify`: al terminar ejecuta sintaxis + tests unitarios y
+  emite veredicto acotado; **código de salida 2** si no pasa. Si no hay tests,
+  avisa explícitamente de que solo se verificó la sintaxis.
+
+**Verificación** (ejecutada con un proyecto Rust temporal y servidor [OI] falso):
+
+| Caso | Resultado | Código |
+|---|---|---|
+| Proyecto con 1 test que pasa | `1/1 tests passed` | 0 |
+| Test roto a propósito | `0/1 tests passed` → Blocked | 2 |
+| Proyecto sin tests | aviso "solo sintaxis" | 0 |
+
+Tests nuevos del parser: 4 (`parses_cargo_test_summary`,
+`parses_cargo_test_failures`, `parses_pytest_summary`,
+`pytest_progress_dots_are_not_counted`).
+
+## 13. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` | ✅ **226 tests** (184 lib + 42 integración), 0 fallos |
+| `cargo test` | ✅ **230 tests** (188 lib + 42 integración), 0 fallos |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --all-targets -- -D warnings` | ✅ |
 | `pytest tests swebench` | ✅ 241 passed, 9 skipped |
@@ -174,7 +210,7 @@ por sí sola.
 | `make gateway-check` | ✅ |
 | `scripts/ci_local.sh --quick --ci` | ✅ 6/6 |
 
-## 13. Lo que NO se ha probado (Regla 6)
+## 14. Lo que NO se ha probado (Regla 6)
 
 - **`cache_prompt` con un modelo real.** No hay servidor llama.cpp en marcha en
   esta sesión; no se midió la mejora de TTFT ni de tokens reprocesados. La
@@ -183,6 +219,8 @@ por sí sola.
   truncarse.
 - **Guarda de credenciales.** Es una lista de nombres y componentes, no un
   detector de contenido: un secreto en `notes.txt` no se detecta.
+- **`auto --verify` con un modelo real.** Se probó con servidor falso; el
+  veredicto depende del estado del proyecto, no del modelo.
 - **Contratos con una herramienta externa real.** El mapeo y el CLI están
   probados; no se ejecutó Dafny/TLA+/α,β-CROWN en este equipo.
 - **Gramáticas GBNF explícitas.** llama.cpp ya genera la gramática desde los

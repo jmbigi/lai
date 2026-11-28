@@ -781,15 +781,30 @@ fn strip_think_tags(content: &str) -> String {
     r.trim().to_string()
 }
 
-pub async fn cmd_auto(
-    task: &str,
-    max_iterations: u32,
-    output: Option<&str>,
-    model: &str,
-    base_url: &str,
-    allow_remote: bool,
-    profile: &str,
-) {
+/// Opciones de `lai auto`. Se agrupan en una struct para no acumular
+/// parámetros posicionales (y para que clippy no tenga que silenciarse).
+pub struct AutoOptions<'a> {
+    pub task: &'a str,
+    pub max_iterations: u32,
+    pub output: Option<&'a str>,
+    pub model: &'a str,
+    pub base_url: &'a str,
+    pub allow_remote: bool,
+    pub profile: &'a str,
+    pub verify: bool,
+}
+
+pub async fn cmd_auto(opts: AutoOptions<'_>) {
+    let AutoOptions {
+        task,
+        max_iterations,
+        output,
+        model,
+        base_url,
+        allow_remote,
+        profile,
+        verify,
+    } = opts;
     println!("🤖 Auto mode: {}", task);
     println!("   Max iterations: {}", max_iterations);
     if let Some(out) = output {
@@ -1305,6 +1320,13 @@ complete corrected file content. Do not reply with analysis or questions — act
         }
     }
 
+    // Verificación acotada opcional: `auto` no puede declarar éxito por sí
+    // mismo. Con `--verify` se ejecutan sintaxis y tests unitarios y se emite
+    // un veredicto explícito; el código de salida es 2 si no pasa.
+    if verify {
+        run_bounded_verification().await;
+    }
+
     // Resumen de consumo: útil para comparar corridas y para comprobar si
     // `cache_prompt` está reutilizando el prefijo (Regla 11).
     if prompt_tokens > 0 || completion_tokens > 0 {
@@ -1330,6 +1352,65 @@ complete corrected file content. Do not reply with analysis or questions — act
 }
 
 /// Escribe la transcripción de una sesión de `auto` en el directorio indicado.
+/// Ejecuta una verificación acotada (sintaxis + tests unitarios) e imprime el
+/// veredicto. Sale con código 2 si no es un éxito, para que un script o CI
+/// pueda fallar de forma determinista.
+async fn run_bounded_verification() {
+    use crate::planner::{VerificationLevel, VerificationScope};
+    use crate::verification_engine::{VerificationEngine, VerificationVerdict};
+
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("Verify: no se pudo resolver el directorio actual: {e}");
+            std::process::exit(2);
+        }
+    };
+    let scope = VerificationScope {
+        in_scope: vec![VerificationLevel::Syntax, VerificationLevel::UnitTests],
+        out_of_scope: vec![],
+        rationale: "auto --verify: sintaxis + tests unitarios".to_string(),
+    };
+    let engine = VerificationEngine::new(&cwd);
+    match engine.verify("auto-verify", None, scope).await {
+        Ok(report) => {
+            for result in &report.results {
+                println!(
+                    "  {} {} — {}",
+                    if result.passed { "✓" } else { "✗" },
+                    result.level.name(),
+                    result.details.lines().next().unwrap_or("")
+                );
+            }
+            // "No tests found" no es una verificación: el motor lo marca como
+            // pasado para no romper proyectos sin tests, pero aquí se declara.
+            if report
+                .results
+                .iter()
+                .any(|r| r.details.contains("No tests found"))
+            {
+                println!(
+                    "⚠ No se encontraron tests: se verificó la sintaxis, no el \
+                     comportamiento. El resultado NO demuestra que el arreglo funcione."
+                );
+            }
+            match report.overall_verdict {
+                VerificationVerdict::Success | VerificationVerdict::SuccessWithDeclaredGaps => {
+                    println!("✅ Verificación: {}", report.summary);
+                }
+                other => {
+                    println!("⛔ Verificación: {:?} — {}", other, report.summary);
+                    std::process::exit(2);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Verify: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn write_auto_transcript(
     dir: &Path,
     task: &str,

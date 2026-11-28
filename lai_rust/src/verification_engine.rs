@@ -104,6 +104,63 @@ impl VerificationReport {
     }
 }
 
+/// Suma `passed`/`failed` de las líneas `test result:` de cargo/libtest.
+///
+/// Formato real: `test result: ok. 3 passed; 0 failed; 0 ignored; ...`.
+/// Se ignoran las líneas de doc-tests con 0 tests para no inflar el total.
+fn parse_cargo_test_summary(text: &str) -> (usize, usize) {
+    let mut passed = 0;
+    let mut failed = 0;
+    for line in text.lines() {
+        let Some(rest) = line.split("test result:").nth(1) else {
+            continue;
+        };
+        // Formato: `ok. 3 passed; 0 failed; 0 ignored; ...`
+        for part in rest.split(';') {
+            let tokens: Vec<&str> = part.split_whitespace().collect();
+            for window in tokens.windows(2) {
+                let Ok(n) = window[0].parse::<usize>() else {
+                    continue;
+                };
+                match window[1] {
+                    "passed" => passed += n,
+                    "failed" => failed += n,
+                    _ => {}
+                }
+            }
+        }
+    }
+    (passed, failed)
+}
+
+/// Extrae `passed`/`failed` del resumen de pytest (`3 passed, 1 failed in ...`).
+fn parse_pytest_summary(text: &str) -> (usize, usize) {
+    let mut passed = 0;
+    let mut failed = 0;
+    for line in text.lines() {
+        if !(line.contains(" passed") || line.contains(" failed") || line.contains(" error")) {
+            continue;
+        }
+        // Las líneas de progreso (`....F`) no contienen estos tokens con
+        // número; se exige que el token anterior sea numérico.
+        let tokens: Vec<&str> = line
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+            .collect();
+        for window in tokens.windows(2) {
+            let Ok(n) = window[0].parse::<usize>() else {
+                continue;
+            };
+            match window[1] {
+                "passed" => passed += n,
+                "failed" | "error" | "errors" => failed += n,
+                _ => {}
+            }
+        }
+    }
+    (passed, failed)
+}
+
 pub struct VerificationEngine {
     working_dir: PathBuf,
     config: VerificationConfig,
@@ -616,8 +673,11 @@ impl VerificationEngine {
     async fn verify_unit_tests(&self) -> (bool, f64, String, Vec<String>) {
         // Rust
         if self.working_dir.join("Cargo.toml").exists() {
+            // Sin `--message-format=json`: ese formato solo emite eventos de
+            // compilación, nunca `reason == "test"`, así que el parser anterior
+            // reportaba "No tests found" incluso con tests (defecto real).
             let output = Command::new("cargo")
-                .args(["test", "--message-format=json"])
+                .args(["test", "--quiet"])
                 .current_dir(&self.working_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -625,32 +685,43 @@ impl VerificationEngine {
 
             match output {
                 Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let mut passed = 0;
-                    let mut total = 0;
-
-                    for line in stdout.lines() {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                            if json["reason"] == "test" {
-                                total += 1;
-                                if json["status"] == "passed" {
-                                    passed += 1;
-                                }
-                            }
-                        }
-                    }
-
+                    let combined = format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&out.stdout),
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    let (passed, failed) = parse_cargo_test_summary(&combined);
+                    let total = passed + failed;
                     if total > 0 {
                         let rate = (passed as f64 / total as f64) * 100.0;
-                        let success = rate >= self.config.min_test_pass_rate;
+                        let success =
+                            out.status.success() && rate >= self.config.min_test_pass_rate;
                         (
                             success,
                             rate,
-                            format!("{}/{} tests passed ({:.1}%)", passed, total, rate),
+                            format!("{passed}/{total} tests passed ({rate:.1}%)"),
+                            vec![],
+                        )
+                    } else if out.status.success() {
+                        (
+                            true,
+                            0.0,
+                            "No tests found (nothing verified)".to_string(),
                             vec![],
                         )
                     } else {
-                        (true, 100.0, "No tests found".to_string(), vec![])
+                        (
+                            false,
+                            0.0,
+                            format!(
+                                "cargo test falló: {}",
+                                combined
+                                    .lines()
+                                    .find(|l| l.contains("error"))
+                                    .unwrap_or("sin detalle")
+                            ),
+                            vec![],
+                        )
                     }
                 }
                 Err(e) => (false, 0.0, format!("cargo test failed: {}", e), vec![]),
@@ -660,48 +731,48 @@ impl VerificationEngine {
         else if self.working_dir.join("pyproject.toml").exists()
             || self.working_dir.join("pytest.ini").exists()
         {
+            // Sin `--json-report`: depende de un plugin que puede no estar
+            // instalado, y su ausencia se interpretaba como "todo pasó".
             let output = Command::new("python3")
-                .args([
-                    "-m",
-                    "pytest",
-                    "--tb=no",
-                    "-q",
-                    "--json-report",
-                    "--json-report-file=/tmp/pytest_report.json",
-                ])
+                .args(["-m", "pytest", "--tb=no", "-q"])
                 .current_dir(&self.working_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output();
 
             match output {
-                Ok(_) => {
-                    if let Ok(report) = std::fs::read_to_string("/tmp/pytest_report.json") {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&report) {
-                            let passed = json["summary"]["passed"].as_u64().unwrap_or(0);
-                            let total = json["summary"]["total"].as_u64().unwrap_or(0);
-                            if total > 0 {
-                                let rate = (passed as f64 / total as f64) * 100.0;
-                                let success = rate >= self.config.min_test_pass_rate;
-                                (
-                                    success,
-                                    rate,
-                                    format!("{}/{} tests passed ({:.1}%)", passed, total, rate),
-                                    vec![],
-                                )
-                            } else {
-                                (true, 100.0, "No tests found".to_string(), vec![])
-                            }
-                        } else {
-                            (
-                                true,
-                                100.0,
-                                "Tests passed (no JSON report)".to_string(),
-                                vec![],
-                            )
-                        }
+                Ok(out) => {
+                    let combined = format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&out.stdout),
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    let (passed, failed) = parse_pytest_summary(&combined);
+                    let total = passed + failed;
+                    if total > 0 {
+                        let rate = (passed as f64 / total as f64) * 100.0;
+                        let success =
+                            out.status.success() && rate >= self.config.min_test_pass_rate;
+                        (
+                            success,
+                            rate,
+                            format!("{passed}/{total} tests passed ({rate:.1}%)"),
+                            vec![],
+                        )
+                    } else if out.status.code() == Some(5) || out.status.success() {
+                        (
+                            true,
+                            0.0,
+                            "No tests found (nothing verified)".to_string(),
+                            vec![],
+                        )
                     } else {
-                        (true, 100.0, "Tests passed".to_string(), vec![])
+                        (
+                            false,
+                            0.0,
+                            "pytest falló sin resumen de tests".to_string(),
+                            vec![],
+                        )
                     }
                 }
                 Err(e) => (false, 0.0, format!("pytest failed: {}", e), vec![]),
@@ -911,5 +982,36 @@ impl VerificationEngine {
             "Performance benchmarks not configured".to_string(),
             vec![],
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_cargo_test_summary() {
+        let text = "running 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\nrunning 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored;\n";
+        assert_eq!(parse_cargo_test_summary(text), (4, 0));
+    }
+
+    #[test]
+    fn parses_cargo_test_failures() {
+        let text = "test result: FAILED. 2 passed; 1 failed; 0 ignored; finished in 0.1s";
+        assert_eq!(parse_cargo_test_summary(text), (2, 1));
+    }
+
+    #[test]
+    fn parses_pytest_summary() {
+        assert_eq!(parse_pytest_summary("3 passed, 1 failed in 0.12s"), (3, 1));
+        assert_eq!(parse_pytest_summary("10 passed in 1.00s"), (10, 0));
+        assert_eq!(parse_pytest_summary("1 failed, 2 passed in 0.3s"), (2, 1));
+        assert_eq!(parse_pytest_summary("no tests ran in 0.01s"), (0, 0));
+    }
+
+    #[test]
+    fn pytest_progress_dots_are_not_counted() {
+        // Líneas de progreso con puntos y nombres no deben contar.
+        assert_eq!(parse_pytest_summary("....F....  [100%]"), (0, 0));
     }
 }

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lai auto --verify`**: al terminar ejecuta sintaxis + tests unitarios y emite un veredicto acotado; sale con código 2 si no pasa. Si no hay tests, avisa de que solo se verificó la sintaxis.
 - **pre-commit cubre Rust**: hooks `cargo fmt --check` y `cargo clippy --all-targets -- -D warnings` además de los de Python.
 - **`ci_local.sh` ejecuta `scripts/check_docs.py`** (paso opcional) para detectar inconsistencias documentales.
 - **`cache_prompt` en cada petición (2026-11-28)**: el bucle de agente reutiliza el KV cache del prefijo estable (sistema + esquemas de herramientas) en lugar de reprocesarlo cada turno. Desactivable con `LAI_CACHE_PROMPT=0`. Test de serialización.
@@ -47,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DOCS/README.md` al día**: índice completo de registros 27–28, arquitectura con Rust como implementación principal y nota sobre `-ngl` según VRAM.
 
 ### Fixed
+- **El motor de verificación no medía los tests**: `cargo test --message-format=json` no emite eventos `reason == "test"`; ahora se parsea el resumen real de cargo/libtest y de pytest. 4 tests del parser.
 - **Repositorio sin artefactos de build**: se retiraron del índice 345 archivos de `lai_rust/target/` (82 MB) y 6 JSON de `sessions/`, que ya estaban en `.gitignore` pero se habían añadido antes. Los archivos siguen en disco. El índice pasa de ~85 MB a ~3 MB.
 
 ### Added

@@ -90,7 +90,7 @@ cargo test --test swe_bench
 |---|---|
 | `chat` | Chat interactivo o de un solo prompt, con tool calling |
 | `code` | Genera un archivo de código con ciclos de validación |
-| `auto` | Agente autónomo (`--profile full` o `--profile bash`) |
+| `auto` | Agente autónomo (`--profile full` o `--profile bash`); `--verify` comprueba sintaxis y tests al terminar |
 | `status` | Estado de llama.cpp / gateway / ollama |
 | `repo-map` | Mapa de símbolos del repositorio |
 | `verify` | Verificación por niveles (sintaxis, lint, tipos, tests…) o mapeo de un verificador externo (`--external safe\|unsafe\|timeout\|unknown`) |

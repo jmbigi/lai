@@ -66,9 +66,14 @@ enum Commands {
         #[arg(
             long,
             default_value = "full",
-            help = "Tool profile: full (14 tools) or bash (one shell tool, better for small models)"
+            help = "Tool profile: full (16 tools) or bash (one shell tool, better for small models)"
         )]
         profile: String,
+        #[arg(
+            long,
+            help = "After the run, verify syntax and unit tests and print a bounded verdict"
+        )]
+        verify: bool,
     },
     /// Run RepoMap indexer
     RepoMap {
@@ -216,16 +221,18 @@ async fn main() -> anyhow::Result<()> {
             max_iterations,
             output,
             profile,
+            verify,
         }) => {
-            commands::cmd_auto(
-                &task,
+            commands::cmd_auto(commands::AutoOptions {
+                task: &task,
                 max_iterations,
-                output.as_deref(),
-                &cli.model,
-                &cli.base_url,
-                cli.allow_remote,
-                &profile,
-            )
+                output: output.as_deref(),
+                model: &cli.model,
+                base_url: &cli.base_url,
+                allow_remote: cli.allow_remote,
+                profile: &profile,
+                verify,
+            })
             .await;
         }
         Some(Commands::RepoMap { path, file }) => {
