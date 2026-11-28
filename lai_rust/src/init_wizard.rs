@@ -1387,6 +1387,14 @@ pub async fn cmd_doctor() -> Result<()> {
                 .to_string(),
         );
     }
+    println!(
+        "  allowlist de comandos en auto: {}",
+        if crate::policy::command_allowlist_from_env() {
+            "activa (LAI_COMMAND_ALLOWLIST=1)"
+        } else {
+            "desactivada (opt-in con LAI_COMMAND_ALLOWLIST=1)"
+        }
+    );
 
     // Check AGENTS.md
     let cwd = std::env::current_dir()?;
