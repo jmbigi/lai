@@ -37,6 +37,113 @@ fn arg_bool(args: &HashMap<String, Value>, key: &str, default: bool) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
+/// Detecta comandos de shell que reemplazan o borran un manifiesto del
+/// proyecto (`> Cargo.toml`, `cat > …`, `tee …`, `rm …`, `mv … Cargo.toml`,
+/// `dd of=…`, `truncate …`).
+///
+/// Es una guarda de mejor esfuerzo: no interpreta el shell. La ofuscación
+/// (`cat $VAR > $MANIFEST`, `python -c "..."`, `bash -c "..."`) puede saltarla;
+/// se declara como límite en `AGENTS.md` y `SECURITY.md`.
+fn shell_manifest_violation(command: &str) -> Option<String> {
+    let words = shell_words(command);
+    let mut i = 0;
+    while i < words.len() {
+        let word = &words[i];
+        // Redirecciones: > file, >> file, 2> file, >file
+        let target = if word == ">" || word == ">>" {
+            words.get(i + 1).cloned()
+        } else {
+            word.strip_prefix(">>")
+                .or_else(|| word.strip_prefix('>'))
+                .map(|rest| rest.to_string())
+        };
+        if let Some(target) = target {
+            let target = target.trim_matches(|c| c == '"' || c == '\'');
+            if !target.starts_with('&') && is_manifest_file(Path::new(target)) {
+                return Some(format!("redirección a '{target}'"));
+            }
+        }
+
+        let destructive = matches!(word.as_str(), "tee" | "rm" | "truncate");
+        if destructive {
+            let mut j = i + 1;
+            while j < words.len() {
+                let candidate = words[j].trim_matches(|c| c == '"' || c == '\'');
+                if !candidate.starts_with('-') && is_manifest_file(Path::new(candidate)) {
+                    return Some(format!("'{word}' sobre '{candidate}'"));
+                }
+                j += 1;
+            }
+        }
+
+        if matches!(word.as_str(), "mv" | "cp" | "install") {
+            // El destino es el último operando; si es un manifiesto, se
+            // sobrescribe (o se crea, que no destruye nada si no existía).
+            let operands: Vec<&String> = words[i + 1..]
+                .iter()
+                .filter(|w| !w.starts_with('-'))
+                .collect();
+            if let Some(dest) = operands.last() {
+                let dest = dest.trim_matches(|c| c == '"' || c == '\'');
+                if is_manifest_file(Path::new(dest)) && Path::new(dest).exists() {
+                    return Some(format!("'{word}' sobrescribe '{dest}'"));
+                }
+            }
+        }
+
+        if word == "dd" {
+            for arg in &words[i + 1..] {
+                if let Some(target) = arg.strip_prefix("of=") {
+                    if is_manifest_file(Path::new(target)) {
+                        return Some(format!("dd of={target}"));
+                    }
+                }
+            }
+        }
+
+        i += 1;
+    }
+    None
+}
+
+/// Divide un comando de shell en palabras respetando comillas simples/dobles.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else if ch == '\\' && q == '"' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => {
+                if ch == '\'' || ch == '"' {
+                    quote = Some(ch);
+                } else if ch.is_whitespace() {
+                    if !current.is_empty() {
+                        words.push(std::mem::take(&mut current));
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 /// Cita un argumento para `bash -c` (usado al envolver `run_python` en bwrap).
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -819,21 +926,38 @@ fn run_shell_tool_with(args: &HashMap<String, Value>, require_sandbox: bool) -> 
         ));
     }
     let want_sandbox = require_sandbox || explicit_sandbox.unwrap_or(false);
+    let allow_net =
+        arg_bool(args, "sandbox_network", false) || crate::sandbox::allow_net_from_env();
+    if !arg_bool(args, "allow_manifest_overwrite", false) {
+        if let Some(reason) = shell_manifest_violation(command) {
+            return Err(anyhow::anyhow!(
+                "bash rechazado: {reason} (manifiesto del proyecto). Reemplazar o \
+                 borrar un manifiesto entero suele romper la build. Cambia solo la \
+                 línea necesaria con `edit`, o repite con \
+                 \"allow_manifest_overwrite\": true si de verdad quieres sustituirlo."
+            ));
+        }
+    }
 
     let output = if want_sandbox {
         let workspace = match cwd {
             Some(dir) => std::path::PathBuf::from(dir),
             None => std::env::current_dir()?,
         };
-        let cmd = crate::sandbox::build_command(command, &workspace, require_sandbox)?.ok_or_else(
-            || {
-                anyhow::anyhow!(
-                    "sandbox solicitado pero no disponible: {}. Ejecuta sin \
-                     \"sandbox\": true o instala bubblewrap.",
-                    crate::sandbox::preflight().detail
-                )
-            },
-        )?;
+        let cmd = crate::sandbox::build_command_full(
+            command,
+            &workspace,
+            require_sandbox,
+            allow_net,
+            crate::sandbox::preflight(),
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "sandbox solicitado pero no disponible: {}. Ejecuta sin \
+                 \"sandbox\": true o instala bubblewrap.",
+                crate::sandbox::preflight().detail
+            )
+        })?;
         run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?
     } else {
         // Use appropriate shell for the OS
@@ -885,7 +1009,7 @@ pub struct ToolRegistry {
 }
 impl ToolRegistry {
     pub fn new() -> Self {
-        let policy_engine = Arc::new(SyncMutex::new(PolicyEngine::new(PolicyConfig::default())));
+        let policy_engine = Arc::new(SyncMutex::new(PolicyEngine::new(PolicyConfig::from_env())));
         let mut registry = Self {
             tools: HashMap::new(),
             require_approval: false,
@@ -994,10 +1118,14 @@ impl ToolRegistry {
             let cmd = if want_sandbox {
                 let workspace = std::env::current_dir()?;
                 let script = shell_quote(&temp_path.to_string_lossy());
-                crate::sandbox::build_command(
+                let allow_net = arg_bool(&args, "sandbox_network", false)
+                    || crate::sandbox::allow_net_from_env();
+                crate::sandbox::build_command_full(
                     &format!("python3 {script}"),
                     &workspace,
                     require_sandbox,
+                    allow_net,
+                    crate::sandbox::preflight(),
                 )?
                 .ok_or_else(|| {
                     anyhow::anyhow!(
@@ -1127,13 +1255,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "run_command".into(),
-                description: "Run a shell command. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap (no network, workspace writable); with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["command"]}),
+                description: "Run a shell command. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap (no network by default, workspace writable); with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed. Refuses obvious manifest destruction (redirect/rm/tee over Cargo.toml, package.json, ...) unless allow_manifest_overwrite is true.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"},"sandbox_network":{"type":"boolean","description":"Allow network inside the sandbox (default false)"},"allow_manifest_overwrite":{"type":"boolean","description":"Permit a command that overwrites or deletes a project manifest"}},"required":["command"]}),
             },
             ToolSchema {
                 name: "bash".into(),
-                description: "Run one shell command (same as run_command). Use it to inspect the repo and edit files with heredocs. Honors the same sandbox rules.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["command"]}),
+                description: "Run one shell command (same as run_command). Use it to inspect the repo and edit files with heredocs. Honors the same sandbox and manifest rules.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"},"sandbox_network":{"type":"boolean","description":"Allow network inside the sandbox (default false)"},"allow_manifest_overwrite":{"type":"boolean","description":"Permit a command that overwrites or deletes a project manifest"}},"required":["command"]}),
             },
             ToolSchema {
                 name: "grep".into(),
@@ -1153,7 +1281,7 @@ impl ToolRegistry {
             ToolSchema {
                 name: "run_python".into(),
                 description: "Run Python code in a temporary file. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap; with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["code"]}),
+                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"},"sandbox_network":{"type":"boolean","description":"Allow network inside the sandbox (default false)"}},"required":["code"]}),
             },
             ToolSchema {
                 name: "apply_patch".into(),
@@ -1981,5 +2109,78 @@ async def go():\n\
             out.contains("NO_NET"),
             "la red no debería estar disponible: {out}"
         );
+    }
+
+    #[test]
+    fn shell_guard_rejects_redirect_into_manifest() {
+        let err = run_shell_tool_with(&args(json!({"command": "echo x > Cargo.toml"})), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("manifiesto"), "{err}");
+    }
+
+    #[test]
+    fn shell_guard_rejects_heredoc_into_manifest() {
+        let err = run_shell_tool_with(
+            &args(json!({"command": "cat > package.json <<EOF\n{}\nEOF"})),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("manifiesto"), "{err}");
+    }
+
+    #[test]
+    fn shell_guard_rejects_rm_and_tee_on_manifest() {
+        for command in [
+            "rm -f pyproject.toml",
+            "tee go.mod",
+            "dd if=/dev/zero of=Cargo.lock",
+        ] {
+            let err = run_shell_tool_with(&args(json!({"command": command})), false)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("manifiesto"), "{command}: {err}");
+        }
+    }
+
+    #[test]
+    fn shell_guard_allows_reading_and_targeted_writes() {
+        // Leer un manifiesto y escribir otro archivo no se bloquea.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "cat Cargo.toml >/dev/null 2>&1; echo ok > notas.txt",
+                "cwd": dir.path().to_string_lossy()
+            })),
+            false,
+        )
+        .unwrap();
+        assert!(!out.contains("rechazado"), "{out}");
+        assert!(dir.path().join("notas.txt").exists());
+    }
+
+    #[test]
+    fn shell_guard_can_be_disabled_explicitly() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Cargo.toml");
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "echo x > Cargo.toml",
+                "cwd": dir.path().to_string_lossy(),
+                "allow_manifest_overwrite": true
+            })),
+            false,
+        )
+        .unwrap();
+        assert!(!out.contains("rechazado"), "{out}");
+        assert_eq!(fs::read_to_string(&target).unwrap().trim(), "x");
+    }
+
+    #[test]
+    fn shell_words_handles_quotes() {
+        let words = shell_words(r#"echo "a b" 'c d' > "Cargo.toml""#);
+        assert_eq!(words, vec!["echo", "a b", "c d", ">", "Cargo.toml"]);
     }
 }

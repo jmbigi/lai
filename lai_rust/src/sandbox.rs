@@ -119,14 +119,107 @@ fn run_preflight() -> SandboxStatus {
 
 /// ¿El operador exige sandbox para todas las ejecuciones?
 pub fn required_from_env() -> bool {
+    env_flag("LAI_REQUIRE_SANDBOX")
+}
+
+/// ¿Se permite red dentro del sandbox? Por defecto no (aislamiento real).
+pub fn allow_net_from_env() -> bool {
+    env_flag("LAI_SANDBOX_ALLOW_NET")
+}
+
+/// Parsea un flag booleano de entorno ("1", "true", "yes", "on").
+pub fn env_flag(name: &str) -> bool {
     matches!(
-        std::env::var("LAI_REQUIRE_SANDBOX")
+        std::env::var(name)
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
             .as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+/// Resumen del estado del sandbox para `lai doctor` y `lai status`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxReport {
+    pub available: bool,
+    pub mechanism: String,
+    pub detail: String,
+    pub required: bool,
+    pub allow_net: bool,
+}
+
+impl SandboxReport {
+    pub fn collect() -> Self {
+        let status = preflight();
+        Self {
+            available: status.available,
+            mechanism: status.mechanism.clone(),
+            detail: status.detail.clone(),
+            required: required_from_env(),
+            allow_net: allow_net_from_env(),
+        }
+    }
+
+    /// ¿Es un problema bloqueante? Solo si el operador exige sandbox y no hay.
+    pub fn is_blocking(&self) -> bool {
+        self.required && !self.available
+    }
+
+    /// Línea corta para `lai status`.
+    pub fn short_line(&self) -> String {
+        format!(
+            "sandbox: {} ({}, {}, red {})",
+            if self.available {
+                "disponible"
+            } else {
+                "no disponible"
+            },
+            self.mechanism,
+            if self.required {
+                "obligatorio"
+            } else {
+                "opt-in"
+            },
+            if self.allow_net {
+                "permitida"
+            } else {
+                "bloqueada"
+            }
+        )
+    }
+
+    /// Líneas detalladas para `lai doctor`.
+    pub fn detail_lines(&self) -> Vec<String> {
+        vec![
+            format!(
+                "sandbox: {} ({})",
+                if self.available {
+                    "disponible"
+                } else {
+                    "no disponible"
+                },
+                self.mechanism
+            ),
+            format!("  detalle: {}", self.detail),
+            format!(
+                "  modo: {}",
+                if self.required {
+                    "obligatorio (LAI_REQUIRE_SANDBOX/--sandbox, fail-closed)"
+                } else {
+                    "opt-in (\"sandbox\": true)"
+                }
+            ),
+            format!(
+                "  red dentro del sandbox: {}",
+                if self.allow_net {
+                    "permitida (LAI_SANDBOX_ALLOW_NET=1)"
+                } else {
+                    "bloqueada (por defecto)"
+                }
+            ),
+        ]
+    }
 }
 
 /// Error accionable cuando se pidió sandbox y no está disponible.
@@ -162,9 +255,20 @@ pub fn build_command_with_status(
     required: bool,
     status: &SandboxStatus,
 ) -> anyhow::Result<Option<Command>> {
+    build_command_full(command, workspace, required, allow_net_from_env(), status)
+}
+
+/// Construcción completa con red explícita (para tests y para `sandbox_network`).
+pub fn build_command_full(
+    command: &str,
+    workspace: &Path,
+    required: bool,
+    allow_net: bool,
+    status: &SandboxStatus,
+) -> anyhow::Result<Option<Command>> {
     #[cfg(not(unix))]
     {
-        let _ = (command, workspace, required, status);
+        let _ = (command, workspace, required, allow_net, status);
         return Err(anyhow::anyhow!(
             "el sandbox bubblewrap solo está disponible en Linux/Unix; \
              usa \"sandbox\": false o no definas LAI_REQUIRE_SANDBOX"
@@ -230,20 +334,25 @@ pub fn build_command_with_status(
             "--new-session",
             "--cap-drop",
             "ALL",
-            "--chdir",
-            &ws,
-            "--",
-            "bash",
-            "-c",
-            command,
         ]);
+        // `--unshare-all` incluye red. Si el operador la permite explícitamente,
+        // se vuelve a compartir la red del host (sigue aislado en PID/mount/IPC).
+        if allow_net {
+            cmd.arg("--share-net");
+        }
+        cmd.args(["--chdir", &ws, "--", "bash", "-c", command]);
         Ok(Some(cmd))
     }
 }
 
 /// Comando envuelto en bwrap (para diagnóstico y tests).
 pub fn wrapped_argv(command: &str, workspace: &Path) -> Vec<String> {
-    match build_command(command, workspace, false) {
+    wrapped_argv_with_net(command, workspace, allow_net_from_env())
+}
+
+/// Igual que `wrapped_argv` pero con red explícita.
+pub fn wrapped_argv_with_net(command: &str, workspace: &Path, allow_net: bool) -> Vec<String> {
+    match build_command_full(command, workspace, false, allow_net, preflight()) {
         Ok(Some(cmd)) => {
             let mut out = vec![cmd.get_program().to_string_lossy().to_string()];
             out.extend(
@@ -338,5 +447,64 @@ mod tests {
         let result = build_command_with_status("true", Path::new("."), false, &unavailable)
             .expect("opcional no debe fallar");
         assert!(result.is_none(), "debe indicar que no hay sandbox");
+    }
+
+    #[test]
+    fn network_is_blocked_by_default() {
+        let argv = wrapped_argv_with_net("echo hi", Path::new("/tmp"), false);
+        if argv.is_empty() {
+            return;
+        }
+        assert!(argv.iter().any(|a| a == "--unshare-all"), "{argv:?}");
+        assert!(!argv.iter().any(|a| a == "--share-net"), "{argv:?}");
+    }
+
+    #[test]
+    fn network_can_be_allowed_explicitly() {
+        let argv = wrapped_argv_with_net("echo hi", Path::new("/tmp"), true);
+        if argv.is_empty() {
+            return;
+        }
+        assert!(argv.iter().any(|a| a == "--share-net"), "{argv:?}");
+        // `--unshare-all` sigue presente, pero `--share-net` lo anula solo para
+        // la red; el resto de namespaces permanece aislado.
+        assert!(argv.iter().any(|a| a == "--unshare-all"), "{argv:?}");
+    }
+
+    #[test]
+    fn report_blocks_only_when_required_and_unavailable() {
+        let base = SandboxReport {
+            available: false,
+            mechanism: "none".to_string(),
+            detail: "sin bwrap".to_string(),
+            required: false,
+            allow_net: false,
+        };
+        assert!(!base.is_blocking());
+        let required = SandboxReport {
+            required: true,
+            ..base.clone()
+        };
+        assert!(required.is_blocking());
+        let ok = SandboxReport {
+            available: true,
+            ..required
+        };
+        assert!(!ok.is_blocking());
+    }
+
+    #[test]
+    fn report_lines_mention_modes() {
+        let report = SandboxReport {
+            available: true,
+            mechanism: "bubblewrap".to_string(),
+            detail: "ok".to_string(),
+            required: true,
+            allow_net: true,
+        };
+        let text = report.detail_lines().join("\n");
+        assert!(text.contains("obligatorio"), "{text}");
+        assert!(text.contains("permitida"), "{text}");
+        assert!(report.short_line().contains("disponible"));
     }
 }

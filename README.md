@@ -84,7 +84,7 @@ cargo test --test swe_bench
 
 > **Vigencia (2026-11-27).** La tabla de abajo describe el CLI **Python
 > legado** (`lai.py`), en mantenimiento. La implementación principal es
-> **Rust** (`lai_rust/`), con 19 subcomandos:
+> **Rust** (`lai_rust/`), con 20 subcomandos:
 
 | Comando Rust | Descripción |
 |---|---|
@@ -218,6 +218,11 @@ Environment variables:
 - `LAI_LLAMA_MODEL` - Path to GGUF model for llama.cpp
 - `LAI_CONTEXT` - Context size (default: 32768)
 - `LAI_NGL` - GPU layers (default: 99)
+- `LAI_REQUIRE_SANDBOX` - `1` makes bubblewrap mandatory (fail-closed)
+- `LAI_SANDBOX_ALLOW_NET` - `1` allows network inside the sandbox
+- `LAI_COMMAND_ALLOWLIST` - `1` applies the command allowlist in `auto`
+- `LAI_ALLOW_COMMANDS` - Comma-separated extra allowed commands
+- `LAI_PROTECTED_PATHS` - Comma-separated extra protected paths
 
 ## Development
 

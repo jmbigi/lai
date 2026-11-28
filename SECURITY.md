@@ -33,10 +33,39 @@ lai is designed to run entirely locally:
 
 | Component | Risk | Mitigation |
 |-----------|------|------------|
-| `run_command` / `python_eval` | Arbitrary code execution | Only enable AutoMode on trusted repos; not a sandbox |
+| `run_command` / `bash` / `run_python` | Arbitrary code execution | Sandbox opt-in (`"sandbox": true`) or mandatory (`lai --sandbox` / `LAI_REQUIRE_SANDBOX=1`); fail-closed if bubblewrap is unavailable. Without the sandbox, only run `auto` on trusted repos |
+| `apply_patch` / `write_file` / `edit` | Overwrite arbitrary files | Workspace boundary in `PolicyEngine`, anti-destruction guard, manifest guard (`allow_manifest_overwrite` to opt out) |
 | Gateway (port 8081) | Unauthenticated access | Binds to `127.0.0.1` by default; no public exposure |
 | llama.cpp (port 8080) | Model extraction / DoS | Loopback only; no auth |
-| File write tools | Overwrite arbitrary files | Validates Python syntax; user confirms in CLI |
+| Prompt injection from repo files | Model may issue harmful tool calls | Sandbox + `LAI_COMMAND_ALLOWLIST=1` (opt-in) + trusted-repo policy |
+
+### Sandbox
+
+The Rust CLI can execute shell and Python inside bubblewrap:
+
+```bash
+lai --sandbox auto "task"            # mandatory, fail-closed
+LAI_REQUIRE_SANDBOX=1 lai auto "…"   # same via environment
+```
+
+- Workspace is read/write; the rest of the system is read-only; `/tmp` is
+  writable; capabilities are dropped; the network is **blocked** by default.
+- `LAI_SANDBOX_ALLOW_NET=1` or `"sandbox_network": true` re-shares the host
+  network while keeping PID/mount/IPC isolation (needed by tasks that download
+  dependencies).
+- The sandbox is Linux/Unix only. If `bwrap` is missing, `--sandbox` fails
+  instead of silently running unisolated.
+
+**Manifest guard:** `write_file`, `edit`, `apply_patch` and obvious shell
+redirections (`> Cargo.toml`, `rm`, `tee`, `dd of=…`) are refused unless
+`allow_manifest_overwrite: true`. The shell guard is best-effort: obfuscation
+(variables, `python -c`, nested shells) can bypass it; the sandbox is the
+control that does not depend on parsing the command.
+
+**Command allowlist:** `LAI_COMMAND_ALLOWLIST=1` routes `run_command`, `bash`
+and `run_python` through the `PolicyEngine` allowlist (extend it with
+`LAI_ALLOW_COMMANDS=make,sed,…`). It is off by default because coding agents
+need many commands; enable it for untrusted repositories.
 
 ### Hardening Recommendations
 

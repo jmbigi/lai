@@ -657,6 +657,10 @@ pub async fn cmd_status() {
             svc.port
         );
     }
+    println!(
+        "  {}",
+        crate::sandbox::SandboxReport::collect().short_line()
+    );
 }
 
 fn extract_code(response: &str) -> String {
@@ -1169,10 +1173,15 @@ complete corrected file content. Do not reply with analysis or questions — act
 
                     // Las escrituras pasan por el PolicyEngine (frontera del
                     // workspace, .git, credenciales y fuentes de lai). Los
-                    // comandos se dejan como estaban: la allowlist es más
-                    // restrictiva que lo que necesita un agente de código y
-                    // bloquearía `python`, `cd`, `sed`, etc.
-                    let result = if matches!(name_str, "write_file" | "apply_patch" | "edit") {
+                    // comandos solo pasan si LAI_COMMAND_ALLOWLIST=1: la
+                    // allowlist por defecto es más restrictiva que lo que
+                    // necesita un agente de código y bloquearía `cd`, `sed`,
+                    // `make`, etc.
+                    let check_commands = crate::policy::command_allowlist_from_env();
+                    let result = if matches!(name_str, "write_file" | "apply_patch" | "edit")
+                        || (check_commands
+                            && matches!(name_str, "run_command" | "bash" | "run_python"))
+                    {
                         tools.call_tool(name_str, arguments).await
                     } else if let Some(func) = tools.tools.get(name_str) {
                         func(arguments).await

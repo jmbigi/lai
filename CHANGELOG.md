@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Diagnóstico del sandbox (2026-11-28)**: `lai doctor` y `lai status` informan bwrap, preflight, modo (opt-in/obligatorio) y si la red está permitida. Con `LAI_REQUIRE_SANDBOX=1` y sin sandbox, `doctor` lo marca como error.
+- **Red opcional dentro del sandbox**: `LAI_SANDBOX_ALLOW_NET=1` o `"sandbox_network": true` añade `--share-net` manteniendo el aislamiento de PID/mount/IPC. Por defecto sigue bloqueada.
+- **Guarda de manifiestos en `run_command`/`bash`**: rechaza redirecciones (`> Cargo.toml`), heredocs, `rm`, `tee`, `truncate`, `dd of=` y `mv`/`cp` sobre manifiestos, salvo `allow_manifest_overwrite: true`. Mejor esfuerzo; la ofuscación puede saltarla y el sandbox es el control fuerte.
+- **Allowlist de comandos opt-in en `auto`**: `LAI_COMMAND_ALLOWLIST=1` enruta `run_command`/`bash`/`run_python` por el `PolicyEngine`; `LAI_ALLOW_COMMANDS=make,sed` amplía la lista y `LAI_PROTECTED_PATHS` las rutas protegidas. Por defecto desactivada.
+- **DOCS/PLAN_MEJORAS_2026-11-28.md** y **DOCS/CAMBIOS_2026-11-28_MEJORAS2.md** (Regla 10).
 - **Sandbox bubblewrap en el CLI Rust (2026-11-28)**: portado de la rama `feat/fase-0-1-harness` según `DOCS/ADR-0001-rama-fase-0-1-harness.md`. `run_command`, `bash` y `run_python` aceptan `"sandbox": true` (workspace rw, `/tmp`, sin red, `--cap-drop ALL`). `lai --sandbox` / `LAI_REQUIRE_SANDBOX=1` lo hacen obligatorio y **fail-closed**: si bwrap no está disponible, la llamada falla en vez de ejecutar sin aislamiento. Preflight con sonda real de namespaces (detecta restricciones AppArmor). 5 tests de sandbox.
 - **Capa de contratos para verificadores externos** (`lai_rust/src/contracts.rs`): `ExternalVerdict` (safe/unsafe/timeout/unknown) mapeado al `VerificationVerdict` acotado y `AdmissionGate` para exigir medición antes de adoptar una herramienta. Portado y adaptado; todavía no conectado a un verificador real. 8 tests.
 - **`apply_patch` pasa por la guarda de manifiestos**: rechaza parches que eliminen ≥75 % de un `Cargo.toml`, `package.json`, etc. o que lo borren, salvo `allow_manifest_overwrite: true`. Cierra el límite declarado en `CAMBIOS_2026-11-28.md`. 4 tests.

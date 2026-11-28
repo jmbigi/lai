@@ -44,6 +44,50 @@ impl Default for PolicyConfig {
         }
     }
 }
+
+impl PolicyConfig {
+    /// Configuración con extensiones desde el entorno.
+    ///
+    /// - `LAI_ALLOW_COMMANDS=cmd1,cmd2` añade comandos a la allowlist.
+    /// - `LAI_PROTECTED_PATHS=path1,path2` añade rutas protegidas.
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        if let Ok(list) = std::env::var("LAI_ALLOW_COMMANDS") {
+            config.extra_allowed_commands = list
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+        if let Ok(list) = std::env::var("LAI_PROTECTED_PATHS") {
+            config.extra_protected_paths = list
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+        config
+    }
+}
+
+/// ¿Se debe aplicar la allowlist de comandos en `auto`?
+///
+/// Es **opt-in** (`LAI_COMMAND_ALLOWLIST=1`): por defecto la allowlist no se
+/// aplica porque un agente de código necesita `cd`, `sed`, `make`, etc. Con la
+/// variable activa, `run_command`/`bash`/`run_python` pasan por el
+/// `PolicyEngine` y se rechazan los comandos fuera de la lista.
+pub fn command_allowlist_from_env() -> bool {
+    matches!(
+        std::env::var("LAI_COMMAND_ALLOWLIST")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
 #[derive(Debug, Clone)]
 pub enum Operation {
     FileRead { path: String },
@@ -105,7 +149,7 @@ impl PolicyEngine {
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 self.check_write(path)
             }
-            "run_command" => {
+            "run_command" | "bash" => {
                 let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 self.check_command(cmd)
             }
@@ -404,7 +448,14 @@ impl PolicyEngine {
         ];
         ALLOWED
             .iter()
-            .any(|a| cmd == *a || cmd.ends_with(&format!(".{}", a)))
+            .copied()
+            .chain(
+                self.config
+                    .extra_allowed_commands
+                    .iter()
+                    .map(String::as_str),
+            )
+            .any(|a| cmd == a || cmd.ends_with(&format!(".{a}")))
     }
     fn has_secrets(&self, text: &str) -> bool {
         text.contains("api_key") || text.contains("password") || text.contains("secret")
@@ -466,5 +517,96 @@ fn normalize_path(path: &Path) -> PathBuf {
         PathBuf::from(rest)
     } else {
         path.to_path_buf()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with(extra: Vec<&str>) -> PolicyConfig {
+        PolicyConfig {
+            extra_allowed_commands: extra.into_iter().map(str::to_string).collect(),
+            ..PolicyConfig::default()
+        }
+    }
+
+    #[test]
+    fn default_allowlist_accepts_cargo_and_rejects_shell_abuse() {
+        let mut engine = PolicyEngine::new(PolicyConfig::default());
+        assert!(
+            engine
+                .check(&Operation::CommandExec {
+                    command: "cargo test".into()
+                })
+                .allowed
+        );
+        assert!(
+            !engine
+                .check(&Operation::CommandExec {
+                    command: "curl http://example.com".into()
+                })
+                .allowed
+        );
+    }
+
+    #[test]
+    fn extra_allowed_commands_extend_the_allowlist() {
+        let mut engine = PolicyEngine::new(config_with(vec!["make", "sed"]));
+        assert!(
+            engine
+                .check(&Operation::CommandExec {
+                    command: "make check".into()
+                })
+                .allowed
+        );
+        assert!(
+            engine
+                .check(&Operation::CommandExec {
+                    command: "sed -n 1p file".into()
+                })
+                .allowed
+        );
+        assert!(
+            !engine
+                .check(&Operation::CommandExec {
+                    command: "curl http://example.com".into()
+                })
+                .allowed
+        );
+    }
+
+    #[test]
+    fn bash_tool_is_checked_like_run_command() {
+        let mut engine = PolicyEngine::new(PolicyConfig::default());
+        let allowed = engine.check_tool(
+            "bash",
+            &HashMap::from([("command".to_string(), Value::String("ls".into()))]),
+        );
+        assert!(allowed.allowed, "{}", allowed.reason);
+        let denied = engine.check_tool(
+            "bash",
+            &HashMap::from([(
+                "command".to_string(),
+                Value::String("curl http://example.com".into()),
+            )]),
+        );
+        assert!(!denied.allowed);
+    }
+
+    #[test]
+    fn command_allowlist_env_parsing_is_pure() {
+        for v in ["1", "true", "YES", "on"] {
+            assert!(matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ));
+        }
+        for v in ["0", "false", "", "off"] {
+            assert!(!matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ));
+        }
     }
 }

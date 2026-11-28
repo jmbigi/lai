@@ -1370,6 +1370,24 @@ pub async fn cmd_doctor() -> Result<()> {
         warnings.push("gateway binary no encontrado (se compilará al iniciar)".to_string());
     }
 
+    // Check sandbox (bubblewrap) and its configured mode
+    let sandbox = crate::sandbox::SandboxReport::collect();
+    for line in sandbox.detail_lines() {
+        println!("  {line}");
+    }
+    if sandbox.is_blocking() {
+        issues.push(format!(
+            "LAI_REQUIRE_SANDBOX está activo pero el sandbox no está disponible: {}",
+            sandbox.detail
+        ));
+    } else if !sandbox.available {
+        warnings.push(
+            "sandbox no disponible: `lai --sandbox` y \"sandbox\": true fallarán. \
+             Instala bubblewrap para aislar la ejecución."
+                .to_string(),
+        );
+    }
+
     // Check AGENTS.md
     let cwd = std::env::current_dir()?;
     if cwd.join("AGENTS.md").exists() {

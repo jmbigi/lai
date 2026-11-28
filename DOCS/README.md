@@ -21,6 +21,8 @@ This directory contains technical documentation for lai.
 | [CAMBIOS_2026-11-28_CI_HIGIENE.md](CAMBIOS_2026-11-28_CI_HIGIENE.md) | Before/after record: repository hygiene, Rust in local CI, docs truth pass (Regla 10) |
 | [ADR-0001-rama-fase-0-1-harness.md](ADR-0001-rama-fase-0-1-harness.md) | Decision: rescue sandbox + contracts from the old branch, archive the rest |
 | [CAMBIOS_2026-11-28_SANDBOX.md](CAMBIOS_2026-11-28_SANDBOX.md) | Before/after record: bubblewrap sandbox, contracts layer, `apply_patch` manifest guard (Regla 10) |
+| [PLAN_MEJORAS_2026-11-28.md](PLAN_MEJORAS_2026-11-28.md) | Improvement plan after the sandbox work |
+| [CAMBIOS_2026-11-28_MEJORAS2.md](CAMBIOS_2026-11-28_MEJORAS2.md) | Before/after record: sandbox diagnostics, network opt-in, shell manifest guard, command allowlist (Regla 10) |
 
 ## External References
 

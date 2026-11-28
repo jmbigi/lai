@@ -155,6 +155,10 @@ cargo install --path .
   `--allow-remote`, explicit user decision)
 - Service binaries are resolved from the environment, never hardcoded:
   `LAI_LLAMA_SERVER`, `LAI_GATEWAY_BIN`, `LAI_GATEWAY_DIR`, `LAI_OLLAMA_BIN`
+- Sandbox environment flags: `LAI_REQUIRE_SANDBOX=1` (mandatory, fail-closed),
+  `LAI_SANDBOX_ALLOW_NET=1` (network inside the sandbox),
+  `LAI_COMMAND_ALLOWLIST=1` + `LAI_ALLOW_COMMANDS=a,b` (opt-in command allowlist
+  in `auto`), `LAI_PROTECTED_PATHS=…` (extra protected paths)
 
 ## Documentation
 
