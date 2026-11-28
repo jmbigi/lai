@@ -75,6 +75,8 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | G8 | `start-llama.sh` con `--jinja`/`--cache-reuse`/`-np` | ✅ | `bash -n` |
 | G9 | `/tmp` privado en el sandbox | ✅ | 2 tests |
 | G10 | `git_*` fallan en voz alta y pasan por política | ✅ | 3 tests |
+| G11 | Resumen de consumo (tokens y KV cache) en `auto` | ✅ | E2E |
+| G12 | Orden correcto de `--tmpfs /tmp` y bind del workspace | ✅ | Test de regresión |
 
 ## Fuera de alcance (declarado)
 

@@ -189,6 +189,10 @@ pub struct Choice {
 pub struct ChatOutcome {
     pub message: Message,
     pub finish_reason: Option<String>,
+    /// `usage` tal cual lo devuelve el servidor (prompt/completion/total).
+    pub usage: serde_json::Value,
+    /// `timings` de llama.cpp, si el servidor los envía.
+    pub timings: Option<serde_json::Value>,
 }
 
 impl ChatOutcome {
@@ -553,6 +557,8 @@ impl LlmClient {
         Ok(ChatOutcome {
             message: choice.message,
             finish_reason: choice.finish_reason,
+            usage: data.usage,
+            timings: data.timings,
         })
     }
 
@@ -750,11 +756,15 @@ mod tests {
         let truncated = ChatOutcome {
             message: message.clone(),
             finish_reason: Some("length".into()),
+            usage: serde_json::Value::Null,
+            timings: None,
         };
         assert!(truncated.truncated());
         let stopped = ChatOutcome {
             message,
             finish_reason: Some("stop".into()),
+            usage: serde_json::Value::Null,
+            timings: None,
         };
         assert!(!stopped.truncated());
         let unknown = ChatOutcome {
@@ -766,6 +776,8 @@ mod tests {
                 name: None,
             },
             finish_reason: None,
+            usage: serde_json::Value::Null,
+            timings: None,
         };
         assert!(!unknown.truncated());
     }

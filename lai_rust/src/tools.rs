@@ -2825,4 +2825,24 @@ async def go():\n\
             "/tmp no debería compartirse: {out}"
         );
     }
+
+    #[test]
+    fn sandbox_works_when_the_workspace_is_under_tmp() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        // Regresión: con --tmpfs /tmp aplicado después del bind, un workspace
+        // dentro de /tmp quedaba tapado y bwrap fallaba con "Can't chdir".
+        let dir = tempfile::tempdir().unwrap();
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "pwd && echo WS_OK",
+                "cwd": dir.path().to_string_lossy(),
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        assert!(out.contains("WS_OK"), "{out}");
+    }
 }

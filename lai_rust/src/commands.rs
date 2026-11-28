@@ -1009,6 +1009,10 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     // ningún cambio, se le dice explícitamente cuántos turnos quedan y se le
     // pide que actúe. Una sola vez, para no convertir el bucle en ruido.
     let mut edits_made: u32 = 0;
+    // Consumo acumulado del modelo (Regla 11: medir, no suponer).
+    let mut prompt_tokens: u64 = 0;
+    let mut completion_tokens: u64 = 0;
+    let mut cache_hits: u64 = 0;
     let mut escalation_sent = false;
     let escalation_at = (max_iterations / 2).max(1);
 
@@ -1065,6 +1069,24 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
         match result {
             Ok(outcome) => {
                 let truncated = outcome.truncated();
+                if let Some(prompt) = outcome.usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                    prompt_tokens += prompt;
+                }
+                if let Some(done) = outcome
+                    .usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                {
+                    completion_tokens += done;
+                }
+                if let Some(cached) = outcome
+                    .timings
+                    .as_ref()
+                    .and_then(|t| t.get("cache_n"))
+                    .and_then(|v| v.as_u64())
+                {
+                    cache_hits += cached;
+                }
                 let msg = outcome.message;
                 // Una respuesta truncada por `max_tokens` puede contener una
                 // tool call a medias; ejecutarla aplicaría un parche corrupto.
@@ -1281,6 +1303,21 @@ complete corrected file content. Do not reply with analysis or questions — act
                 break;
             }
         }
+    }
+
+    // Resumen de consumo: útil para comparar corridas y para comprobar si
+    // `cache_prompt` está reutilizando el prefijo (Regla 11).
+    if prompt_tokens > 0 || completion_tokens > 0 {
+        println!(
+            "📊 Consumo: prompt {} tokens, completion {} tokens{}",
+            prompt_tokens,
+            completion_tokens,
+            if cache_hits > 0 {
+                format!(", {cache_hits} reutilizados del KV cache")
+            } else {
+                String::new()
+            }
+        );
     }
 
     // `--output` escribía solo un mensaje por pantalla. Ahora deja un registro

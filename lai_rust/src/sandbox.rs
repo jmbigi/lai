@@ -332,12 +332,15 @@ pub fn build_command_with_binds(
                 cmd.args(["--ro-bind", dir, dir]);
             }
         }
+        // /tmp privado: no se comparte el del host (otros procesos podrían leer
+        // los temporales del agente). Va ANTES del bind del workspace: bwrap
+        // aplica los montajes en orden, y un workspace dentro de /tmp quedaría
+        // tapado por el tmpfs si se montara primero.
+        cmd.args(["--tmpfs", "/tmp"]);
         // El workspace es lo único escribible.
         cmd.args(["--bind", &ws, &ws]);
-        // /tmp privado: no se comparte el del host (otros procesos podrían leer
-        // los temporales del agente). Los scripts que haya que ejecutar se
-        // montan como archivos de solo lectura.
-        cmd.args(["--tmpfs", "/tmp"]);
+        // Los scripts a ejecutar se montan como archivos de solo lectura
+        // (después del tmpfs para que no los tape).
         for (source, target) in extra_ro_binds {
             cmd.args(["--ro-bind", &source.to_string_lossy(), target.as_str()]);
         }

@@ -109,8 +109,11 @@ monta como archivo de solo lectura en `/tmp/lai_script.py` con
 `build_command_with_binds`. `run_python` se extrajo a `run_python_tool()` para
 poder probarlo.
 
-**Verificación:** 2 tests — Python funciona en sandbox y ve su script; un
-marcador creado en el `/tmp` del host no es visible dentro del sandbox.
+**Verificación:** 3 tests — Python funciona en sandbox y ve su script; un
+marcador creado en el `/tmp` del host no es visible dentro del sandbox; y un
+workspace situado dentro de `/tmp` sigue funcionando (el `--tmpfs /tmp` va
+**antes** del bind del workspace: bwrap aplica los montajes en orden, y al revés
+el tmpfs tapaba el proyecto y bwrap fallaba con `Can't chdir`).
 
 ## 9. Herramientas `git_*`: fallan en voz alta y pasan por política
 
@@ -127,11 +130,22 @@ frontera del workspace y `check_git`.
 **Verificación:** 3 tests (`git status` fuera de un repo falla, commit sin
 cambios falla, `git status` en un repo devuelve salida).
 
-## 10. Verificación completa
+## 10. Resumen de consumo en `auto`
+
+**ANTES:** el bucle no informaba de tokens consumidos; era imposible comparar
+corridas ni comprobar si `cache_prompt` servía.
+
+**DESPUÉS:** `ChatOutcome` incluye `usage` y `timings`; `auto` acumula
+`prompt_tokens`, `completion_tokens` y `cache_n` y, al terminar, imprime
+`📊 Consumo: prompt N tokens, completion M tokens[, K reutilizados del KV cache]`.
+
+**Verificación:** E2E con servidor falso (imprime el resumen).
+
+## 11. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` | ✅ **225 tests** (183 lib + 42 integración), 0 fallos |
+| `cargo test` | ✅ **226 tests** (184 lib + 42 integración), 0 fallos |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --all-targets -- -D warnings` | ✅ |
 | `pytest tests swebench` | ✅ 241 passed, 9 skipped |
@@ -140,7 +154,7 @@ cambios falla, `git status` en un repo devuelve salida).
 | `make gateway-check` | ✅ |
 | `scripts/ci_local.sh --quick --ci` | ✅ 6/6 |
 
-## 11. Lo que NO se ha probado (Regla 6)
+## 12. Lo que NO se ha probado (Regla 6)
 
 - **`cache_prompt` con un modelo real.** No hay servidor llama.cpp en marcha en
   esta sesión; no se midió la mejora de TTFT ni de tokens reprocesados. La
