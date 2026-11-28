@@ -304,10 +304,17 @@ pub fn build_command_full(
         if Path::new("/tmp").exists() {
             cmd.args(["--bind", "/tmp", "/tmp"]);
         }
+        // /run contiene sockets de demonios del host (Docker, systemd). Un
+        // montaje de solo lectura no impide conectarse, así que se oculta.
+        if Path::new("/run").exists() {
+            cmd.args(["--tmpfs", "/run"]);
+        }
         // Caché de Cargo/Rustup: lectura para toolchains, escritura para el
         // registro de dependencias. Sin red, no se puede descargar nada nuevo.
+        let mut home_path = None;
         if let Some(home) = std::env::var_os("HOME") {
             let home = PathBuf::from(home);
+            home_path = Some(home.clone());
             let cargo = home.join(".cargo");
             if cargo.is_dir() {
                 let p = cargo.to_string_lossy().to_string();
@@ -335,6 +342,13 @@ pub fn build_command_full(
             "--cap-drop",
             "ALL",
         ]);
+        // Entorno limpio: sin esto se heredan `AWS_SECRET_ACCESS_KEY`,
+        // `GITHUB_TOKEN`, `SSH_AUTH_SOCK`, etc., y el comando puede leerlos o
+        // exfiltrarlos. Solo se pasan las variables necesarias.
+        cmd.arg("--clearenv");
+        for (key, value) in sandbox_env(home_path.as_deref()) {
+            cmd.args(["--setenv", &key, &value]);
+        }
         // `--unshare-all` incluye red. Si el operador la permite explícitamente,
         // se vuelve a compartir la red del host (sigue aislado en PID/mount/IPC).
         if allow_net {
@@ -343,6 +357,40 @@ pub fn build_command_full(
         cmd.args(["--chdir", &ws, "--", "bash", "-c", command]);
         Ok(Some(cmd))
     }
+}
+
+/// Entorno mínimo que se pasa al proceso sandboxeado.
+///
+/// No se hereda nada del host: solo `PATH`, `HOME`, `TERM`, `LANG`/`LC_ALL`.
+/// Así un `GITHUB_TOKEN` o `AWS_SECRET_ACCESS_KEY` presente en la sesión no
+/// llega al comando que ejecuta el modelo.
+pub fn sandbox_env(home: Option<&Path>) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into());
+    env.push(("PATH".to_string(), path));
+    if let Some(home) = home {
+        env.push(("HOME".to_string(), home.to_string_lossy().to_string()));
+    }
+    if let Ok(term) = std::env::var("TERM") {
+        env.push(("TERM".to_string(), term));
+    }
+    for key in ["LANG", "LC_ALL", "LC_CTYPE"] {
+        if let Ok(value) = std::env::var(key) {
+            env.push((key.to_string(), value));
+        }
+    }
+    // Cargo/Rustup necesitan saber dónde están cuando HOME no es el real.
+    if let Some(home) = home {
+        env.push((
+            "CARGO_HOME".to_string(),
+            home.join(".cargo").to_string_lossy().to_string(),
+        ));
+        env.push((
+            "RUSTUP_HOME".to_string(),
+            home.join(".rustup").to_string_lossy().to_string(),
+        ));
+    }
+    env
 }
 
 /// Comando envuelto en bwrap (para diagnóstico y tests).
@@ -506,5 +554,30 @@ mod tests {
         assert!(text.contains("obligatorio"), "{text}");
         assert!(text.contains("permitida"), "{text}");
         assert!(report.short_line().contains("disponible"));
+    }
+
+    #[test]
+    fn sandbox_env_does_not_leak_secrets() {
+        let env = sandbox_env(Some(Path::new("/home/user")));
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"PATH"));
+        assert!(keys.contains(&"HOME"));
+        for secret in [
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "SSH_AUTH_SOCK",
+            "OPENAI_API_KEY",
+            "DATABASE_URL",
+        ] {
+            assert!(!keys.contains(&secret), "no debe pasar {secret}");
+        }
+    }
+
+    #[test]
+    fn sandbox_env_sets_cargo_home() {
+        let env = sandbox_env(Some(Path::new("/home/user")));
+        let map: std::collections::HashMap<_, _> = env.into_iter().collect();
+        assert_eq!(map.get("CARGO_HOME").unwrap(), "/home/user/.cargo");
+        assert_eq!(map.get("RUSTUP_HOME").unwrap(), "/home/user/.rustup");
     }
 }

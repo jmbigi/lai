@@ -49,12 +49,23 @@ LAI_REQUIRE_SANDBOX=1 lai auto "…"   # same via environment
 ```
 
 - Workspace is read/write; the rest of the system is read-only; `/tmp` is
-  writable; capabilities are dropped; the network is **blocked** by default.
+  writable; `/run` is masked (no Docker/systemd sockets); capabilities are
+  dropped; the network is **blocked** by default.
+- The environment is cleared (`--clearenv`): only `PATH`, `HOME`, `TERM`,
+  `LANG`, `CARGO_HOME` and `RUSTUP_HOME` reach the command. `GITHUB_TOKEN`,
+  `AWS_SECRET_ACCESS_KEY`, `SSH_AUTH_SOCK`, etc. are **not** inherited.
+- `$HOME` itself is not mounted; only `~/.cargo`, `~/.rustup` and `~/.local`
+  are bound.
 - `LAI_SANDBOX_ALLOW_NET=1` or `"sandbox_network": true` re-shares the host
   network while keeping PID/mount/IPC isolation (needed by tasks that download
   dependencies).
 - The sandbox is Linux/Unix only. If `bwrap` is missing, `--sandbox` fails
   instead of silently running unisolated.
+
+**Boundary honesty:** namespaces + dropped capabilities + clean environment.
+There is no seccomp/Landlock filter and no VM; a kernel-level escape is out of
+scope. `/tmp` is shared with the host because `run_python` writes its script
+there. For untrusted code, use a container or VM in addition to this sandbox.
 
 **Manifest guard:** `write_file`, `edit`, `apply_patch` and obvious shell
 redirections (`> Cargo.toml`, `rm`, `tee`, `dd of=…`) are refused unless

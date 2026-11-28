@@ -144,6 +144,80 @@ fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
+/// Busca una ventana de líneas en `content` que coincida con `old` ignorando
+/// los espacios iniciales y finales de cada línea (técnica de Warp).
+///
+/// Devuelve el texto **real** del archivo (con su indentación) solo si la
+/// coincidencia es única. Si hay cero o varias, devuelve `None`: aplicar una
+/// coincidencia ambigua sería peor que fallar.
+fn indentation_agnostic_span(content: &str, old: &str) -> Option<String> {
+    let old_lines: Vec<&str> = old.lines().collect();
+    if old_lines.is_empty() {
+        return None;
+    }
+    let content_lines: Vec<&str> = content.split_inclusive('\n').collect();
+    if content_lines.len() < old_lines.len() {
+        return None;
+    }
+    let target: Vec<&str> = old_lines.iter().map(|line| line.trim()).collect();
+
+    let mut matches: Vec<String> = Vec::new();
+    for start in 0..=(content_lines.len() - old_lines.len()) {
+        let window = &content_lines[start..start + old_lines.len()];
+        let ok = window
+            .iter()
+            .zip(target.iter())
+            .all(|(line, expected)| line.trim() == *expected);
+        if !ok {
+            continue;
+        }
+        let mut span = String::new();
+        for (index, line) in window.iter().enumerate() {
+            let is_last = index + 1 == window.len();
+            if is_last && !old.ends_with('\n') {
+                // No arrastrar el salto de línea de la última línea: `old` no lo
+                // tenía y sustituirlo cambiaría el resto del archivo.
+                span.push_str(line.trim_end_matches('\n').trim_end_matches('\r'));
+            } else {
+                span.push_str(line);
+            }
+        }
+        matches.push(span);
+        if matches.len() > 1 {
+            return None; // ambiguo
+        }
+    }
+    matches.pop()
+}
+
+/// Reaplica la indentación de `template` a las líneas de `new` cuando ambas
+/// tienen el mismo número de líneas. Conservador: no toca líneas vacías ni
+/// líneas que ya empiezan con la indentación esperada.
+fn reindent_like(template: &str, new: &str) -> String {
+    let template_lines: Vec<&str> = template.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    if template_lines.len() != new_lines.len() {
+        return new.to_string();
+    }
+    let mut out = Vec::with_capacity(new_lines.len());
+    for (old_line, new_line) in template_lines.iter().zip(new_lines.iter()) {
+        let indent: String = old_line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        if new_line.trim().is_empty() || indent.is_empty() || new_line.starts_with(&indent) {
+            out.push((*new_line).to_string());
+        } else {
+            out.push(format!("{indent}{new_line}"));
+        }
+    }
+    let mut result = out.join("\n");
+    if new.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// Cita un argumento para `bash -c` (usado al envolver `run_python` en bwrap).
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -691,14 +765,29 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     }
 
     let content = fs::read_to_string(path).map_err(|e| anyhow::anyhow!("edit {path}: {e}"))?;
-    let occurrences = content.matches(old).count();
+    let replace_all = arg_bool(args, "replace_all", false);
+    // Fallback tolerante a indentación (técnica de Warp): si el fragmento no
+    // aparece literalmente, se busca una ventana de líneas que coincida
+    // ignorando espacios iniciales y finales. Solo se acepta si es única; así
+    // un modelo pequeño que copia mal la indentación no queda bloqueado.
+    let mut effective_old: String = old.to_string();
+    let occurrences = if content.matches(old).count() == 0 {
+        match indentation_agnostic_span(&content, old) {
+            Some(span) => {
+                effective_old = span;
+                content.matches(effective_old.as_str()).count()
+            }
+            None => 0,
+        }
+    } else {
+        content.matches(old).count()
+    };
     if occurrences == 0 {
         return Err(anyhow::anyhow!(
-            "edit: el texto no aparece en '{path}'. Cópialo exactamente de read_file \
-             (incluida la indentación) o usa apply_patch."
+            "edit: el texto no aparece en '{path}', ni siquiera ignorando la \
+             indentación. Cópialo exactamente de read_file o usa apply_patch."
         ));
     }
-    let replace_all = arg_bool(args, "replace_all", false);
     if occurrences > 1 && !replace_all {
         return Err(anyhow::anyhow!(
             "edit: el texto aparece {occurrences} veces en '{path}'. Añade más contexto \
@@ -709,7 +798,7 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     // Un `edit` que abarca el manifiesto completo es un reemplazo encubierto:
     // se aplica la misma guarda que `write_file`.
     if is_manifest_file(Path::new(path))
-        && old.trim() == content.trim()
+        && effective_old.trim() == content.trim()
         && !arg_bool(args, "allow_manifest_overwrite", false)
     {
         return Err(anyhow::anyhow!(
@@ -720,10 +809,18 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
         ));
     }
 
-    let updated = if replace_all {
-        content.replace(old, new)
+    let replacement = if effective_old != old {
+        // El fallback encontró el fragmento con otra indentación: aplicar la
+        // indentación real del archivo a las líneas nuevas para no romper el
+        // código (Python depende de ella).
+        reindent_like(&effective_old, new)
     } else {
-        content.replacen(old, new, 1)
+        new.to_string()
+    };
+    let updated = if replace_all {
+        content.replace(effective_old.as_str(), &replacement)
+    } else {
+        content.replacen(effective_old.as_str(), &replacement, 1)
     };
 
     // Misma guarda anti-destrucción que `write_file`: con `old_string` igual a
@@ -2182,5 +2279,118 @@ async def go():\n\
     fn shell_words_handles_quotes() {
         let words = shell_words(r#"echo "a b" 'c d' > "Cargo.toml""#);
         assert_eq!(words, vec!["echo", "a b", "c d", ">", "Cargo.toml"]);
+    }
+
+    #[test]
+    fn edit_falls_back_to_indentation_agnostic_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("code.py");
+        fs::write(&path, "def f():\n    return 1\n\nprint(f())\n").unwrap();
+
+        // old_string con indentación incorrecta (sin los 4 espacios).
+        let out = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "def f():\nreturn 1",
+            "new_string": "def f():\n    return 2"
+        })))
+        .unwrap();
+
+        assert!(out.contains("Edited"), "{out}");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "def f():\n    return 2\n\nprint(f())\n"
+        );
+    }
+
+    #[test]
+    fn edit_indentation_fallback_refuses_ambiguous_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("code.py");
+        fs::write(&path, "if a:\n    x = 1\nif b:\n    x = 1\n").unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "x = 1",
+            "new_string": "x = 2"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("veces"), "{err}");
+        // Nada se escribió.
+        assert!(fs::read_to_string(&path).unwrap().contains("x = 1"));
+    }
+
+    #[test]
+    fn edit_indentation_fallback_keeps_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("code.py");
+        fs::write(&path, "  a = 1\n  b = 2\nc = 3\n").unwrap();
+
+        edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "a = 1\nb = 2",
+            "new_string": "a = 9\nb = 8"
+        })))
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "  a = 9\n  b = 8\nc = 3\n"
+        );
+    }
+
+    #[test]
+    fn indentation_agnostic_span_returns_none_without_match() {
+        assert!(indentation_agnostic_span("alpha\nbeta\n", "gamma").is_none());
+    }
+
+    #[test]
+    fn sandbox_hides_home_directory_files() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let decoy = std::path::PathBuf::from(home)
+            .join(format!(".lai-sandbox-probe-{}", std::process::id()));
+        if fs::write(&decoy, "secret").is_err() {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": format!(
+                    "cat '{}' >/dev/null 2>&1 && echo LEAK || echo HIDDEN",
+                    decoy.display()
+                ),
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        let _ = fs::remove_file(&decoy);
+        assert!(
+            out.contains("HIDDEN"),
+            "HOME no debería estar montado: {out}"
+        );
+    }
+
+    #[test]
+    fn sandbox_scrubs_secret_environment_variables() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "echo \"tok=[$GITHUB_TOKEN] ssh=[$SSH_AUTH_SOCK]\"",
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        assert!(!out.contains("tok=[") || out.contains("tok=[]"), "{out}");
+        assert!(out.contains("tok=[]"), "{out}");
+        assert!(out.contains("ssh=[]"), "{out}");
     }
 }

@@ -850,7 +850,8 @@ How to work:
 - Edit: `python - <<'EOF' ... EOF` or `sed -i`, or `cat > file <<'EOF' ... EOF`.
   Never paste example code from the issue: change the real file.
 - Verify: `python -m py_compile file.py`, `pytest -q path::test`, `cargo check`.
-- Finish: reply with a short summary and no tool call.
+- Finish: run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only command of
+  a turn. That ends the run; do not combine it with other commands.
 
 Rules:
 - One command per turn; the result comes back to you.
@@ -979,6 +980,9 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     // local models often "describe" the code instead of writing it.
     let mut nudges: u32 = 0;
     const MAX_NUDGES: u32 = 2;
+    /// Marca que el agente usa para declarar la tarea terminada en el perfil
+    /// bash (mini-SWE-agent). Se detecta en la salida de la herramienta.
+    const SUBMIT_SENTINEL: &str = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT";
 
     // Detección de bucles: un modelo pequeño puede repetir la misma llamada
     // idéntica indefinidamente. Medido en el piloto del 2026-11-26: cuatro
@@ -1209,11 +1213,22 @@ complete corrected file content. Do not reply with analysis or questions — act
 
                     messages.push(crate::llm::Message {
                         role: "tool".into(),
-                        content: tool_result,
+                        content: tool_result.clone(),
                         tool_call_id: call_id,
                         name: Some(name_str.to_string()),
                         tool_calls: None,
                     });
+
+                    // Sentinel de entrega (técnica de mini-SWE-agent): en el
+                    // perfil bash el modelo no puede "terminar" sin llamar a
+                    // una herramienta. Si emite este comando, la tarea se da
+                    // por entregada y el bucle se detiene.
+                    if matches!(name_str, "bash" | "run_command")
+                        && tool_result.contains(SUBMIT_SENTINEL)
+                    {
+                        println!("✅ Tarea entregada por el agente (submit).");
+                        break 'agent;
+                    }
                 }
             }
             Err(e) => {
