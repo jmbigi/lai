@@ -55,6 +55,21 @@ repos:
         files: \.py$
         args: [lai.py, --min-confidence, 90]
 
+      # Rust es la implementación principal: también pasa por pre-commit.
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: bash -c 'cd lai_rust && cargo fmt --check'
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cd lai_rust && cargo clippy --all-targets -- -D warnings'
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
 ci:
   autofix_prs: false
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

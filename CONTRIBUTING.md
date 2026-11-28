@@ -85,3 +85,13 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 ## License
 
 By contributing, you agree that your contributions will be licensed under GPL-3.0-or-later.
+## Local checks
+
+```bash
+pre-commit install      # Python + Rust hooks
+make check              # Python + Rust
+make sandbox-check      # bubblewrap isolation (if installed)
+make gateway-check
+```
+
+There is no cloud CI by design (Regla 0): everything runs locally.

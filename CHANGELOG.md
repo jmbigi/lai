@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **pre-commit cubre Rust**: hooks `cargo fmt --check` y `cargo clippy --all-targets -- -D warnings` además de los de Python.
+- **`ci_local.sh` ejecuta `scripts/check_docs.py`** (paso opcional) para detectar inconsistencias documentales.
 - **`cache_prompt` en cada petición (2026-11-28)**: el bucle de agente reutiliza el KV cache del prefijo estable (sistema + esquemas de herramientas) en lugar de reprocesarlo cada turno. Desactivable con `LAI_CACHE_PROMPT=0`. Test de serialización.
 - **Guarda de truncación**: `auto` no ejecuta tool calls de una respuesta con `finish_reason == "length"` (pueden estar incompletas); avisa y pide una acción más corta. `ChatOutcome` expone `finish_reason`.
 - **Guarda de credenciales en `read_file`/`grep`**: se rechazan `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `.netrc`, `.npmrc`, `.pypirc`, `id_rsa`, `*.pem`/`*.key` (salvo `.pub`), con override `allow_sensitive_read`. 4 tests.

@@ -139,6 +139,13 @@ if $QUICK; then
     exit $([ $FAIL_COUNT -eq 0 ] && echo 0 || echo 1)
 fi
 
+# 3d. Consistencia de la documentación (Regla 10/11) - OPCIONAL
+if [ -f "$ROOT_DIR/scripts/check_docs.py" ]; then
+    run_optional "Docs: check_docs.py" python3 "$ROOT_DIR/scripts/check_docs.py"
+else
+    skip "Docs: check_docs.py no encontrado"
+fi
+
 # 4. Format (ruff format) - OPCIONAL
 run_optional "Format: ruff format --check" ruff format --check lai.py tests/
 

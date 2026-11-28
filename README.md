@@ -93,7 +93,7 @@ cargo test --test swe_bench
 | `auto` | Agente autónomo (`--profile full` o `--profile bash`) |
 | `status` | Estado de llama.cpp / gateway / ollama |
 | `repo-map` | Mapa de símbolos del repositorio |
-| `verify` | Verificación por niveles (sintaxis, lint, tipos, tests…) |
+| `verify` | Verificación por niveles (sintaxis, lint, tipos, tests…) o mapeo de un verificador externo (`--external safe\|unsafe\|timeout\|unknown`) |
 | `diagnose` | Diagnóstico de un error o log |
 | `repair` | Diagnóstico + guía de reparación |
 | `baseline` | Baselines y detección de regresiones |
