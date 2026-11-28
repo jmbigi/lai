@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CI local cubre Rust (2026-11-28)**: `scripts/ci_local.sh` ejecuta `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` y `cargo test` como pasos obligatorios; en modo `--ci` la ausencia de `cargo` falla. `make check` incluye `rust-check`; nuevos targets `rust-check` y `gateway-check` (`go build` opcional).
+- **`AGENTS.md` deja de afirmar un sandbox inexistente**: el CLI Rust ejecuta `run_command`/`run_python` sin aislamiento; la nota ahora lo dice y remite a `SECURITY.md`.
+- **`README.md` etiqueta las secciones del CLI Python legado**: «Tool Registry (50+ tools)» y «AutoMode Intelligence» ya no se atribuyen al Rust, que tiene 15 herramientas y un bucle de herramientas sin Plan/ReAct/Reflection.
+- **`DOCS/README.md` al día**: índice completo de registros 27–28, arquitectura con Rust como implementación principal y nota sobre `-ngl` según VRAM.
+
+### Fixed
+- **Repositorio sin artefactos de build**: se retiraron del índice 345 archivos de `lai_rust/target/` (82 MB) y 6 JSON de `sessions/`, que ya estaban en `.gitignore` pero se habían añadido antes. Los archivos siguen en disco. El índice pasa de ~85 MB a ~3 MB.
+
 ### Added
 - **Guarda de manifiestos en `write_file`/`edit` (2026-11-28)**: reemplazar entero un `Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `Gemfile`, etc. se rechaza salvo `allow_manifest_overwrite: true`; el error recomienda `edit` para un cambio puntual. Cierra el hallazgo del benchmark del 2026-11-26 en el que el agente sustituyó `Cargo.toml` por contenido inventado. 5 tests.
 - **Los enunciados del benchmark declaran las restricciones**: `run_benchmark.sh`, `run_competition.sh`, `run_stress.sh` y `swebench/run_eval.py` piden no eliminar ni reemplazar APIs públicas existentes ni sustituir `Cargo.toml`. Cierra el segundo hallazgo del benchmark (una firma pública cambiada rompió un test preexistente).

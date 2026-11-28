@@ -142,7 +142,12 @@ LAI_CONTEXT_WINDOW=8192 lai auto "arregla el bug" --profile bash --max-iteration
 | `project` | Generate multi-file project from spec |
 | `repair` | Analyze and auto-repair project |
 
-## AutoMode Intelligence
+## AutoMode Intelligence — CLI Python legado
+
+> **Vigencia (2026-11-28).** Esta sección describe el CLI **Python legado**
+> (`lai.py`), en mantenimiento. El `auto` de Rust es un bucle de herramientas
+> con presupuesto de contexto, escalada por turnos y perfiles `full`/`bash`;
+> **no** implementa Plan-and-Execute, ReAct ni Reflection.
 
 The `auto` command implements advanced agent patterns:
 
@@ -152,7 +157,13 @@ The `auto` command implements advanced agent patterns:
 - **Best-version fallback**: Returns highest-scored version if not converged
 - **Cost tracking**: Token usage, estimated cloud-equivalent savings
 
-## Tool Registry (50+ tools)
+## Tool Registry — CLI Python legado (50+ tools)
+
+> **Vigencia (2026-11-28).** Esta lista es del **CLI Python legado**
+> (`lai_tools.py`). El `ToolRegistry` de Rust tiene **15 herramientas**:
+> `read_file`, `write_file`, `edit`, `list_dir`, `run_command`, `bash`, `grep`,
+> `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`,
+> `git_commit`, `git_status`, `git_diff`. No asumir paridad entre ambas.
 
 Core: `read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `python_eval`, `apply_patch`, `web_search`, `run_python`, `run_tests`
 

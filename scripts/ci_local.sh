@@ -101,6 +101,35 @@ fi
 run_step "Tests: pytest tests/" \
     python3 -m pytest tests/ -q || { if $CI_MODE; then exit 1; fi; }
 
+# 3b. Rust (implementación principal) - OBLIGATORIO si cargo está disponible.
+# El CLI en Rust es el código activo; sin estos pasos el CI solo mira el legado.
+if has_cmd cargo; then
+    run_step "Rust: cargo fmt --check" \
+        bash -c 'cd "$1" && cargo fmt --check' _ "$ROOT_DIR/lai_rust" \
+        || { if $CI_MODE; then exit 1; fi; }
+    run_step "Rust: cargo clippy --all-targets -- -D warnings" \
+        bash -c 'cd "$1" && cargo clippy --all-targets -- -D warnings' _ "$ROOT_DIR/lai_rust" \
+        || { if $CI_MODE; then exit 1; fi; }
+    run_step "Rust: cargo test" \
+        bash -c 'cd "$1" && cargo test' _ "$ROOT_DIR/lai_rust" \
+        || { if $CI_MODE; then exit 1; fi; }
+else
+    if $CI_MODE; then
+        fail "cargo no instalado (la implementación principal es Rust)"
+        exit 1
+    else
+        skip "Rust: cargo no instalado"
+    fi
+fi
+
+# 3c. Gateway Go (opcional: el gateway no es necesario para el agente)
+if has_cmd go && [ -d "$ROOT_DIR/gateway-go" ]; then
+    run_optional "Gateway: go build" \
+        bash -c 'cd "$1" && go build -o /tmp/lai-gateway-check .' _ "$ROOT_DIR/gateway-go"
+else
+    skip "Gateway: go no instalado o gateway-go ausente"
+fi
+
 if $QUICK; then
     echo ""
     echo "============================================================"

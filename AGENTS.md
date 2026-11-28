@@ -132,7 +132,13 @@ cargo install --path .
 
 ## Security Notes
 
-- `run_command` and `run_python` run with sandbox (bubblewrap) by default
+- **Sin sandbox en Rust (pendiente).** En el CLI Rust, `run_command` ejecuta
+  `sh -c` y `run_python` ejecuta `python3` con los privilegios del usuario; no
+  hay aislamiento. El `PolicyEngine` tiene allowlist, pero `auto` no la aplica.
+  El CLI Python legado sí usa bubblewrap. Hasta que se porte el sandbox, **usar
+  `auto` solo en repositorios confiables** y no exponerlo a código de terceros.
+  La guarda de manifiestos cubre `write_file` y `edit`; `apply_patch` y el
+  perfil `bash` no pasan por ella.
 - AutoMode only on trusted repositories
 - Gateway binds to loopback; no auth by default
 - Never expose gateway/llama.cpp to public interfaces

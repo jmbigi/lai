@@ -14,6 +14,11 @@ This directory contains technical documentation for lai.
 | [CAMBIOS_2026-11-26_PENDIENTES.md](CAMBIOS_2026-11-26_PENDIENTES.md) | Before/after record of the Docker-free pending work: offline tests, docs fixes (Regla 10) |
 | [CAMBIOS_2026-11-26_MEJORAS2.md](CAMBIOS_2026-11-26_MEJORAS2.md) | Before/after record: Rule 4 guard, tool-call parser fix, fmt/clippy, scripts, measurements (Regla 10) |
 | [CAMBIOS_2026-11-26_DOCKER.md](CAMBIOS_2026-11-26_DOCKER.md) | Before/after record: Docker unblocked (Desktop 4.22→4.100), dataset download without dependencies, container networking (Regla 10) |
+| [CAMBIOS_2026-11-27.md](CAMBIOS_2026-11-27.md) | Before/after record: LLM client, tools, policy, MCP server and lint review (Regla 10) |
+| [CAMBIOS_2026-11-27_MEJORAS.md](CAMBIOS_2026-11-27_MEJORAS.md) | Before/after record: `bash` profile, context budget, `edit`, telemetry deadlock (Regla 10) |
+| [CAMBIOS_2026-11-27_SWEBENCH.md](CAMBIOS_2026-11-27_SWEBENCH.md) | Before/after record: llama.cpp GPU run, patch application review and fixes (Regla 10) |
+| [CAMBIOS_2026-11-28.md](CAMBIOS_2026-11-28.md) | Before/after record: manifest guard, TUI without TTY, benchmark pending items (Regla 10) |
+| [CAMBIOS_2026-11-28_CI_HIGIENE.md](CAMBIOS_2026-11-28_CI_HIGIENE.md) | Before/after record: repository hygiene, Rust in local CI, docs truth pass (Regla 10) |
 
 ## External References
 
@@ -21,16 +26,23 @@ This directory contains technical documentation for lai.
 - [README.md](../README.md) — User-facing project overview
 - [AGENTS.md](../AGENTS.md) — Agent/developer reference
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — Contribution guidelines
+- [BENCHMARKS.md](../BENCHMARKS.md) — Measured results and declared limitations
 
-## Architecture Diagrams
+## Architecture (current)
+
+The primary implementation is the Rust CLI. The Python CLI is legacy and is
+kept in maintenance mode; the Go gateway is optional.
 
 ```
-User → lai.py (CLI) → ToolRegistry → llama.cpp (8080)
-                      ↓
-              gateway-go (8081) → llama.cpp (8080)
-                      ↓
-              lai.py serve (8082) → OpenCode / OpenAI-compatible clients
+User → lai (Rust CLI) ──────────────────────▶ llama.cpp (8080)
+                    └──▶ gateway-go (8081) ──▶ llama.cpp (8080)
+
+Legacy: lai.py (CLI) ──▶ ToolRegistry ──▶ llama.cpp (8080)
+        lai.py serve (8082) ──▶ OpenCode / [OI]-compatible clients
 ```
+
+> The Rust CLI does **not** include `serve`, `review`, `fix`, `search` or
+> `project`; those remain in the legacy Python CLI. Do not assume parity.
 
 ## Service Ports
 
@@ -39,22 +51,30 @@ User → lai.py (CLI) → ToolRegistry → llama.cpp (8080)
 | llama.cpp | 8080 | 127.0.0.1 | HTTP + SSE |
 | gateway-go | 8081 | 127.0.0.1 | HTTP + SSE |
 | Ollama | 11434 | 127.0.0.1 | HTTP |
-| lai serve | 8082 | 127.0.0.1 | HTTP + SSE |
+| lai serve (legacy) | 8082 | 127.0.0.1 | HTTP + SSE |
 
 ## Model Configuration
 
+Defaults in `scripts/start-llama.sh` (override with `LAI_CONTEXT`, `LAI_NGL`):
+
 - **Model**: Qwen3-8B-Q4_K_M
 - **Context**: 32768 tokens
-- **GPU Layers**: 99 (`-ngl 99`)
+- **GPU layers**: 99 (`-ngl 99`) — this assumes the model fits in VRAM.
+  On an 8 GB GPU the measured run used `-ngl 50` (see `BENCHMARKS.md`).
 - **Reasoning**: `--reasoning-format deepseek --reasoning-budget 1024`
 - **Sampling (agent)**: temp=0.2, top_p=0.95, top_k=20, min_p=0, thinking=false
 
 ## Quality Gates
 
-Run `make check` to execute:
+Local CI covers both implementations:
 
-1. `python3 -m py_compile lai.py`
-2. `ruff check .`
-3. `pytest tests/ -v`
+```bash
+make check        # Python compile + ruff + pytest + Rust fmt/clippy/test
+make ci           # full local pipeline (scripts/ci_local.sh --ci)
+make quality      # extended quality gates (coverage, security, complexity)
+make gateway-check
+```
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
+The Rust steps require `cargo`; in `--ci` mode a missing toolchain is a failure,
+because Rust is the primary implementation. `go` is optional and only builds the
+gateway.

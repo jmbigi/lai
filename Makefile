@@ -14,7 +14,7 @@ help:
 	@echo "  clean        Remove build artifacts and caches"
 
 # Quality checks
-check: compile lint test
+check: compile lint test rust-check
 
 # Quality gates completo (compile + lint + format + type + test + coverage + security + complexity)
 quality:
@@ -45,6 +45,16 @@ type:
 
 test:
 	python3 -m pytest tests/ -v
+
+# Implementación principal (Rust): formato, lint y tests.
+rust-check:
+	cd lai_rust && cargo fmt --check
+	cd lai_rust && cargo clippy --all-targets -- -D warnings
+	cd lai_rust && cargo test
+
+# Gateway Go (opcional: no lo necesita el agente para funcionar).
+gateway-check:
+	cd gateway-go && go build -o /tmp/lai-gateway-check .
 
 # Installation
 install:
