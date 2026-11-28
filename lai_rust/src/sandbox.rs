@@ -71,6 +71,10 @@ fn run_preflight() -> SandboxStatus {
 
     // 2. Sonda real: crear namespaces y ejecutar un comando trivial. En Ubuntu
     //    24.04+ con AppArmor restringido esto falla aunque bwrap exista.
+    //
+    //    Se usan los mismos flags críticos que en `build_command_full`
+    //    (`--unshare-all`, `--clearenv`, `--setenv`, `--tmpfs`) para que el
+    //    preflight detecte también un bwrap demasiado antiguo.
     let probe = Command::new("bwrap")
         .args([
             "--ro-bind",
@@ -80,8 +84,13 @@ fn run_preflight() -> SandboxStatus {
             "/dev",
             "--proc",
             "/proc",
-            "--unshare-pid",
-            "--unshare-net",
+            "--tmpfs",
+            "/run",
+            "--unshare-all",
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin",
             "--die-with-parent",
             "true",
         ])
@@ -101,7 +110,7 @@ fn run_preflight() -> SandboxStatus {
                 mechanism: "bubblewrap".to_string(),
                 detail: format!(
                     "{}; la sonda de namespaces falló (posible restricción AppArmor de \
-                     user namespaces): {}",
+                     user namespaces, o bwrap sin --clearenv/--tmpfs): {}",
                     version_str,
                     stderr.trim().chars().take(200).collect::<String>()
                 ),

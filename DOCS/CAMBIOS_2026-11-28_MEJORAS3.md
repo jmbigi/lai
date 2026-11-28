@@ -27,6 +27,10 @@ no impide conectarse a un socket).
 - `--clearenv` y solo se pasan `PATH`, `HOME`, `TERM`, `LANG`/`LC_ALL`/`LC_CTYPE`,
   `CARGO_HOME` y `RUSTUP_HOME`.
 - `--tmpfs /run` oculta los sockets de demonios del host.
+- El preflight usa ahora los mismos flags críticos (`--unshare-all`,
+  `--clearenv`, `--setenv`, `--tmpfs /run`) que la ejecución real, así que
+  detecta también un bwrap demasiado antiguo y no solo una restricción de
+  namespaces.
 - Se mantienen los binds de solo lectura de `/usr`, `/lib`, `/bin`, `/etc` y los
   binds de `~/.cargo`, `~/.rustup`, `~/.local`; el resto de `$HOME` **no** está
   montado.
