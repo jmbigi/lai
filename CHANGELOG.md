@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **llama.cpp habilitado en local (2026-11-28)**: `scripts/start-llama.sh` encuentra el binario en `~/llama.cpp-bin/*/llama-server` y el modelo en `$HOME/models`, ignora `.gguf` incompletos y prueba una cascada de configuraciones GPU/contexto (`99:32768 → 99:16384 → 50:18432 → auto:16384 → auto:8192 → 0:4096`) hasta que una arranca. Medido: `-ngl 99 -c 16384` da 72 t/s de generación y 642 t/s de prompt en una RTX 3070 Laptop de 8 GB; `-ngl 99 -c 32768` es OOM.
+- **`lai auto` detecta la ventana real del servidor** (`/props`) cuando `LAI_CONTEXT_WINDOW` no está definido, en lugar de suponer 32768.
+- **Medición real de `cache_prompt`**: turno 2 de una tarea con 5211 de 5214 tokens de prompt servidos desde el KV cache (98.8 %); 78.5 % en una corrida de 5 iteraciones. Tabla en `BENCHMARKS.md`.
+- **La detección de tool calling en tests deja de ser un stub**: `_check_tool_calling_support` devolvía siempre `False` y desactivaba tres tests de integración con el motivo falso «model does not support native tool calling». Ahora hace una petición real (con `enable_thinking: false`, necesario en Qwen3). `test_automode_multi_tool` queda tras `LAI_MODEL_TESTS=1` porque tarda ~8 min, con el motivo real en el skip.
+- **DOCS/CAMBIOS_2026-11-28_LLAMACPP.md** (Regla 10).
 - **`lai auto --verify`**: al terminar ejecuta sintaxis + tests unitarios y emite un veredicto acotado; sale con código 2 si no pasa. Si no hay tests, avisa de que solo se verificó la sintaxis.
 - **pre-commit cubre Rust**: hooks `cargo fmt --check` y `cargo clippy --all-targets -- -D warnings` además de los de Python.
 - **`ci_local.sh` ejecuta `scripts/check_docs.py`** (paso opcional) para detectar inconsistencias documentales.

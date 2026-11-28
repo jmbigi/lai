@@ -232,6 +232,66 @@ varianza. Para afirmar algo haría falta repetir con controles intercalados
 
 ---
 
+## llama.cpp local: configuración y mediciones (2026-11-28)
+
+Medido en este equipo (Linux, RTX 3070 Laptop **8 GB**, Rust estable) con
+`Qwen3-8B-Q4_K_M.gguf` (4.7 GiB) y llama.cpp build **12567** (`bed8ec2f8`).
+Cada fila es un arranque limpio y una generación de 200 tokens con
+`temperature=0.2`, `cache_prompt=false`. **Una variable a la vez** (Regla 11).
+
+| Config | Contexto | Generación | Prompt | VRAM | Resultado |
+|---|---:|---:|---:|---:|---|
+| `-ngl 99` | 32768 | — | — | — | **OOM** al crear el KV cache |
+| `-ngl 50` | 24576 | — | — | — | **OOM** |
+| `-ngl 45` | 32768 | — | — | — | **OOM** |
+| `-ngl 99` | 16384 | **72.0 t/s** | **642 t/s** | 7071 MiB | ✅ elegida (GPU 97 %) |
+| `-ngl 50` | 18432 | 72.4 t/s | 539 t/s | 7361 MiB | ✅ |
+| `-ngl auto` | 18432 | 37.1 t/s | 225 t/s | 6803 MiB | ✅ |
+| `-ngl auto` | 32768 | 15.5 t/s | 102 t/s | 6825 MiB | ✅ pero 4.6x más lento |
+
+**Lectura:** en 8 GB de VRAM el límite es el KV cache, no el modelo. `-ngl 99`
+con 16k de contexto deja todas las capas en GPU y es la configuración más rápida;
+`auto` arranca siempre pero reparte pocas capas y pierde 4–5x velocidad.
+
+Por eso `scripts/start-llama.sh` prueba `99:32768 → 99:16384 → 50:18432 →
+auto:16384 → auto:8192 → 0:4096` y usa la primera que arranca. Si el operador
+define `LAI_NGL` o `LAI_CONTEXT`, se respeta esa configuración exacta.
+
+### Efecto de `cache_prompt` (medido)
+
+Tarea real con `lai auto` (crear un archivo, 2 llamadas al modelo), servidor con
+`--jinja --cache-reuse 256` y `LAI_DEBUG_TIMINGS=1`:
+
+| Turno | `prompt_n` (procesados) | `cache_n` (reutilizados) |
+|---|---:|---:|
+| 1 | 5214 | 1 |
+| 2 | **64** | **5211** |
+
+El segundo turno reutiliza el 98.8 % del prompt (sistema + 16 esquemas de
+herramientas + historial) desde el KV cache. Sin `cache_prompt` se reprocesarían
+5211 tokens por turno. En la corrida completa de 5 iteraciones:
+`prompt 29005 tokens, 22775 reutilizados (78.5 %)`.
+
+### Extremo a extremo con el modelo real
+
+Proyecto Rust con un test que falla (`factorial` con `1..n` en lugar de `1..=n`):
+
+```
+lai --sandbox auto "El test factorial_of_five falla…" --max-iterations 8 --verify
+```
+
+- El modelo aplicó **una** edición (`for i in 1..n` → `for i in 1..=n`); `git diff`
+  muestra 1 línea cambiada.
+- `--verify` ejecutó sintaxis y tests: **2/2 passed**, código de salida 0.
+- Todo el agente corrió con `--sandbox` (bubblewrap) y `cargo test` funcionó
+  dentro del aislamiento.
+
+**Qué demuestra y qué no.** Demuestra que la cadena completa funciona con el
+modelo local: tool calling nativo, sandbox, `edit` mínima, verificación y caché
+de prompt. **No** demuestra capacidad general: es una tarea de una línea en un
+proyecto de 20 líneas. Sigue pendiente el piloto SWE-bench de 10–20 instancias
+con esta configuración.
+
 ## Próximos pasos de medición
 
 1. Corrida completa del estrés (20 tareas) por modelo y publicar la tabla.

@@ -24,7 +24,7 @@ Usuario → lai.py (CLI) → ToolRegistry (16 tools) → llama.cpp:8080
 
 | Servicio | Puerto | Bind | Modelo/Config |
 |---|---|---|---|
-| llama.cpp | 8080 | 127.0.0.1 | Qwen3-8B-Q4_K_M, 32768 ctx, -ngl 99, **deepseek + budget 1024** |
+| llama.cpp | 8080 | 127.0.0.1 | Qwen3-8B-Q4_K_M, **-ngl 99, ctx 16384** (cascada medida), `--jinja --cache-reuse 256` |
 | gateway-go | 8081 | 127.0.0.1 | v3.1, cache LRU 5000, semantic cache, filter preserva tools/system |
 | Ollama | 11434 | 127.0.0.1 | qwen3:8b (backup) |
 | lai serve | 8082 | 127.0.0.1 | OpenAI-compatible, SSE, reasoning_content |
@@ -189,7 +189,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | Comprobación | Resultado |
 |---|---|
 | `cargo test` (suite completa) | **230 tests** (188 lib + 42 integración), 0 fallos |
-| `pytest tests swebench` | 241 passed, 9 skipped |
+| `pytest tests swebench` | 242 passed, 8 skipped (con llama.cpp arriba) |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
 | `cargo fmt --check` | limpio |
@@ -201,7 +201,8 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | Guarda de manifiestos | `write_file`, `edit`, `apply_patch` y redirecciones obvias en `bash` |
 | Allowlist de comandos | opt-in con `LAI_COMMAND_ALLOWLIST=1` |
 | Credenciales | `read_file`/`grep` rechazan `~/.ssh`, `~/.aws`, `id_rsa`, `*.pem`… |
-| Caché de prompt | `cache_prompt: true`; medible con `LAI_DEBUG_TIMINGS=1` |
+| Caché de prompt | `cache_prompt: true`; **medido: 98.8 % del prompt reutilizado en el turno 2** |
+| llama.cpp local | Arranca con `./scripts/start-llama.sh` (sin variables); 72 t/s generación |
 | Artefactos de build versionados | **0** (se retiraron 345 archivos / 82 MB de `lai_rust/target/`) |
 
 Pendientes abiertos: medir el sandbox con modelos reales (los benchmarks se

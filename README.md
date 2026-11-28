@@ -217,7 +217,8 @@ lai config list
 Environment variables:
 - `LAI_LLAMA_MODEL` - Path to GGUF model for llama.cpp
 - `LAI_CONTEXT` - Context size (default: 32768)
-- `LAI_NGL` - GPU layers (default: 99)
+- `LAI_NGL` - GPU layers (default: `auto`; the launcher cascades until one config fits VRAM)
+- `LAI_MODELS_DIR` - Extra directory to look for `.gguf` files (default: `$HOME/models`)
 - `LAI_REQUIRE_SANDBOX` - `1` makes bubblewrap mandatory (fail-closed)
 - `LAI_SANDBOX_ALLOW_NET` - `1` allows network inside the sandbox
 - `LAI_COMMAND_ALLOWLIST` - `1` applies the command allowlist in `auto`
@@ -225,6 +226,7 @@ Environment variables:
 - `LAI_PROTECTED_PATHS` - Comma-separated extra protected paths
 - `LAI_CACHE_PROMPT` - `0` disables prompt/KV cache reuse (default: enabled)
 - `LAI_DEBUG_TIMINGS` - `1` prints llama.cpp prompt/cache/generation timings
+- `LAI_MODEL_TESTS` - `1` enables the slow real-model integration test (~8 min)
 
 ## Development
 

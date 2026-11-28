@@ -130,7 +130,10 @@ cargo install --path .
 
 ### Updating Model Config
 - llama.cpp flags in `scripts/start-llama.sh`
-- Context: 32768, Output: 4096, GPU layers: 99
+- Context: 32768 requested; the script falls back to what fits in VRAM
+- GPU layers: `LAI_NGL=auto` by default; the script tries a cascade and picks
+  the first config that loads (on 8 GB: `-ngl 99 -c 16384`)
+- Output: 4096
 
 ## Security Notes
 
@@ -165,6 +168,9 @@ cargo install --path .
   `finish_reason == "length"` (they may be truncated).
 - `cache_prompt: true` is sent on every request (disable with
   `LAI_CACHE_PROMPT=0`); `LAI_DEBUG_TIMINGS=1` prints llama.cpp timings.
+- `auto` reads the real context window from `/props` when
+  `LAI_CONTEXT_WINDOW` is unset.
+- `LAI_MODEL_TESTS=1` runs the slow real-model integration test (~8 min).
 
 ## Documentation
 

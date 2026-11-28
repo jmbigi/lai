@@ -9,7 +9,11 @@
 #   LAI_MODEL_PATH, LAI_LLAMA_HOST, LAI_LLAMA_PORT, LAI_CONTEXT, LAI_NGL,
 #   LAI_MODEL_ALIAS, LAI_LOG_DIR, LLAMA_SERVER, LAI_LLAMA_EXTRA_ARGS,
 #   LAI_LLAMA_PARALLEL (slots for prompt-cache reuse, default 1),
-#   LAI_CACHE_REUSE (min chunk to reuse after a divergence, default 256)
+#   LAI_CACHE_REUSE (min chunk to reuse after a divergence, default 256),
+#   LAI_MODELS_DIR (extra model directory, default: $HOME/models)
+#
+#   LAI_NGL=auto omits -ngl so llama.cpp fits layers and context to free VRAM
+#   (recommended on 8 GB GPUs; -ngl 99 fails there).
 
 set -euo pipefail
 
@@ -33,7 +37,7 @@ MODEL_PATH="${MODEL_ARG:-${LAI_MODEL_PATH:-}}"
 HOST="${LAI_LLAMA_HOST:-127.0.0.1}"
 PORT="${LAI_LLAMA_PORT:-8080}"
 CTX="${LAI_CONTEXT:-32768}"
-NGL="${LAI_NGL:-99}"
+NGL="${LAI_NGL:-auto}"
 ALIAS="${LAI_MODEL_ALIAS:-qwen3-8b}"
 PARALLEL="${LAI_LLAMA_PARALLEL:-1}"
 CACHE_REUSE="${LAI_CACHE_REUSE:-256}"
@@ -80,14 +84,22 @@ resolve_model() {
         return 0
     fi
 
-    if [[ -d "$REPO_ROOT/models" ]]; then
-        local candidate
-        candidate="$(find "$REPO_ROOT/models" -maxdepth 1 -type f -name '*.gguf' 2>/dev/null | head -n 1 || true)"
+    # Directorios de modelos: el del repo y, si se indica, uno del usuario.
+    # Se ignoran los .gguf diminutos (descargas incompletas, 0 bytes) y, si hay
+    # varios, se elige el mayor: es el que el usuario quiso usar.
+    local dir candidate
+    for dir in "$REPO_ROOT/models" "${LAI_MODELS_DIR:-$HOME/models}"; do
+        [[ -d "$dir" ]] || continue
+        candidate="$(find "$dir" -maxdepth 1 -type f -name '*.gguf' -size +100M 2>/dev/null \
+            | xargs -r ls -S 2>/dev/null | head -n 1 || true)"
         if [[ -n "$candidate" ]]; then
+            if find "$dir" -maxdepth 1 -type f -name '*.gguf' -size -100M 2>/dev/null | grep -q .; then
+                echo "Ignoring incomplete .gguf files (<100 MB) in $dir." >&2
+            fi
             printf '%s\n' "$candidate"
             return 0
         fi
-    fi
+    done
 
     if command -v ollama >/dev/null 2>&1; then
         local name modelfile from
@@ -132,7 +144,10 @@ resolve_llama_server() {
     for pattern in \
         "${LOCALAPPDATA:-}/Microsoft/WinGet/Packages/ggml.llamacpp"*/llama-server.exe \
         "/usr/local/bin/llama-server" \
-        "/opt/llama.cpp/bin/llama-server"; do
+        "/opt/llama.cpp/bin/llama-server" \
+        "$HOME/llama.cpp-bin"/*/llama-server \
+        "$HOME/llama.cpp/build/bin/llama-server" \
+        "$HOME/ollama-bin/lib/ollama/llama-server"; do
         if [[ -x "$pattern" ]]; then
             printf '%s\n' "$pattern"
             return 0
@@ -199,36 +214,88 @@ if supports "--parallel"; then
     AGENT_ARGS+=(-np "$PARALLEL")
 fi
 
-nohup "$LLAMA_SERVER_PATH" \
-    -m "$MODEL_PATH" \
-    --host "$HOST" \
-    --port "$PORT" \
-    -c "$CTX" \
-    -ngl "$NGL" \
-    --alias "$ALIAS" \
-    --cont-batching \
-    --flash-attn auto \
-    "${AGENT_ARGS[@]}" \
-    "${EXTRA_ARGS[@]}" \
-    > "$LOG_FILE" 2>&1 &
+# Configuración de GPU/contexto.
+#
+# En GPU de 8 GB, `-ngl 99` con 32k de contexto no entra (OOM) y `auto` elige
+# pocas capas (generación ~5x más lenta). Medido en este equipo con
+# Qwen3-8B-Q4_K_M y RTX 3070 Laptop 8 GB:
+#
+#   ngl=50  ctx=18432 -> 72 t/s generación, 539 t/s prompt, 7361 MiB
+#   ngl=auto ctx=32768 -> 15 t/s, 6825 MiB
+#   ngl=50  ctx=24576 -> OOM
+#   ngl=auto ctx=18432 -> 37 t/s, 6803 MiB
+#
+# Por eso, si el operador no fija LAI_NGL/LAI_CONTEXT, se prueban configuraciones
+# de mayor a menor exigencia y se usa la primera que arranca. Si los fija, se
+# respeta exactamente (sin sustituciones silenciosas).
+CANDIDATES=()
+if [[ -n "${LAI_NGL:-}" || -n "${LAI_CONTEXT:-}" ]]; then
+    CANDIDATES+=("$NGL:$CTX")
+    echo "  config: ngl=$NGL ctx=$CTX (explícita)"
+else
+    CANDIDATES+=("99:32768" "99:16384" "50:18432" "auto:16384" "auto:8192" "0:4096")
+    echo "  config: automática (se prueba de mayor a menor hasta que arranque)"
+fi
 
-PID=$!
-echo "$PID" > "$PID_FILE"
-echo "llama.cpp started (PID $PID). Logs: $LOG_FILE"
+launch_attempt() {
+    local ngl="$1" ctx="$2"
+    local gpu_args=()
+    if [[ "$ngl" != "auto" ]]; then
+        gpu_args+=(-ngl "$ngl")
+    fi
+    nohup "$LLAMA_SERVER_PATH" \
+        -m "$MODEL_PATH" \
+        --host "$HOST" \
+        --port "$PORT" \
+        -c "$ctx" \
+        ${gpu_args[@]+"${gpu_args[@]}"} \
+        --alias "$ALIAS" \
+        --cont-batching \
+        --flash-attn auto \
+        "${AGENT_ARGS[@]}" \
+        "${EXTRA_ARGS[@]}" \
+        > "$LOG_FILE" 2>&1 &
+    echo $!
+}
 
-for i in $(seq 1 120); do
-    if health; then
-        echo "llama.cpp healthy after ${i}s"
+LAST_ERROR=""
+for candidate in "${CANDIDATES[@]}"; do
+    CAND_NGL="${candidate%%:*}"
+    CAND_CTX="${candidate##*:}"
+    echo "  intentando: ngl=$CAND_NGL ctx=$CAND_CTX"
+    PID="$(launch_attempt "$CAND_NGL" "$CAND_CTX")"
+    echo "$PID" > "$PID_FILE"
+
+    healthy=0
+    for _ in $(seq 1 90); do
+        if health; then
+            healthy=1
+            break
+        fi
+        if ! kill -0 "$PID" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$healthy" -eq 1 ]]; then
+        echo "llama.cpp healthy on http://$HOST:$PORT (PID $PID)"
+        echo "  gpu:    ngl=$CAND_NGL"
+        echo "  ctx:    $CAND_CTX"
+        echo "  log:    $LOG_FILE"
         exit 0
     fi
-    if ! kill -0 "$PID" 2>/dev/null; then
-        break
-    fi
-    sleep 1
+
+    LAST_ERROR="$(grep -iE 'error|out of memory|failed' "$LOG_FILE" 2>/dev/null | tail -n 3 || true)"
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo "  falló (ngl=$CAND_NGL ctx=$CAND_CTX); se prueba la siguiente" >&2
 done
 
-echo "ERROR: llama.cpp failed to become healthy" >&2
-tail -n 40 "$LOG_FILE" >&2 2>/dev/null || true
-kill "$PID" 2>/dev/null || true
-rm -f "$PID_FILE"
+echo "ERROR: llama.cpp no arrancó con ninguna configuración." >&2
+if [[ -n "$LAST_ERROR" ]]; then
+    echo "$LAST_ERROR" >&2
+fi
+tail -n 20 "$LOG_FILE" >&2 2>/dev/null || true
 exit 1

@@ -23,16 +23,61 @@ def _check_service_url(url: str) -> bool:
         return False
 
 
-def _check_tool_calling_support(base_url: str = "http://localhost:8081/v1") -> bool:
-    """Check if the model supports native tool calling.
+def _check_tool_calling_support(base_url: str = "http://localhost:8080/v1") -> bool:
+    """Check whether the server actually returns native tool calls.
 
-    Conservador a propósito: devuelve siempre ``False``, así que los tests de
-    integración que dependen de un servidor con tool calling quedan *skipped*
-    en lugar de fallar en una máquina sin modelo levantado. Si algún día se
-    quiere activarlos, hay que consultar ``/v1/models`` y comprobar la
-    capacidad real del modelo, no solo que el endpoint responda.
+    Hace una petición real y pequeña con una herramienta trivial y comprueba
+    que la respuesta trae ``tool_calls``. Cualquier error (servidor caído,
+    timeout, respuesta en prosa) devuelve ``False``, de modo que el test que
+    depende de esto queda *skipped* en lugar de fallar por el entorno.
+
+    Antes esta función devolvía siempre ``False`` y desactivaba en silencio tres
+    tests de integración aunque hubiera un modelo con tool calling levantado.
     """
-    return False
+    try:
+        import urllib.request
+
+        payload = {
+            "model": "qwen3-8b",
+            "messages": [
+                {"role": "user", "content": "Lista los archivos del directorio actual."}
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "list_dir",
+                        "description": "List a directory",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": "auto",
+            "max_tokens": 256,
+            "temperature": 0.0,
+            # Qwen3 razona por defecto y puede gastar todo `max_tokens` en
+            # `reasoning_content` sin llegar a emitir la llamada (se observó con
+            # finish_reason=length). El cliente de lai también lo desactiva.
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        request = urllib.request.Request(
+            f"{base_url.rstrip('/')}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=120) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read())
+        message = data.get("choices", [{}])[0].get("message", {})
+        return bool(message.get("tool_calls"))
+    except Exception:
+        return False
 
 
 class TestIsLocalUrl:
@@ -536,6 +581,10 @@ class TestIntegration:
     @pytest.mark.skipif(
         not _check_tool_calling_support(),
         reason="model does not support native tool calling",
+    )
+    @pytest.mark.skipif(
+        not os.environ.get("LAI_MODEL_TESTS"),
+        reason="set LAI_MODEL_TESTS=1 to run the real model (~4 min)",
     )
     def test_automode_multi_tool(self, lai_instance):
         """Test AutoMode with multiple tool calls."""

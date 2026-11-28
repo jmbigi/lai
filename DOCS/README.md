@@ -25,6 +25,7 @@ This directory contains technical documentation for lai.
 | [CAMBIOS_2026-11-28_MEJORAS2.md](CAMBIOS_2026-11-28_MEJORAS2.md) | Before/after record: sandbox diagnostics, network opt-in, shell manifest guard, command allowlist (Regla 10) |
 | [CAMBIOS_2026-11-28_MEJORAS3.md](CAMBIOS_2026-11-28_MEJORAS3.md) | Before/after record: sandbox env scrub, `/run` masking, indentation-tolerant `edit`, submit sentinel (Regla 10) |
 | [CAMBIOS_2026-11-28_MEJORAS4.md](CAMBIOS_2026-11-28_MEJORAS4.md) | Before/after record: prompt cache, truncation guard, credential read guard, timings (Regla 10) |
+| [CAMBIOS_2026-11-28_LLAMACPP.md](CAMBIOS_2026-11-28_LLAMACPP.md) | Before/after record: llama.cpp enabled locally, GPU/context cascade, measured throughput (Regla 10) |
 
 ## External References
 
@@ -65,8 +66,10 @@ Defaults in `scripts/start-llama.sh` (override with `LAI_CONTEXT`, `LAI_NGL`):
 
 - **Model**: Qwen3-8B-Q4_K_M
 - **Context**: 32768 tokens
-- **GPU layers**: 99 (`-ngl 99`) — this assumes the model fits in VRAM.
-  On an 8 GB GPU the measured run used `-ngl 50` (see `BENCHMARKS.md`).
+- **GPU layers**: `auto` by default. `scripts/start-llama.sh` tries
+  `99:32768 → 99:16384 → 50:18432 → auto:16384 → auto:8192 → 0:4096` and uses
+  the first that starts. On this 8 GB GPU the winner is `-ngl 99 -c 16384`
+  (72 t/s generation); see `BENCHMARKS.md`.
 - **Reasoning**: `--reasoning-format deepseek --reasoning-budget 1024`
 - **Sampling (agent)**: temp=0.2, top_p=0.95, top_k=20, min_p=0, thinking=false
 

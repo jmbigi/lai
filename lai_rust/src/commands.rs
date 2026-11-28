@@ -781,6 +781,38 @@ fn strip_think_tags(content: &str) -> String {
     r.trim().to_string()
 }
 
+/// Pregunta a llama.cpp la ventana de contexto real (`/props`).
+///
+/// Devuelve `None` si el servidor no es local (Regla 4), no responde o no
+/// expone el campo; el llamador usa entonces el valor por defecto.
+async fn detect_server_context(base_url: &str, allow_remote: bool) -> Option<usize> {
+    if !allow_remote && !crate::llm::is_local_url(base_url) {
+        return None;
+    }
+    // El endpoint de chat termina en `/v1`; `/props` vive en la raíz del
+    // servidor, así que se quita ese sufijo antes de componer la URL.
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches('/');
+    let url = format!("{root}/props");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = response.json().await.ok()?;
+    body.get("default_generation_settings")?
+        .get("n_ctx")?
+        .as_u64()
+        .map(|n| n as usize)
+        .filter(|n| *n >= 1024)
+}
+
 /// Opciones de `lai auto`. Se agrupan en una struct para no acumular
 /// parámetros posicionales (y para que clippy no tenga que silenciarse).
 pub struct AutoOptions<'a> {
@@ -1011,6 +1043,17 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
     /// bash (mini-SWE-agent). Se detecta en la salida de la herramienta.
     const SUBMIT_SENTINEL: &str = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT";
 
+    // Ventana real del servidor: si el operador no fija LAI_CONTEXT_WINDOW, se
+    // pregunta a llama.cpp (`/props`). Sin esto el presupuesto supone 32768 y
+    // un servidor con 16384 rechazaría o truncaría los prompts largos.
+    let context_window = match std::env::var("LAI_CONTEXT_WINDOW") {
+        Ok(_) => crate::context_budget::context_window_from_env(),
+        Err(_) => detect_server_context(base_url, allow_remote)
+            .await
+            .unwrap_or_else(crate::context_budget::context_window_from_env),
+    };
+    println!("   Context window: {context_window} tokens");
+
     // Detección de bucles: un modelo pequeño puede repetir la misma llamada
     // idéntica indefinidamente. Medido en el piloto del 2026-11-26: cuatro
     // iteraciones con el mismo apply_patch, quemando 1500 s sin avanzar.
@@ -1061,7 +1104,6 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
         // resultados de herramientas antiguos. Sin esto, en una ventana de 8k
         // el primer `read_file` grande expulsa la tarea y el modelo deja de
         // editar código. Se conservan sistema, tarea y los 4 turnos recientes.
-        let context_window = crate::context_budget::context_window_from_env();
         let budget = crate::context_budget::budget_chars_from_window(context_window);
         let condensed = crate::context_budget::condense(&mut messages, budget, 4);
         if condensed.changed() {
