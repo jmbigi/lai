@@ -10,6 +10,7 @@ pub mod context;
 pub mod context_budget;
 pub mod contracts;
 pub mod diagnostic_engine;
+pub mod estimate;
 pub mod init_wizard;
 pub mod llm;
 pub mod mcp_server;

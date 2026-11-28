@@ -292,6 +292,102 @@ de prompt. **No** demuestra capacidad general: es una tarea de una línea en un
 proyecto de 20 líneas. Sigue pendiente el piloto SWE-bench de 10–20 instancias
 con esta configuración.
 
+---
+
+## Estimación SWE de modelos locales (Regla 12)
+
+La Regla 12 exige que toda cifra SWE sea una estimación medida, con denominador,
+intervalo de confianza y tamaño de muestra. Herramienta canónica:
+
+```bash
+python swebench/estimate.py --run-id qwen3-8b-final
+python swebench/estimate.py --model qwen3-8b --md
+python swebench/estimate.py --run-id qwen3-8b-final --extrapolate
+lai swe-estimate swebench/data/evaluation/qwen3-8b-final/report.json
+```
+
+### Corrida medida: `qwen3-8b-final` (2026-11-27)
+
+Contexto de la corrida (sin estos datos la cifra no es reproducible):
+
+| Dato | Valor |
+|---|---|
+| Modelo | Qwen3-8B-Q4_K_M.gguf (4.7 GiB) |
+| Runtime | llama.cpp build 12567, `-ngl 50 -c 18432` |
+| Hardware | RTX 3070 Laptop 8 GB + 16 hilos CPU |
+| Red | `none` (contenedor) |
+| Timeout | 1800 s por instancia |
+| Agente | `lai auto --profile full`, temp 0.2, 30 iteraciones |
+
+**Estimación:**
+
+| Métrica | Valor | IC 95 % (Wilson) |
+|---|---:|---|
+| Instancias intentadas | 10 | — |
+| Parches evaluables | 8 | — |
+| Parches vacíos | 2 | — |
+| Resueltas | 2 | — |
+| **Tasa extremo a extremo** | **20.0 %** | **5.7 % – 51.0 %** |
+| Tasa sobre evaluables | 25.0 % | 7.1 % – 59.1 % |
+| Errores de infraestructura | 0 | — |
+
+> ⚠ **PRELIMINAR.** n=10 < 30. El intervalo (5.7 %–51.0 %) es tan ancho que
+> **no distingue este modelo de otro con 5 % o 40 %**. No es una tasa
+> representativa y no debe usarse para comparar modelos ni para publicidad.
+
+Por repositorio: pytest-dev 1/2, matplotlib 1/1, astropy 0/3, psf 0/1,
+pylint-dev 0/1, sphinx-doc 0/1, pydata 0/1.
+
+**Muestra necesaria** para afirmar una tasa con este modelo:
+
+| Margen | Suponiendo p≈20 % | Suponiendo p≈50 % |
+|---|---:|---:|
+| ±10 pp | n ≥ 62 | n ≥ 97 |
+| ±5 pp | n ≥ 246 | n ≥ 385 |
+
+**Extrapolación (declarada, no medición):** 20 % de 500 ≈ **100 resueltas**
+[28 – 255]. El supuesto —que 10 instancias representan las 500— no se sostiene;
+la cifra sirve solo para dimensionar, no para afirmar.
+
+### Segunda corrida: contexto 16384 (2026-11-28, llama.cpp local)
+
+Mismo modelo y mismo harness, **una variable distinta**: la ventana de contexto
+(`16384` en lugar de `18432`), con el servidor local ya configurado en
+`-ngl 99 -c 16384`.
+
+| Métrica | 2026-11-27 (`-c 18432`) | 2026-11-28 (`-c 16384`) |
+|---|---:|---:|
+| Intentadas | 10 | 10 |
+| Parches evaluables | 8 | **5** |
+| Parches vacíos | 2 | **5** |
+| Resueltas | 2 | 1 |
+| Tasa extremo a extremo | 20.0 % [5.7 – 51.0] | 10.0 % [1.8 – 40.4] |
+| Errores de infraestructura | 0 | 0 |
+
+**Lectura honesta:** los intervalos se solapan casi por completo, así que **no se
+puede afirmar que una configuración sea mejor**. Lo que sí se observa en los
+logs es un mecanismo: con 16384 tokens el agente condensó el contexto 3 veces en
+`astropy-13033` y gastó las 30 iteraciones sin llegar a un parche válido
+(`5 vacíos` frente a `2`). Es una hipótesis plausible, **no** una conclusión
+medida con esta n.
+
+**Consecuencia práctica:** para SWE-bench, la ventana de contexto pesa más que
+los tokens/s. `-ngl 99 -c 16384` es la configuración más rápida (72 t/s) pero
+puede ser demasiado estrecha; `-ngl 50 -c 18432` deja más margen. La elección
+depende de la tarea, y por eso `start-llama.sh` permite fijar ambas.
+
+### Cómo leer esto honestamente
+
+1. **El harness está validado** (5/5 con parche oracle) y **no hubo errores de
+   infraestructura** en esta corrida: el 2/10 mide al agente + modelo, no al
+   evaluador.
+2. **El intervalo manda.** 20 % [5.7 – 51.0] significa que el siguiente paso no
+   es discutir el número, sino **ampliar la muestra**.
+3. **Comparaciones entre modelos requieren el mismo n y el mismo harness.**
+   Distinto timeout, contexto o red invalida la comparación.
+4. **Cero no es 0 %.** Si una corrida no resuelve ninguna, se publica la cota
+   superior (≈ 3/n), nunca «0 %».
+
 ## Próximos pasos de medición
 
 1. Corrida completa del estrés (20 tareas) por modelo y publicar la tabla.

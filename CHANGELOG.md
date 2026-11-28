@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Regla 12: estimación SWE de modelos locales** (`DOCUMENTACION_REGLAS.md`): toda cifra SWE debe ser una estimación medida con denominador explícito, intervalo de Wilson 95 %, tamaño de muestra y contexto de corrida. `n < 30` se etiqueta PRELIMINAR; cero resueltas se publica como cota superior (≈ 3/n), no como 0 %; la extrapolación a 500 solo se permite si se declara.
+- **`swebench/estimate.py`**: estimación desde un `report.json` — tasas, Wilson 95 %, regla de tres, desglose por repo y muestra necesaria; salidas texto/`--json`/`--md`. 19 tests.
+- **`lai swe-estimate <report.json>`**: la misma estimación en el CLI Rust (`estimate.rs`), con `--json` y `--extrapolate`. 10 tests.
+- **BENCHMARKS.md**: sección de estimación SWE con la corrida real y la lectura honesta del intervalo.
+- **Segunda corrida SWE medida (2026-11-28, contexto 16384)**: 1/10 resueltas [1.8 – 40.4], 5 parches vacíos. Los intervalos se solapan con la corrida de 18432, así que **no se declara ganador**; los logs sugieren que 16384 tokens provoca condensaciones y parches vacíos. Detalle en `BENCHMARKS.md`.
+- **`run_pilot.sh` encadena `estimate.py`** y `make swe-estimate` expone la estimación de la última corrida.
+- **DOCS/CAMBIOS_2026-11-28_REGLA12.md** (Regla 10).
 - **llama.cpp habilitado en local (2026-11-28)**: `scripts/start-llama.sh` encuentra el binario en `~/llama.cpp-bin/*/llama-server` y el modelo en `$HOME/models`, ignora `.gguf` incompletos y prueba una cascada de configuraciones GPU/contexto (`99:32768 → 99:16384 → 50:18432 → auto:16384 → auto:8192 → 0:4096`) hasta que una arranca. Medido: `-ngl 99 -c 16384` da 72 t/s de generación y 642 t/s de prompt en una RTX 3070 Laptop de 8 GB; `-ngl 99 -c 32768` es OOM.
 - **`lai auto` detecta la ventana real del servidor** (`/props`) cuando `LAI_CONTEXT_WINDOW` no está definido, en lugar de suponer 32768.
 - **Medición real de `cache_prompt`**: turno 2 de una tarea con 5211 de 5214 tokens de prompt servidos desde el KV cache (98.8 %); 78.5 % en una corrida de 5 iteraciones. Tabla en `BENCHMARKS.md`.

@@ -33,7 +33,7 @@ This file provides guidance for AI agents working on the lai codebase.
 lai_rust/
 ├── Cargo.toml
 └── src/
-    ├── main.rs              # clap CLI: 20 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
+    ├── main.rs              # clap CLI: 21 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
     ├── commands.rs          # implementations of the CLI subcommands
     ├── llm.rs               # HTTP client for llama.cpp / Ollama; Rule 4 local-only guard
     ├── tools.rs             # ToolRegistry (16 tools) + JSON schemas + perfiles (full/bash)
@@ -42,6 +42,7 @@ lai_rust/
     ├── planner.rs           # DAG planner + SPEC.md generation
     ├── change_engine.rs     # controlled changes, diff/patch, checkpoints, rollback
     ├── diagnostic_engine.rs # failure localisation and root-cause classification
+    ├── estimate.rs          # SWE-bench estimation: Wilson CI, rule of three (Regla 12)
     ├── repair_engine.rs     # automated repair with validation and rollback
     ├── verification_engine.rs # multi-level verification, bounded verdicts
     ├── baseline.rs          # baseline tracking and regression detection
@@ -74,6 +75,7 @@ lai_rust/
 5. **Loopback only**: `serve` binds to `127.0.0.1:8082` by default; gateway binds to `127.0.0.1:8081`.
 6. **Regla 11**: For low-end CPU teams, measure one variable at a time and never present external figures as lai results. See `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`.
 7. **Regla 10**: Every change must have a before/after record in a change document (see `DOCS/CAMBIOS_2026-11-26.md`).
+8. **Regla 12**: Any SWE-bench capability claim must be a measured estimate with an explicit denominator, Wilson 95% interval, sample size and run context. `n < 30` is PRELIMINAR; zero resolved is published as an upper bound (≈ 3/n), never as 0 %. Tool: `swebench/estimate.py` / `lai swe-estimate`.
 
 ## Development Workflow (Rust)
 

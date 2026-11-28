@@ -83,8 +83,13 @@ echo "== Resumen para BENCHMARKS.md =="
 SUM_RC=$?
 
 echo
-if [ "$EVAL_RC" -ne 0 ] || [ "$SUM_RC" -ne 0 ]; then
-  echo "Aviso: evaluación rc=$EVAL_RC, resumen rc=$SUM_RC. Revisa los logs." >&2
+echo "== Estimación SWE (Regla 12: Wilson 95 %, tamaño de muestra) =="
+"$PYTHON" swebench/estimate.py --run-id "$RUN_ID"
+EST_RC=$?
+
+echo
+if [ "$EVAL_RC" -ne 0 ] || [ "$SUM_RC" -ne 0 ] || [ "$EST_RC" -ne 0 ]; then
+  echo "Aviso: evaluación rc=$EVAL_RC, resumen rc=$SUM_RC, estimación rc=$EST_RC. Revisa los logs." >&2
   exit 1
 fi
 echo "Listo. Informe: swebench/data/evaluation/$RUN_ID/report.md"

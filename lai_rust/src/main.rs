@@ -164,6 +164,18 @@ enum Commands {
         #[arg(long, help = "Use stdio transport (for Claude Code)")]
         stdio: bool,
     },
+    /// Estimate SWE-bench capability from an evaluated report.json (Regla 12)
+    SweEstimate {
+        #[arg(help = "Path to swebench/data/evaluation/<run>/report.json")]
+        report: String,
+        #[arg(long, help = "Print JSON instead of text")]
+        json: bool,
+        #[arg(
+            long,
+            help = "Also extrapolate to the 500 Verified instances (labelled as extrapolation)"
+        )]
+        extrapolate: bool,
+    },
     /// Run SWE-bench style coding benchmark against local models
     BenchSwe {
         #[arg(long, help = "Model to benchmark")]
@@ -292,6 +304,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Mcp { port, stdio }) => {
             cmd_mcp(port, stdio).await?;
+        }
+        Some(Commands::SweEstimate {
+            report,
+            json,
+            extrapolate,
+        }) => {
+            commands::cmd_swe_estimate(&report, json, extrapolate);
         }
         Some(Commands::BenchSwe {
             model,

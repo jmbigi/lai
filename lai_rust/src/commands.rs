@@ -1394,6 +1394,77 @@ complete corrected file content. Do not reply with analysis or questions — act
 }
 
 /// Escribe la transcripción de una sesión de `auto` en el directorio indicado.
+/// Estimación de capacidad SWE a partir de un `report.json` (Regla 12).
+///
+/// Sale con código 2 si no se puede leer el informe: una cifra que no se puede
+/// calcular no debe parecer un cero.
+pub fn cmd_swe_estimate(report_path: &str, json: bool, extrapolate: bool) {
+    let text = match std::fs::read_to_string(report_path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("swe-estimate: no se pudo leer '{report_path}': {e}");
+            std::process::exit(2);
+        }
+    };
+    let report: crate::estimate::SweReport = match serde_json::from_str(&text) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("swe-estimate: '{report_path}' no es un report.json válido: {e}");
+            std::process::exit(2);
+        }
+    };
+    let run_id = report
+        .run
+        .run_id
+        .clone()
+        .or_else(|| {
+            std::path::Path::new(report_path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "?".to_string());
+    let estimate = crate::estimate::SweEstimate::from_report(&run_id, &report);
+
+    if json {
+        let payload = serde_json::json!({
+            "run_id": estimate.run_id,
+            "model": estimate.model,
+            "attempted": estimate.attempted,
+            "scored": estimate.scored,
+            "resolved": estimate.resolved,
+            "empty_patch": estimate.empty_patch,
+            "infra_errors": estimate.infra_errors,
+            "end_to_end_rate": estimate.end_to_end_rate,
+            "end_to_end_ci95": [estimate.end_to_end_ci95.0, estimate.end_to_end_ci95.1],
+            "scored_rate": estimate.scored_rate,
+            "scored_ci95": [estimate.scored_ci95.0, estimate.scored_ci95.1],
+            "upper_bound_95": estimate.upper_bound_95,
+            "preliminary": estimate.preliminary,
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("swe-estimate: no se pudo serializar: {e}");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        print!("{}", estimate.render_text());
+        if extrapolate {
+            let (expected, interval, warning) = estimate.extrapolation();
+            println!();
+            println!(
+                "Extrapolación a {} (declarada): ≈ {expected} [{}, {}]",
+                crate::estimate::FULL_DATASET,
+                interval.0,
+                interval.1
+            );
+            println!("  ⚠ {warning}");
+        }
+    }
+}
+
 /// Ejecuta una verificación acotada (sintaxis + tests unitarios) e imprime el
 /// veredicto. Sale con código 2 si no es un éxito, para que un script o CI
 /// pueda fallar de forma determinista.

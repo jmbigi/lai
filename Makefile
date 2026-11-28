@@ -1,4 +1,4 @@
-.PHONY: help check lint test format type ci ci-quick install dev-install build gateway-build clean smoke rust-check gateway-check sandbox-check
+.PHONY: help check lint test format type ci ci-quick install dev-install build gateway-build clean smoke rust-check gateway-check sandbox-check swe-estimate
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  rust-check   Rust fmt + clippy + tests (implementación principal)"
 	@echo "  gateway-check Build the Go gateway"
 	@echo "  sandbox-check Verify bubblewrap isolation (if installed)"
+	@echo "  swe-estimate Estimate SWE capability from the latest report (Regla 12)"
 	@echo "  clean        Remove build artifacts and caches"
 
 # Quality checks
@@ -58,6 +59,15 @@ rust-check:
 # Gateway Go (opcional: no lo necesita el agente para funcionar).
 gateway-check:
 	cd gateway-go && go build -o /tmp/lai-gateway-check .
+
+# Estimación SWE de la última corrida evaluada (Regla 12).
+# Uso: make swe-estimate RUN_ID=qwen3-8b-final
+swe-estimate:
+	@if [ -n "$(RUN_ID)" ]; then \
+		python3 swebench/estimate.py --run-id "$(RUN_ID)"; \
+	else \
+		python3 swebench/estimate.py --model qwen3-8b; \
+	fi
 
 # Verifica que el sandbox aísla de verdad (solo si bubblewrap está instalado).
 sandbox-check:

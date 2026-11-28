@@ -97,6 +97,35 @@ Todo decisión técnica, de arquitectura o de producto debe evaluarse bajo este 
       la Regla 0 (sin cloud, sin API keys, sin cuentas externas) y a la Regla 6
       (honestidad).
 
+12. **Estimación de capacidad SWE de modelos locales (Regla de estimación).**
+    Toda afirmación sobre la capacidad SWE-bench de un modelo local debe ser una
+    **estimación medida**, no una impresión ni una extrapolación de terceros.
+    - **Denominador explícito.** Se informa siempre `resueltas / intentadas`
+      (extremo a extremo) y `resueltas / evaluables` (excluye parches vacíos);
+      nunca un porcentaje sin denominador.
+    - **Intervalo de confianza.** Toda tasa se publica con su intervalo de
+      Wilson al 95 %. Con n pequeño el intervalo es ancho y así debe verse.
+    - **Tamaño de muestra.** Con `n < 30` el resultado se etiqueta
+      **PRELIMINAR** y no puede usarse para comparar modelos ni para publicidad.
+      Para afirmar una tasa con ±10 pp se necesita `n ≥ 62` (p≈20 %) o `n ≥ 97`
+      (p≈50 %); con ±5 pp, `n ≥ 246` / `n ≥ 385`.
+    - **Cero no es 0 %.** Si no hay ninguna resuelta, se publica la cota superior
+      al 95 % (regla de tres: ≈ `3/n`), no «0 %».
+    - **Contexto obligatorio de la corrida:** modelo y cuantización, contexto,
+      GPU/CPU, versión de llama.cpp, `timeout`, red (`none`/`bridge`), fecha y
+      commit del harness. Sin esos datos la cifra no es reproducible.
+    - **Extrapolación declarada.** Extrapolar a las 500 instancias de SWE-bench
+      Verified solo se permite si se marca como extrapolación y se acompaña del
+      supuesto («la muestra es representativa»), que con n pequeño no se sostiene.
+    - **Errores de infraestructura separados.** Un fallo de Docker, red o
+      evaluación no cuenta como fallo del modelo; se informa aparte.
+    - **Herramienta canónica:** `python swebench/estimate.py --run-id <id>`
+      (implementa esta regla; tests en `swebench/test_estimate.py`). El CLI Rust
+      ofrece la misma estimación con `lai swe-estimate <report.json>`.
+    - **Prohibido:** presentar cifras de papers o de modelos cloud como si fueran
+      de lai (Regla 6 y Regla 11), o elegir el mejor de varios intentos sin
+      declarar cuántos intentos se hicieron (pass@k vs pass@1).
+
 ---
 
 ## 2. Definiciones para evitar ambigüedades
@@ -139,6 +168,7 @@ Si el conflicto persiste, detenerse y preguntar al operador humano.
 | 9. Lenguaje óptimo + supervivencia | ✅ | `lai_rust/` implementación completa en Rust. CLI real (verificado 2026-11-26, 19 subcomandos clap): `chat`, `code`, `status`, `auto`, `repo-map`, `baseline`, `verify`, `diagnose`, `repair`, `checkpoint`, `memory`, `plan`, `metrics`, `bench`, `init`, `doctor`, `tui`, `mcp`, `bench-swe`. **No existen** `serve`, `review`, `fix`, `search`, `project` en el CLI Rust (sí en el Python legado, que está en mantenimiento y no a la par). Build release compila limpio, `cargo clippy --all-targets` sin avisos. Desde 2026-11-27 los subcomandos `repo-map`, `verify`, `diagnose`, `baseline`, `memory`, `checkpoint` y `metrics` ejecutan sus motores reales en lugar de imprimir «to be implemented». |
 | 10. Documentación obligatoria de cambios | 🆕 Nueva | Regla agregada 2026-11-23. Requiere documento de cambios propuestos, estado antes/después por cada cambio, y trazabilidad para trabajo en equipo. |
 | 11. Baja gama: medir antes de recomendar | 🆕 Nueva | Regla agregada 2026-11-26. Exige medir una variable a la vez, calcular el techo de ancho de banda, aplicar la compuerta de contexto completo y marcar las cifras externas como no reproducidas. Guía: `DOCS/INFERENCIA_LOCAL_BAJA_GAMA.md`. |
+| 12. Estimación SWE de modelos locales | 🆕 Nueva | Regla agregada 2026-11-28. Toda cifra SWE debe ser una estimación medida con denominador, intervalo de Wilson 95 %, tamaño de muestra y contexto de corrida; `n < 30` se etiqueta PRELIMINAR; cero resueltas se publica como cota superior (regla de tres). Herramienta: `swebench/estimate.py`; CLI: `lai swe-estimate`. |
 
 ---
 

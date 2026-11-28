@@ -170,7 +170,7 @@ Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
 
 | Componente | Valor |
 |---|---|
-| Subcomandos del CLI | 19 (`chat`, `code`, `status`, `auto`, `repo-map`, `baseline`, `verify`, `diagnose`, `repair`, `checkpoint`, `memory`, `plan`, `metrics`, `bench`, `init`, `doctor`, `tui`, `mcp`, `bench-swe`) |
+| Subcomandos del CLI | 21 (…, `bench-swe`, `swe-estimate`) |
 | Herramientas del `ToolRegistry` | 13 (`read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`, `git_commit`, `git_status`, `git_diff`) |
 | Módulos | ver `lai_rust/src/lib.rs` y el árbol de `AGENTS.md` |
 | Docker | Docker Desktop 4.100.1 (servidor 29.9.3), funcionando; `docker version` responde en ~1 s |
@@ -188,8 +188,8 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` (suite completa) | **230 tests** (188 lib + 42 integración), 0 fallos |
-| `pytest tests swebench` | 242 passed, 8 skipped (con llama.cpp arriba) |
+| `cargo test` (suite completa) | **240 tests** (198 lib + 42 integración), 0 fallos |
+| `pytest tests swebench` | 261 passed, 8 skipped (con llama.cpp arriba) |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
 | `cargo fmt --check` | limpio |

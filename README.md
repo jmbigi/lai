@@ -84,7 +84,7 @@ cargo test --test swe_bench
 
 > **Vigencia (2026-11-27).** La tabla de abajo describe el CLI **Python
 > legado** (`lai.py`), en mantenimiento. La implementación principal es
-> **Rust** (`lai_rust/`), con 20 subcomandos:
+> **Rust** (`lai_rust/`), con 21 subcomandos:
 
 | Comando Rust | Descripción |
 |---|---|
@@ -102,6 +102,7 @@ cargo test --test swe_bench
 | `metrics` | Métricas del workspace y telemetría de sesión |
 | `plan` | Planificador DAG (requiere modelo local) |
 | `bench` / `bench-swe` | Benchmarks de capacidad y estilo SWE-bench |
+| `swe-estimate` | Estimación de capacidad SWE (Wilson 95 %, tamaño de muestra) desde un `report.json` |
 | `init` / `doctor` | Asistente de instalación y diagnóstico |
 | `tui` | Interfaz de terminal |
 | `mcp` | Servidor MCP (stdio o `127.0.0.1`) |
