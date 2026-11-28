@@ -223,5 +223,7 @@ Ver la tabla completa en `BENCHMARKS.md` (§ «Corrida real 2026-11-27»).
   **no son comparables** (instancias y código distintos).
 - **`lai tui`** no se probó interactivamente: sin TTY falla con un error de
   sistema poco amable, que no se corrigió.
+  **Actualización 2026-11-28:** corregido y verificado con PTY; ver
+  `DOCS/CAMBIOS_2026-11-28.md` §2.
 - **El gateway (8081)** sigue sin arrancar; `lai` habla directo con llama.cpp.
 - **Windows** no se probó.

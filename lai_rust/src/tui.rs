@@ -157,6 +157,21 @@ pub struct ToolLogState {
     pub scroll_offset: usize,
 }
 
+/// Comprueba que la entrada y la salida son terminales interactivas.
+///
+/// Se separa de `atty` para poder probar los dos casos sin depender de cómo se
+/// lance `cargo test`.
+fn ensure_interactive(stdin_is_tty: bool, stdout_is_tty: bool) -> Result<()> {
+    if !stdin_is_tty || !stdout_is_tty {
+        anyhow::bail!(
+            "`lai tui` necesita una terminal interactiva (TTY). \
+             Ejecútalo directamente en una terminal; para uso no interactivo \
+             están `lai chat`, `lai auto` y `lai mcp`."
+        );
+    }
+    Ok(())
+}
+
 impl TuiApp {
     pub fn new(project_root: PathBuf) -> Self {
         Self {
@@ -173,19 +188,40 @@ impl TuiApp {
 
     /// Initialize and run the TUI
     pub async fn run(&mut self) -> Result<()> {
+        // crossterm necesita una terminal real. Sin TTY, `enable_raw_mode`
+        // falla con "No such device or address (os error 6)", que no explica
+        // nada al usuario (medido el 2026-11-27 con la salida redirigida).
+        ensure_interactive(
+            atty::is(atty::Stream::Stdin),
+            atty::is(atty::Stream::Stdout),
+        )?;
+
         self.build_file_tree()?;
         self.setup_terminal()?;
-        self.run_event_loop().await?;
-        self.restore_terminal()?;
-        Ok(())
+        let result = self.run_event_loop().await;
+        // Restaurar siempre, incluso si el bucle falla: si no, la terminal se
+        // queda en modo raw y con la pantalla alternativa activa.
+        let restored = self.restore_terminal();
+        result.and(restored)
     }
 
     fn setup_terminal(&mut self) -> Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+            // No dejar la terminal en modo raw si la entrada en pantalla
+            // alternativa falla a mitad.
+            let _ = disable_raw_mode();
+            return Err(error.into());
+        }
         let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend)?;
+        let terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                let _ = disable_raw_mode();
+                return Err(error.into());
+            }
+        };
         self.terminal = Some(terminal);
         Ok(())
     }
@@ -1133,5 +1169,26 @@ pub fn log_chat_message(
     });
     if chat.messages.len() > 500 {
         chat.messages.drain(0..250);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_interactive;
+
+    #[test]
+    fn rejects_a_piped_stdin_or_stdout_with_an_actionable_message() {
+        for (stdin_is_tty, stdout_is_tty) in [(false, true), (true, false), (false, false)] {
+            let err = ensure_interactive(stdin_is_tty, stdout_is_tty)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("terminal interactiva"), "{err}");
+            assert!(err.contains("lai auto"), "{err}");
+        }
+    }
+
+    #[test]
+    fn accepts_a_real_terminal() {
+        ensure_interactive(true, true).unwrap();
     }
 }

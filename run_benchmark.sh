@@ -82,7 +82,10 @@ echo 0 > "$BENCH_DIR/total_time.count"
 # Function to run a single task
 run_task() {
     local task_name="$1"
-    local prompt="$2"
+    # Restricción común del benchmark (hallazgo 2026-11-26): el agente
+    # reemplazó Cargo.toml con contenido inventado y cambió la firma de una API
+    # pública que ya funcionaba. El enunciado debe declarar ambas reglas.
+    local prompt="No elimines ni reemplaces APIs públicas existentes y no sustituyas Cargo.toml; cambia solo lo necesario para completar la tarea. $2"
     local task_dir="$BENCH_DIR/$task_name"
     
     mkdir -p "$task_dir"

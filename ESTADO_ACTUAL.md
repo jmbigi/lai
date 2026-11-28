@@ -179,3 +179,24 @@ Datos comprobados en este equipo (Windows, Rust 1.99.1), no extrapolados:
 
 > El CLI en Rust **no** incluye `serve`, `review`, `fix`, `search` ni `project`:
 > esas rutas siguen en el CLI legado en Python. No asumir paridad.
+
+---
+
+## Actualización 2026-11-28
+
+Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo test` (suite completa) | **158 tests** (116 lib + 42 integración), 0 fallos |
+| `pytest tests swebench` | 241 passed, 9 skipped |
+| `ruff check .` | All checks passed, sin avisos de configuración |
+| `cargo clippy --all-targets -- -D warnings` | sin avisos |
+| `cargo fmt --check` | limpio |
+| `cargo build --release` | OK (~60 s) |
+| Herramientas del `ToolRegistry` | **15** (se añadieron `edit` y `bash`) |
+
+Pendientes abiertos: allowlist de comandos en `auto` (decisión de producto),
+`apply_patch` y el perfil `bash` no pasan por la guarda de manifiestos, piloto
+SWE-bench de 10–20 instancias y Windows. Detalle en
+`DOCS/CAMBIOS_2026-11-28.md`.

@@ -352,6 +352,38 @@ fn find_files_tool(args: &HashMap<String, Value>) -> Result<String> {
 const SHRINK_MIN_ORIGINAL_LINES: usize = 40;
 const SHRINK_RATIO_PERCENT: usize = 25;
 
+/// Manifiestos y archivos de bloqueo del proyecto.
+///
+/// Reemplazarlos enteros casi siempre rompe la build: en el benchmark del
+/// 2026-11-26 el agente sustituyó `Cargo.toml` por uno inventado. Los cambios
+/// legítimos (añadir una dependencia) se hacen con `edit`, que conserva el
+/// resto del archivo.
+fn is_manifest_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    matches!(
+        name,
+        "Cargo.toml"
+            | "Cargo.lock"
+            | "package.json"
+            | "package-lock.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "pyproject.toml"
+            | "setup.py"
+            | "setup.cfg"
+            | "requirements.txt"
+            | "go.mod"
+            | "go.sum"
+            | "Gemfile"
+            | "Gemfile.lock"
+            | "composer.json"
+            | "composer.lock"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+    )
+}
+
 fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     let path = arg_str(args, "path", "");
     if path.is_empty() {
@@ -375,6 +407,20 @@ fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     // "escribió un ejemplo" en lugar de editar el archivo real.
     if target.is_file() {
         if let Ok(existing) = fs::read_to_string(target) {
+            // Un manifiesto se edita, no se reemplaza: el agente inventó un
+            // Cargo.toml y rompió el proyecto (benchmark del 2026-11-26).
+            if is_manifest_file(target)
+                && existing != content
+                && !arg_bool(args, "allow_manifest_overwrite", false)
+            {
+                return Err(anyhow::anyhow!(
+                    "write_file rechazado: '{path}' es un manifiesto del proyecto. \
+                     Reemplazarlo entero suele romper la build. Usa `edit` para cambiar \
+                     solo la línea necesaria (por ejemplo, añadir una dependencia), o \
+                     repite con \"allow_manifest_overwrite\": true si de verdad quieres \
+                     sustituirlo."
+                ));
+            }
             let old_lines = existing.lines().count();
             let new_lines = content.lines().count();
             let shrunk = old_lines >= SHRINK_MIN_ORIGINAL_LINES
@@ -445,6 +491,20 @@ fn edit_file_tool(args: &HashMap<String, Value>) -> Result<String> {
         return Err(anyhow::anyhow!(
             "edit: el texto aparece {occurrences} veces en '{path}'. Añade más contexto \
              para que sea único o pasa \"replace_all\": true."
+        ));
+    }
+
+    // Un `edit` que abarca el manifiesto completo es un reemplazo encubierto:
+    // se aplica la misma guarda que `write_file`.
+    if is_manifest_file(Path::new(path))
+        && old.trim() == content.trim()
+        && !arg_bool(args, "allow_manifest_overwrite", false)
+    {
+        return Err(anyhow::anyhow!(
+            "edit rechazado: 'old_string' abarca todo el manifiesto '{path}'. \
+             Cambia solo el fragmento necesario (por ejemplo, la línea de una \
+             dependencia) o repite con \"allow_manifest_overwrite\": true si de \
+             verdad quieres sustituirlo entero."
         ));
     }
 
@@ -876,13 +936,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "write_file".into(),
-                description: "Write a file, creating parent directories. Refuses to replace an existing file of 40+ lines with less than 25% of its original length unless allow_shrink is true (that pattern usually means an example was written over real code). Prefer apply_patch for targeted edits.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"allow_shrink":{"type":"boolean","description":"Permit replacing a large file with a much smaller one"}},"required":["path","content"]}),
+                description: "Write a file, creating parent directories. Refuses to replace an existing file of 40+ lines with less than 25% of its original length unless allow_shrink is true (that pattern usually means an example was written over real code). Also refuses to replace an existing project manifest (Cargo.toml, package.json, pyproject.toml, ...) unless allow_manifest_overwrite is true; use `edit` for a targeted manifest change. Prefer `edit` for targeted edits.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"allow_shrink":{"type":"boolean","description":"Permit replacing a large file with a much smaller one"},"allow_manifest_overwrite":{"type":"boolean","description":"Permit replacing an existing project manifest (Cargo.toml, package.json, ...) entirely"}},"required":["path","content"]}),
             },
             ToolSchema {
                 name: "edit".into(),
-                description: "Edit an existing file by replacing an exact fragment. Args: path, old_string (copied exactly from read_file), new_string. Fails if old_string is missing or appears more than once (use replace_all or more context). Refuses to shrink a 40+ line file below 25% of its length unless allow_shrink is true. PREFERRED over write_file for existing files.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","description":"Replace every occurrence (default false)"},"allow_shrink":{"type":"boolean","description":"Permit a replacement that removes most of the file"}},"required":["path","old_string","new_string"]}),
+                description: "Edit an existing file by replacing an exact fragment. Args: path, old_string (copied exactly from read_file), new_string. Fails if old_string is missing or appears more than once (use replace_all or more context). Refuses to shrink a 40+ line file below 25% of its length unless allow_shrink is true, and refuses to replace a whole project manifest unless allow_manifest_overwrite is true. PREFERRED over write_file for existing files.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","description":"Replace every occurrence (default false)"},"allow_shrink":{"type":"boolean","description":"Permit a replacement that removes most of the file"},"allow_manifest_overwrite":{"type":"boolean","description":"Permit replacing a whole project manifest (Cargo.toml, package.json, ...)"}},"required":["path","old_string","new_string"]}),
             },
             ToolSchema {
                 name: "list_dir".into(),
@@ -1189,6 +1249,57 @@ mod tests {
         assert_eq!(fs::read_to_string(&mid).unwrap(), kept);
     }
 
+    /// Caso real del benchmark del 2026-11-26: el agente sustituyó `Cargo.toml`
+    /// por uno inventado y el proyecto dejó de compilar.
+    #[test]
+    fn write_file_refuses_to_replace_a_manifest_without_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Cargo.toml");
+        let original = "[package]\nname = \"real\"\nversion = \"0.1.0\"\n";
+        fs::write(&path, original).unwrap();
+
+        let err = write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "[package]\nname = \"invented\"\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("manifiesto"), "{err}");
+        assert!(err.contains("allow_manifest_overwrite"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn write_file_allows_manifest_overwrite_with_explicit_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.json");
+        fs::write(&path, "{\"name\":\"real\"}\n").unwrap();
+
+        write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "{\"name\":\"new\"}\n",
+            "allow_manifest_overwrite": true
+        })))
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"name\":\"new\"}\n");
+    }
+
+    #[test]
+    fn write_file_can_create_a_new_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pyproject.toml");
+
+        write_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "content": "[project]\nname = \"nuevo\"\n"
+        })))
+        .unwrap();
+
+        assert!(path.is_file());
+    }
+
     #[test]
     fn edit_replaces_a_unique_fragment() {
         let dir = tempfile::tempdir().unwrap();
@@ -1280,6 +1391,45 @@ mod tests {
 
         assert!(err.contains("edit rechazado"), "{err}");
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn edit_refuses_to_replace_a_whole_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pyproject.toml");
+        let original = "[project]\nname = \"real\"\nversion = \"1.0\"\n";
+        fs::write(&path, original).unwrap();
+
+        let err = edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": original,
+            "new_string": "[project]\nname = \"invented\"\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("manifiesto"), "{err}");
+        assert!(err.contains("allow_manifest_overwrite"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn edit_allows_a_targeted_manifest_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Cargo.toml");
+        fs::write(&path, "[package]\nname = \"real\"\n\n[dependencies]\n").unwrap();
+
+        edit_file_tool(&args(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "[dependencies]\n",
+            "new_string": "[dependencies]\nserde = \"1\"\n"
+        })))
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[package]\nname = \"real\"\n\n[dependencies]\nserde = \"1\"\n"
+        );
     }
 
     #[test]

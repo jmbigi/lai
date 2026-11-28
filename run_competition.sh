@@ -78,6 +78,8 @@ for model in "${MODELS[@]}"; do
 
     for task_def in "${TASKS[@]}"; do
         IFS='|' read -r name prompt <<< "$task_def"
+        # Restricción común: medir un cambio mínimo, no una reescritura de API.
+        prompt="No elimines ni reemplaces APIs públicas existentes y no sustituyas Cargo.toml; cambia solo lo necesario. $prompt"
 
         task_dir="$MODEL_DIR/$name"
         mkdir -p "$task_dir"

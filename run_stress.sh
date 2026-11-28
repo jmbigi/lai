@@ -74,7 +74,8 @@ TASKS=(
 
 run_one() {
     local idx="$1"
-    local prompt="$2"
+    # Restricción común: medir un cambio mínimo, no una reescritura de API.
+    local prompt="Do not remove or replace existing public APIs and do not replace Cargo.toml; change only what is needed. $2"
     local task_dir="$BENCH_DIR/task_$idx"
 
     mkdir -p "$task_dir/src"

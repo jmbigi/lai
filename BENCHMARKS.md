@@ -200,8 +200,8 @@ varianza. Para afirmar algo haría falta repetir con controles intercalados
 |----------------|---------|
 | Modelos sin capacidad `tools` no escribían archivos | Tool calling nativo + fallback JSON + *nudge* si responde en prosa |
 | El modelo emitía ```` ```json ```` correcto pero lai decía «No tool call emitted» | Parser reparado: saltos de línea literales dentro de cadenas, alias `tool`/`name`, `arguments` como string |
-| El agente sobrescribe `Cargo.toml` con contenido inventado | **Pendiente** (hallazgo 2026-11-26): no hay guarda sobre manifiestos |
-| El agente reemplaza una API pública que ya funcionaba | **Pendiente**: los enunciados del benchmark no declaran la restricción |
+| El agente sobrescribe `Cargo.toml` con contenido inventado | **Resuelto 2026-11-28**: `write_file`/`edit` rechazan reemplazar manifiestos enteros salvo `allow_manifest_overwrite: true`; el error recomienda `edit` para un cambio puntual (5 tests). |
+| El agente reemplaza una API pública que ya funcionaba | **Resuelto 2026-11-28**: los enunciados de `run_benchmark.sh`, `run_competition.sh`, `run_stress.sh` y `swebench/run_eval.py` prohíben eliminar o reemplazar APIs públicas existentes. |
 | `\n` literales (JSON doble-escapado) → archivo en una línea | `unescape_literal_escapes` en `normalize_tool_arguments` |
 | Ruta con `:` (`qwen3:8b/`) rompía `cargo test` | Sanear nombre de directorio en los scripts |
 | "PASS" falso al no modificarse nada | Hash antes/después + tests obligatorios |

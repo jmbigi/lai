@@ -132,6 +132,8 @@ def build_task(instance: dict) -> str:
         "- For large repositories, use grep to locate the relevant symbols and read_file "
         "with start_line/end_line instead of reading whole files.\n"
         "- Change only what is necessary to fix the issue.\n"
+        "- Do not remove or replace existing public APIs; keep their signatures "
+        "unless the issue explicitly requires a change.\n"
         "- Do not modify test files.\n"
         "- Use `edit` (exact fragment, old_string/new_string) to change an existing "
         "file; `write_file` only for new files or full rewrites.\n"
@@ -224,6 +226,7 @@ def uses_host_network(network: str) -> bool:
     """
     return network == "host" and sys.platform.startswith("linux")
 
+
 def container_base_url_warning(base_url: str, network: str = "host") -> str | None:
     """Aviso informativo si el base-url se va a traducir para el contenedor.
 
@@ -280,7 +283,10 @@ def read_context(model: str, base_url: str) -> int | None:
     ps = http_json(root + "/api/ps") or {}
     for item in ps.get("models", []):
         names = {item.get("name"), item.get("model")}
-        if model in names or any(name and name.split(":")[0] == model.split(":")[0] for name in names):
+        if model in names or any(
+            name and name.split(":", maxsplit=1)[0] == model.split(":", maxsplit=1)[0]
+            for name in names
+        ):
             value = item.get("context_length") or item.get("context")
             if value:
                 return int(value)

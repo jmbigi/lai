@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Guarda de manifiestos en `write_file`/`edit` (2026-11-28)**: reemplazar entero un `Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `Gemfile`, etc. se rechaza salvo `allow_manifest_overwrite: true`; el error recomienda `edit` para un cambio puntual. Cierra el hallazgo del benchmark del 2026-11-26 en el que el agente sustituyó `Cargo.toml` por contenido inventado. 5 tests.
+- **Los enunciados del benchmark declaran las restricciones**: `run_benchmark.sh`, `run_competition.sh`, `run_stress.sh` y `swebench/run_eval.py` piden no eliminar ni reemplazar APIs públicas existentes ni sustituir `Cargo.toml`. Cierra el segundo hallazgo del benchmark (una firma pública cambiada rompió un test preexistente).
+- **DOCS/CAMBIOS_2026-11-28.md**: registro antes/después (Regla 10) de las reparaciones y pendientes cerrados de esta tanda.
 - **Corrida SWE-bench con llama.cpp en GPU (2026-11-27)**: 10 instancias, 8 parches, **2 resueltas** (`pytest-dev__pytest-5809`, `matplotlib__matplotlib-13989`), 0 errores de infraestructura. Tasa de extremo a extremo 2/10 (20 %). Tabla completa en `BENCHMARKS.md`; registro antes/después en `DOCS/CAMBIOS_2026-11-27_SWEBENCH.md`.
 - **DOCS/CAMBIOS_2026-11-27_SWEBENCH.md**: registro antes/después (Regla 10) de la puesta en marcha de llama.cpp, la revisión de la aplicación y las correcciones que destapó el benchmark.
 - **`lai auto`: escalada por presupuesto de turnos**: si pasa la mitad del presupuesto sin ninguna edición, se le indica al modelo cuántos turnos quedan y se le pide aplicar el arreglo. Medido: los parches producidos pasaron de 5/10 a 8/10.
@@ -41,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Regla 10 (Documentación obligatoria de cambios):** Nueva regla que exige crear documento de cambios propuestos antes de modificar código, documentar estado ANTES y DESPUÉS de cada cambio individual, y mantener trazabilidad para favorecer el trabajo en equipo. Prohíbe cambios silenciosos o en batch sin documentación intermedia.
 
 ### Fixed
+- **`lai tui` sin TTY daba un error de sistema poco amable y podía dejar la terminal en modo raw**: ahora comprueba que stdin y stdout son terminales y explica cómo usar `lai chat`/`lai auto`/`lai mcp`; además restaura la terminal aunque el bucle de eventos falle. Verificado con PTY: sale con código 0 y emite `LeaveAlternateScreen` + `show_cursor`.
+- **`ruff check .` fallaba con `PLC0207`** en `swebench/run_eval.py` (regresión del commit `9f06f7a`): `split(":", maxsplit=1)`.
+- **Configuración de Ruff migrada a `[tool.ruff.lint]`**: `select`, `ignore` y `fixable` ya no están en la sección obsoleta; `ruff check .` deja de emitir el aviso de configuración.
 - **`lai bench` presentaba resultados mock como éxito**: `bench all` y `bench run` usaban `MockBenchmarkAdapter` y mostraban «✅ Success: true … 100 %» con latencia 0 ms. Ahora avisan de que no miden nada y cada línea lleva `⚠ MOCK` (Regla 6).
 - **`edit` podía destruir un archivo**: un `old_string` igual a casi todo el archivo dejaba 5 líneas de 71 (medido en `pytest-5809`). Ahora aplica la misma guarda anti-destrucción que `write_file`.
 - **`grep`/`find_files` con una ruta inexistente devolvían «No matches»**, así que el modelo probaba rutas inventadas hasta agotar las iteraciones. Ahora devuelven un error explícito.
