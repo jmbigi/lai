@@ -28,6 +28,13 @@ struct Cli {
 
     #[arg(long, help = "Allow non-local endpoints")]
     allow_remote: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Require a verified bubblewrap sandbox for shell/Python execution (fail-closed)"
+    )]
+    sandbox: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -162,6 +169,12 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // `--sandbox` es un flag global: se propaga a cualquier ToolRegistry que se
+    // cree después (auto, chat, tui, mcp) mediante la variable de entorno.
+    if cli.sandbox {
+        std::env::set_var("LAI_REQUIRE_SANDBOX", "1");
+    }
 
     // Initialize telemetry
     let _ = telemetry::Telemetry::init(telemetry::TelemetryConfig::default());

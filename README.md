@@ -157,13 +157,37 @@ The `auto` command implements advanced agent patterns:
 - **Best-version fallback**: Returns highest-scored version if not converged
 - **Cost tracking**: Token usage, estimated cloud-equivalent savings
 
+## Tool Registry — Rust (15 tools)
+
+> **Vigencia (2026-11-28).** Esta lista es del CLI **Rust** (`lai_rust/`), la
+> implementación principal. El CLI Python legado (`lai_tools.py`) conserva su
+> propio registro, más amplio; no asumir paridad entre ambos.
+
+Core: `read_file`, `write_file`, `edit`, `list_dir`, `run_command`, `bash`,
+`grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`,
+`git_commit`, `git_status`, `git_diff`.
+
+`run_command`, `bash` y `run_python` aceptan `"sandbox": true` para ejecutar en
+bubblewrap (sin red, workspace escribible). Con `lai --sandbox …` o
+`LAI_REQUIRE_SANDBOX=1` el sandbox es obligatorio y falla cerrado si no está
+disponible.
+
+## Security
+
+- La inferencia es local (Regla 4); `llm.rs` bloquea endpoints no locales salvo
+  `--allow-remote`.
+- El sandbox de ejecución es **opt-in** por defecto y obligatorio con
+  `--sandbox`. En Linux usa bubblewrap; en otros sistemas no está disponible.
+- `auto` no aplica la allowlist de comandos del `PolicyEngine`: úsalo solo en
+  repositorios confiables o con `--sandbox`.
+- La guarda de manifiestos cubre `write_file`, `edit` y `apply_patch`; el perfil
+  `bash` puede saltarla con `cat > Cargo.toml`.
+
 ## Tool Registry — CLI Python legado (50+ tools)
 
 > **Vigencia (2026-11-28).** Esta lista es del **CLI Python legado**
-> (`lai_tools.py`). El `ToolRegistry` de Rust tiene **15 herramientas**:
-> `read_file`, `write_file`, `edit`, `list_dir`, `run_command`, `bash`, `grep`,
-> `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`,
-> `git_commit`, `git_status`, `git_diff`. No asumir paridad entre ambas.
+> (`lai_tools.py`), en mantenimiento. La implementación principal es Rust; su
+> registro está arriba. No asumir paridad entre ambas.
 
 Core: `read_file`, `write_file`, `list_dir`, `run_command`, `grep`, `find_files`, `repo_map`, `python_eval`, `apply_patch`, `web_search`, `run_python`, `run_tests`
 

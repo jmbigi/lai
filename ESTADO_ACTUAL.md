@@ -188,7 +188,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` (suite completa) | **158 tests** (116 lib + 42 integración), 0 fallos |
+| `cargo test` (suite completa) | **179 tests** (137 lib + 42 integración), 0 fallos |
 | `pytest tests swebench` | 241 passed, 9 skipped |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
@@ -197,11 +197,10 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | `make rust-check` (fmt + clippy + tests) | ✅ |
 | `make gateway-check` (`go build`) | ✅ |
 | Herramientas del `ToolRegistry` | **15** (se añadieron `edit` y `bash`) |
+| Sandbox | **opt-in** (`sandbox: true`) y obligatorio con `--sandbox`; fail-closed |
 | Artefactos de build versionados | **0** (se retiraron 345 archivos / 82 MB de `lai_rust/target/`) |
 
-Pendientes abiertos: sandbox en el CLI Rust (hoy `run_command`/`run_python` sin
-aislamiento), allowlist de comandos en `auto` (decisión de producto),
-`apply_patch` y el perfil `bash` no pasan por la guarda de manifiestos, rama
-`feat/fase-0-1-harness` sin integrar (10.210 líneas), piloto SWE-bench de 10–20
-instancias y Windows. Detalle en `DOCS/CAMBIOS_2026-11-28.md` y
-`DOCS/CAMBIOS_2026-11-28_CI_HIGIENE.md`.
+Pendientes abiertos: allowlist de comandos en `auto` (decisión de producto),
+perfil `bash` puede saltar la guarda de manifiestos con `cat > Cargo.toml`,
+`contracts.rs` sin verificador externo conectado, piloto SWE-bench con sandbox
+y Windows. Detalle en `DOCS/CAMBIOS_2026-11-28_SANDBOX.md`.

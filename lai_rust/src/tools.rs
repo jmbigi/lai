@@ -37,6 +37,11 @@ fn arg_bool(args: &HashMap<String, Value>, key: &str, default: bool) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
+/// Cita un argumento para `bash -c` (usado al envolver `run_python` en bwrap).
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Mata el proceso y, en Unix, todo su grupo (hijos incluidos).
 fn kill_process_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
@@ -384,6 +389,106 @@ fn is_manifest_file(path: &Path) -> bool {
     )
 }
 
+/// Devuelve la razón por la que un parche sobre un manifiesto debe rechazarse,
+/// o `None` si es un cambio acotado (o no toca manifiestos).
+///
+/// Se considera destructivo cuando el parche elimina al menos el 75 % de las
+/// líneas actuales del manifiesto (reemplazo encubierto) o cuando lo borra
+/// (`+++ /dev/null`). Añadir una dependencia o cambiar una línea queda
+/// permitido.
+fn manifest_patch_violation(patch: &str, cwd: &Path) -> Option<String> {
+    let mut current: Option<String> = None;
+    let mut in_hunk = false;
+    let mut removed = 0usize;
+    let mut added = 0usize;
+    let mut deletes_manifest = false;
+
+    fn evaluate(path: &Option<String>, cwd: &Path, removed: usize, added: usize) -> Option<String> {
+        let path = path.as_deref()?;
+        if !is_manifest_file(Path::new(path)) || removed == 0 {
+            return None;
+        }
+        let existing = fs::read_to_string(cwd.join(path))
+            .map(|content| content.lines().count())
+            .unwrap_or(0);
+        if existing > 0 && removed * 100 >= existing * 75 {
+            return Some(format!(
+                "el parche elimina {removed} de {existing} líneas del manifiesto \
+                 '{path}' ({added} añadidas): es un reemplazo encubierto"
+            ));
+        }
+        None
+    }
+
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            if in_hunk {
+                if let Some(reason) = evaluate(&current, cwd, removed, added) {
+                    return Some(reason);
+                }
+            }
+            in_hunk = false;
+            current = None;
+            continue;
+        }
+        if !in_hunk && line.starts_with("--- ") {
+            let path = line[4..].trim();
+            current = if path == "/dev/null" {
+                None
+            } else {
+                Some(path.trim_start_matches("a/").to_string())
+            };
+            continue;
+        }
+        if !in_hunk && line.starts_with("+++ ") {
+            let path = line[4..].trim();
+            if path == "/dev/null" {
+                if let Some(old) = &current {
+                    if is_manifest_file(Path::new(old)) {
+                        deletes_manifest = true;
+                    }
+                }
+            }
+            continue;
+        }
+        if line.starts_with("@@ ") {
+            if in_hunk {
+                if let Some(reason) = evaluate(&current, cwd, removed, added) {
+                    return Some(reason);
+                }
+            }
+            in_hunk = true;
+            removed = 0;
+            added = 0;
+            continue;
+        }
+        if in_hunk {
+            if line.starts_with('-') {
+                removed += 1;
+            } else if line.starts_with('+') {
+                added += 1;
+            } else if !line.starts_with(' ') && !line.starts_with('\\') {
+                // Fin del hunk (cabecera de otro archivo, texto libre…).
+                if let Some(reason) = evaluate(&current, cwd, removed, added) {
+                    return Some(reason);
+                }
+                in_hunk = false;
+            }
+        }
+    }
+
+    if in_hunk {
+        if let Some(reason) = evaluate(&current, cwd, removed, added) {
+            return Some(reason);
+        }
+    }
+    if deletes_manifest {
+        Some("el parche elimina un manifiesto del proyecto".to_string())
+    } else {
+        None
+    }
+}
+
 fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     let path = arg_str(args, "path", "");
     if path.is_empty() {
@@ -573,6 +678,16 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
             path
         ));
     }
+    if !arg_bool(args, "allow_manifest_overwrite", false) {
+        if let Some(reason) = manifest_patch_violation(patch, Path::new(path)) {
+            return Err(anyhow::anyhow!(
+                "apply_patch rechazado: {reason}. Reemplazar o borrar un manifiesto \
+                 entero suele romper la build. Cambia solo la línea necesaria con \
+                 `edit` (por ejemplo, añadir una dependencia), o repite con \
+                 \"allow_manifest_overwrite\": true si de verdad quieres sustituirlo."
+            ));
+        }
+    }
     let cwd = path;
 
     let run = |program: &str, extra: &[&str]| -> Result<std::process::Output> {
@@ -680,30 +795,65 @@ impl ToolProfile {
 
 /// Ejecuta un comando de shell con timeout. Compartido por `run_command` y
 /// `bash` (perfil mínimo).
+///
+/// El sandbox es opt-in con `"sandbox": true`, salvo que `LAI_REQUIRE_SANDBOX`
+/// (o `lai --sandbox`) lo exija, en cuyo caso todas las ejecuciones van por
+/// bubblewrap y no se puede desactivar.
 fn run_shell_tool(args: &HashMap<String, Value>) -> Result<String> {
+    run_shell_tool_with(args, crate::sandbox::required_from_env())
+}
+
+fn run_shell_tool_with(args: &HashMap<String, Value>, require_sandbox: bool) -> Result<String> {
     let command = arg_str(args, "command", "");
     if command.trim().is_empty() {
         return Err(anyhow::anyhow!("bash requiere 'command'"));
     }
     let cwd = args.get("cwd").and_then(|v| v.as_str());
     let timeout_secs = arg_usize(args, "timeout", 300).clamp(1, 3_600);
-    // Use appropriate shell for the OS
-    #[cfg(target_os = "windows")]
-    let mut cmd = {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(command);
-        cmd
-    };
-    #[cfg(not(target_os = "windows"))]
-    let mut cmd = {
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg(command);
-        cmd
-    };
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
+    let explicit_sandbox = args.get("sandbox").and_then(|v| v.as_bool());
+    if require_sandbox && explicit_sandbox == Some(false) {
+        return Err(anyhow::anyhow!(
+            "sandbox requerido por LAI_REQUIRE_SANDBOX/--sandbox: no se puede \
+             desactivar con \"sandbox\": false. Quita la variable o el flag para \
+             ejecutar sin aislamiento."
+        ));
     }
-    let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
+    let want_sandbox = require_sandbox || explicit_sandbox.unwrap_or(false);
+
+    let output = if want_sandbox {
+        let workspace = match cwd {
+            Some(dir) => std::path::PathBuf::from(dir),
+            None => std::env::current_dir()?,
+        };
+        let cmd = crate::sandbox::build_command(command, &workspace, require_sandbox)?.ok_or_else(
+            || {
+                anyhow::anyhow!(
+                    "sandbox solicitado pero no disponible: {}. Ejecuta sin \
+                     \"sandbox\": true o instala bubblewrap.",
+                    crate::sandbox::preflight().detail
+                )
+            },
+        )?;
+        run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?
+    } else {
+        // Use appropriate shell for the OS
+        #[cfg(target_os = "windows")]
+        let mut cmd = {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C").arg(command);
+            cmd
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut cmd = {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(command);
+            cmd
+        };
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
+        run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?
+    };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut result = stdout.to_string();
@@ -832,8 +982,34 @@ impl ToolRegistry {
             // borrando el archivo al salir del ámbito.
             let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
             fs::write(&temp_path, code)?;
-            let mut cmd = Command::new("python3");
-            cmd.arg(&temp_path);
+            let require_sandbox = crate::sandbox::required_from_env();
+            let explicit_sandbox = args.get("sandbox").and_then(|v| v.as_bool());
+            if require_sandbox && explicit_sandbox == Some(false) {
+                return Err(anyhow::anyhow!(
+                    "sandbox requerido por LAI_REQUIRE_SANDBOX/--sandbox: no se puede \
+                     desactivar con \"sandbox\": false."
+                ));
+            }
+            let want_sandbox = require_sandbox || explicit_sandbox.unwrap_or(false);
+            let cmd = if want_sandbox {
+                let workspace = std::env::current_dir()?;
+                let script = shell_quote(&temp_path.to_string_lossy());
+                crate::sandbox::build_command(
+                    &format!("python3 {script}"),
+                    &workspace,
+                    require_sandbox,
+                )?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "sandbox solicitado pero no disponible: {}",
+                        crate::sandbox::preflight().detail
+                    )
+                })?
+            } else {
+                let mut cmd = Command::new("python3");
+                cmd.arg(&temp_path);
+                cmd
+            };
             let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -951,13 +1127,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "run_command".into(),
-                description: "Run a shell command. The process is killed if it exceeds the timeout.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"}},"required":["command"]}),
+                description: "Run a shell command. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap (no network, workspace writable); with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["command"]}),
             },
             ToolSchema {
                 name: "bash".into(),
-                description: "Run one shell command (same as run_command). Use it to inspect the repo and edit files with heredocs.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"}},"required":["command"]}),
+                description: "Run one shell command (same as run_command). Use it to inspect the repo and edit files with heredocs. Honors the same sandbox rules.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the command is killed (default 300, max 3600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["command"]}),
             },
             ToolSchema {
                 name: "grep".into(),
@@ -976,13 +1152,13 @@ impl ToolRegistry {
             },
             ToolSchema {
                 name: "run_python".into(),
-                description: "Run Python code in a temporary file. The process is killed if it exceeds the timeout.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"}},"required":["code"]}),
+                description: "Run Python code in a temporary file. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap; with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"}},"required":["code"]}),
             },
             ToolSchema {
                 name: "apply_patch".into(),
-                description: "Apply a unified diff to an existing file (git apply --check first, then apply). 'path' is the repository root. Returns an ERROR if the hunk does not match: nothing is written in that case, so read the file with read_file before retrying.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"patch":{"type":"string"}},"required":["path","patch"]}),
+                description: "Apply a unified diff to an existing file (git apply --check first, then apply). 'path' is the repository root. Returns an ERROR if the hunk does not match: nothing is written in that case, so read the file with read_file before retrying. Refuses to replace or delete a whole project manifest unless allow_manifest_overwrite is true.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"patch":{"type":"string"},"allow_manifest_overwrite":{"type":"boolean","description":"Permit a patch that replaces or deletes a whole project manifest"}},"required":["path","patch"]}),
             },
             ToolSchema {
                 name: "git_add".into(),
@@ -1662,5 +1838,148 @@ async def go():\n\
             .unwrap_err()
             .to_string();
         assert!(err.contains("patch"), "{err}");
+    }
+
+    fn init_git_repo(dir: &Path) -> bool {
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn apply_patch_rejects_replacing_a_whole_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let manifest = dir.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
+        )
+        .unwrap();
+
+        let err = apply_patch_tool(&args(json!({
+            "path": dir.path().to_string_lossy(),
+            "patch": "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,6 +1,2 @@\n-[package]\n-name = \"demo\"\n-version = \"0.1.0\"\n-\n-[dependencies]\n-serde = \"1\"\n+[package]\n+name = \"invented\"\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("manifiesto"), "{err}");
+        // Nada se escribió.
+        assert!(fs::read_to_string(&manifest).unwrap().contains("serde"));
+    }
+
+    #[test]
+    fn apply_patch_allows_a_targeted_manifest_change() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let manifest = dir.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
+        )
+        .unwrap();
+
+        let out = apply_patch_tool(&args(json!({
+            "path": dir.path().to_string_lossy(),
+            "patch": "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -4,2 +4,3 @@\n \n [dependencies]\n+serde = \"1\"\n"
+        })))
+        .unwrap();
+
+        assert!(out.contains("applied"), "{out}");
+        assert!(fs::read_to_string(&manifest).unwrap().contains("serde"));
+    }
+
+    #[test]
+    fn apply_patch_rejects_deleting_a_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let manifest = dir.path().join("package.json");
+        fs::write(&manifest, "{\n  \"name\": \"demo\"\n}\n").unwrap();
+
+        let err = apply_patch_tool(&args(json!({
+            "path": dir.path().to_string_lossy(),
+            "patch": "--- a/package.json\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-{\n-  \"name\": \"demo\"\n-}\n"
+        })))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("manifiesto"), "{err}");
+        assert!(manifest.exists());
+    }
+
+    #[test]
+    fn apply_patch_allows_replacing_a_manifest_with_opt_in() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let manifest = dir.path().join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname = \"demo\"\n").unwrap();
+
+        let out = apply_patch_tool(&args(json!({
+            "path": dir.path().to_string_lossy(),
+            "patch": "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,2 +1,2 @@\n-[package]\n-name = \"demo\"\n+[package]\n+name = \"renamed\"\n",
+            "allow_manifest_overwrite": true
+        })))
+        .unwrap();
+
+        assert!(out.contains("applied"), "{out}");
+        assert!(fs::read_to_string(&manifest).unwrap().contains("renamed"));
+    }
+
+    #[test]
+    fn run_shell_tool_without_sandbox_runs_plain() {
+        let out = run_shell_tool_with(&args(json!({"command": "echo plain-ok"})), false).unwrap();
+        assert!(out.contains("plain-ok"), "{out}");
+    }
+
+    #[test]
+    fn run_shell_tool_required_rejects_explicit_disable() {
+        let err = run_shell_tool_with(&args(json!({"command": "echo hi", "sandbox": false})), true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no se puede"), "{err}");
+    }
+
+    #[test]
+    fn run_shell_tool_runs_under_sandbox_when_requested() {
+        if !crate::sandbox::preflight().available {
+            return; // sin bwrap no se puede comprobar el camino feliz
+        }
+        let out = run_shell_tool_with(
+            &args(json!({"command": "echo sandbox-ok", "sandbox": true})),
+            true,
+        )
+        .unwrap();
+        assert!(out.contains("sandbox-ok"), "{out}");
+    }
+
+    #[test]
+    fn sandbox_blocks_network_access() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "getent hosts example.com >/dev/null 2>&1 && echo NET_UP || echo NO_NET",
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        assert!(
+            out.contains("NO_NET"),
+            "la red no debería estar disponible: {out}"
+        );
     }
 }

@@ -47,6 +47,8 @@ lai_rust/
     ├── baseline.rs          # baseline tracking and regression detection
     ├── memory_store.rs      # 4-tier memory with provenance and invalidation
     ├── policy.rs            # policy engine used by tools
+    ├── sandbox.rs           # bubblewrap isolation: preflight + fail-closed wrapper
+    ├── contracts.rs         # external verifier contracts + admission gate
     ├── quality.rs           # quality checks
     ├── repomap.rs           # repository symbol map
     ├── services.rs          # local service management (llama.cpp, gateway, ollama)
@@ -132,13 +134,19 @@ cargo install --path .
 
 ## Security Notes
 
-- **Sin sandbox en Rust (pendiente).** En el CLI Rust, `run_command` ejecuta
-  `sh -c` y `run_python` ejecuta `python3` con los privilegios del usuario; no
-  hay aislamiento. El `PolicyEngine` tiene allowlist, pero `auto` no la aplica.
-  El CLI Python legado sí usa bubblewrap. Hasta que se porte el sandbox, **usar
-  `auto` solo en repositorios confiables** y no exponerlo a código de terceros.
-  La guarda de manifiestos cubre `write_file` y `edit`; `apply_patch` y el
-  perfil `bash` no pasan por ella.
+- **Sandbox opcional y fail-closed.** En el CLI Rust, `run_command` y
+  `run_python` aceptan `"sandbox": true` para ejecutar dentro de bubblewrap
+  (workspace en lectura/escritura, `/tmp` temporal, sin red, `--cap-drop ALL`).
+  Con `LAI_REQUIRE_SANDBOX=1` o `lai --sandbox …` el sandbox es obligatorio y no
+  se puede desactivar; si bwrap no está disponible, la llamada falla en vez de
+  ejecutar sin aislamiento. Por defecto sigue **desactivado** para no romper
+  flujos existentes: usar `auto` solo en repositorios confiables y activar
+  `--sandbox` cuando el código no sea de confianza. El CLI Python legado usa
+  bubblewrap por defecto.
+- La guarda de manifiestos cubre `write_file`, `edit` y `apply_patch` (rechaza
+  reemplazos que eliminen ≥75 % del manifiesto o lo borren, salvo
+  `allow_manifest_overwrite: true`); el perfil `bash` puede saltarla con
+  `cat > Cargo.toml`.
 - AutoMode only on trusted repositories
 - Gateway binds to loopback; no auth by default
 - Never expose gateway/llama.cpp to public interfaces

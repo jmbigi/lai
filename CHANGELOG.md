@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Sandbox bubblewrap en el CLI Rust (2026-11-28)**: portado de la rama `feat/fase-0-1-harness` según `DOCS/ADR-0001-rama-fase-0-1-harness.md`. `run_command`, `bash` y `run_python` aceptan `"sandbox": true` (workspace rw, `/tmp`, sin red, `--cap-drop ALL`). `lai --sandbox` / `LAI_REQUIRE_SANDBOX=1` lo hacen obligatorio y **fail-closed**: si bwrap no está disponible, la llamada falla en vez de ejecutar sin aislamiento. Preflight con sonda real de namespaces (detecta restricciones AppArmor). 5 tests de sandbox.
+- **Capa de contratos para verificadores externos** (`lai_rust/src/contracts.rs`): `ExternalVerdict` (safe/unsafe/timeout/unknown) mapeado al `VerificationVerdict` acotado y `AdmissionGate` para exigir medición antes de adoptar una herramienta. Portado y adaptado; todavía no conectado a un verificador real. 8 tests.
+- **`apply_patch` pasa por la guarda de manifiestos**: rechaza parches que eliminen ≥75 % de un `Cargo.toml`, `package.json`, etc. o que lo borren, salvo `allow_manifest_overwrite: true`. Cierra el límite declarado en `CAMBIOS_2026-11-28.md`. 4 tests.
+- **DOCS/ADR-0001-rama-fase-0-1-harness.md**: decisión de rescatar sandbox y contratos y archivar el resto de la rama (13 commits, 10.210 líneas).
+
 ### Changed
 - **CI local cubre Rust (2026-11-28)**: `scripts/ci_local.sh` ejecuta `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` y `cargo test` como pasos obligatorios; en modo `--ci` la ausencia de `cargo` falla. `make check` incluye `rust-check`; nuevos targets `rust-check` y `gateway-check` (`go build` opcional).
 - **`AGENTS.md` deja de afirmar un sandbox inexistente**: el CLI Rust ejecuta `run_command`/`run_python` sin aislamiento; la nota ahora lo dice y remite a `SECURITY.md`.

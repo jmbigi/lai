@@ -19,6 +19,8 @@ This directory contains technical documentation for lai.
 | [CAMBIOS_2026-11-27_SWEBENCH.md](CAMBIOS_2026-11-27_SWEBENCH.md) | Before/after record: llama.cpp GPU run, patch application review and fixes (Regla 10) |
 | [CAMBIOS_2026-11-28.md](CAMBIOS_2026-11-28.md) | Before/after record: manifest guard, TUI without TTY, benchmark pending items (Regla 10) |
 | [CAMBIOS_2026-11-28_CI_HIGIENE.md](CAMBIOS_2026-11-28_CI_HIGIENE.md) | Before/after record: repository hygiene, Rust in local CI, docs truth pass (Regla 10) |
+| [ADR-0001-rama-fase-0-1-harness.md](ADR-0001-rama-fase-0-1-harness.md) | Decision: rescue sandbox + contracts from the old branch, archive the rest |
+| [CAMBIOS_2026-11-28_SANDBOX.md](CAMBIOS_2026-11-28_SANDBOX.md) | Before/after record: bubblewrap sandbox, contracts layer, `apply_patch` manifest guard (Regla 10) |
 
 ## External References
 
