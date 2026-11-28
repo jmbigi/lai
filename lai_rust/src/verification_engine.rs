@@ -795,7 +795,8 @@ impl VerificationEngine {
                         let total = json["numTotalTests"].as_u64().unwrap_or(0);
                         if total > 0 {
                             let rate = (passed as f64 / total as f64) * 100.0;
-                            let success = rate >= self.config.min_test_pass_rate;
+                            let success =
+                                out.status.success() && rate >= self.config.min_test_pass_rate;
                             (
                                 success,
                                 rate,
@@ -803,7 +804,12 @@ impl VerificationEngine {
                                 vec![],
                             )
                         } else {
-                            (true, 100.0, "No tests found".to_string(), vec![])
+                            (
+                                true,
+                                0.0,
+                                "No tests found (nothing verified)".to_string(),
+                                vec![],
+                            )
                         }
                     } else {
                         let success = out.status.success();

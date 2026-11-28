@@ -77,6 +77,10 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | G10 | `git_*` fallan en voz alta y pasan por política | ✅ | 3 tests |
 | G11 | Resumen de consumo (tokens y KV cache) en `auto` | ✅ | E2E |
 | G12 | Orden correcto de `--tmpfs /tmp` y bind del workspace | ✅ | Test de regresión |
+| G13 | `contracts.rs` conectado (`lai verify --external`) | ✅ | 4 casos |
+| G14 | `auto --verify` con veredicto acotado | ✅ | Proyecto real: pass=0, fail=2 |
+| G15 | Arreglo: el motor no medía los tests (cargo/pytest) | ✅ | 4 tests + E2E |
+| G16 | pre-commit y ci_local cubren Rust y docs | ✅ | ci_local 6/6 |
 
 ## Fuera de alcance (declarado)
 

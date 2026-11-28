@@ -180,7 +180,8 @@ no estaba instalado, también reportaba "Tests passed" sin mirar nada.
   (`3 passed, 1 failed`); sin plugin externo. Código 5 (no tests) se distingue.
 - Sin tests: `passed = true` pero `score = 0` y mensaje
   `"No tests found (nothing verified)"`, para no romper proyectos sin tests
-  pero sin fingir una verificación.
+  pero sin fingir una verificación. La rama JavaScript recibió el mismo
+  tratamiento y ahora exige código de salida 0.
 - `lai auto ... --verify`: al terminar ejecuta sintaxis + tests unitarios y
   emite veredicto acotado; **código de salida 2** si no pasa. Si no hay tests,
   avisa explícitamente de que solo se verificó la sintaxis.
