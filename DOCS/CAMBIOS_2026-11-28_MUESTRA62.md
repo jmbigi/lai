@@ -71,11 +71,45 @@ las instancias con imagen `ready` y las ejecuta. Permite encadenar pasadas
 mientras `prepare.py` sigue descargando, sin registrar errores de
 infraestructura por imágenes ausentes.
 
-## 4. Verificación
+## 4. `swebench/compare.py`: comparar solo lo comparable
+
+**ANTES:** no había forma de comparar dos corridas. Dos cifras distintas (20 % y
+10 %) invitaban a decir «A es mejor» sin comprobar que midieran lo mismo.
+
+**DESPUÉS:** `compare.py --a <run> --b <run>` **se niega a comparar** (código de
+salida 2) si:
+
+- el conjunto de instancias no es idéntico;
+- difieren `network` o `timeout_s`;
+- ambas corridas son del mismo modelo (eso es una comparación de
+  configuraciones, no de modelos).
+
+Con `--allow-harness-diff` se permite comparar dos **configuraciones** del mismo
+modelo: las diferencias de harness se muestran como aviso, pero las muestras
+siguen teniendo que coincidir. Cuando la comparación es válida, calcula:
+
+- diferencia de tasas en puntos porcentuales;
+- **error estándar agrupado por repositorio**:
+  `Var(p) ≈ (1/N²)·Σᵢ(kᵢ − p·nᵢ)²`, sumado para ambas muestras;
+- `z` y valor `p` de dos colas.
+
+Ejemplo real (mismo modelo, contextos distintos):
+
+```
+Diferencia (A − B): +10.0 pp
+  error estándar por clusters: 15.8 pp
+  z = 0.63, p = 0.527
+  → NO significativa al 5 %
+```
+
+18 tests cubren la lógica de comparabilidad, el SE y el código de salida.
+
+## 5. Verificación
 
 | Comprobación | Resultado |
 |---|---|
 | `pytest swebench/test_estimate.py` | ✅ 27 tests |
+| `pytest swebench/test_compare.py` | ✅ 18 tests |
 | `cargo test` | ✅ 248 tests (206 lib + 42 integración) |
 | `cargo fmt --check` / `clippy -D warnings` | ✅ |
 | `ruff check .` | ✅ |
@@ -83,7 +117,7 @@ infraestructura por imágenes ausentes.
 | `lai swe-estimate` muestra ICC, DE, n efectivo y bootstrap | ✅ |
 | `run_ready.sh` | ✅ `bash -n` y ejecución real |
 
-## 5. Lo que NO se ha probado (Regla 6)
+## 6. Lo que NO se ha probado (Regla 6)
 
 - **Segundo modelo con el mismo n y harness.** No hay un segundo modelo de
   código disponible en local (solo Qwen3-8B y un instruct de 725M). Comparar
