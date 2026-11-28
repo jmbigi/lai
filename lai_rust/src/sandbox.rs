@@ -275,9 +275,33 @@ pub fn build_command_full(
     allow_net: bool,
     status: &SandboxStatus,
 ) -> anyhow::Result<Option<Command>> {
+    build_command_with_binds(command, workspace, required, allow_net, status, &[])
+}
+
+/// Igual que `build_command_full`, pero monta archivos adicionales en solo
+/// lectura dentro del sandbox.
+///
+/// Se usa para `run_python`: el script vive en un temporal del host y se monta
+/// como `/tmp/lai_script.py` sobre un `/tmp` privado (`--tmpfs`). Así el sandbox
+/// deja de compartir el `/tmp` del host.
+pub fn build_command_with_binds(
+    command: &str,
+    workspace: &Path,
+    required: bool,
+    allow_net: bool,
+    status: &SandboxStatus,
+    extra_ro_binds: &[(std::path::PathBuf, String)],
+) -> anyhow::Result<Option<Command>> {
     #[cfg(not(unix))]
     {
-        let _ = (command, workspace, required, allow_net, status);
+        let _ = (
+            command,
+            workspace,
+            required,
+            allow_net,
+            status,
+            extra_ro_binds,
+        );
         return Err(anyhow::anyhow!(
             "el sandbox bubblewrap solo está disponible en Linux/Unix; \
              usa \"sandbox\": false o no definas LAI_REQUIRE_SANDBOX"
@@ -308,10 +332,14 @@ pub fn build_command_full(
                 cmd.args(["--ro-bind", dir, dir]);
             }
         }
-        // El workspace es lo único escribible, además de /tmp (temporal).
+        // El workspace es lo único escribible.
         cmd.args(["--bind", &ws, &ws]);
-        if Path::new("/tmp").exists() {
-            cmd.args(["--bind", "/tmp", "/tmp"]);
+        // /tmp privado: no se comparte el del host (otros procesos podrían leer
+        // los temporales del agente). Los scripts que haya que ejecutar se
+        // montan como archivos de solo lectura.
+        cmd.args(["--tmpfs", "/tmp"]);
+        for (source, target) in extra_ro_binds {
+            cmd.args(["--ro-bind", &source.to_string_lossy(), target.as_str()]);
         }
         // /run contiene sockets de demonios del host (Docker, systemd). Un
         // montaje de solo lectura no impide conectarse, así que se oculta.

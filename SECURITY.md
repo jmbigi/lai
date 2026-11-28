@@ -64,8 +64,9 @@ LAI_REQUIRE_SANDBOX=1 lai auto "…"   # same via environment
 
 **Boundary honesty:** namespaces + dropped capabilities + clean environment.
 There is no seccomp/Landlock filter and no VM; a kernel-level escape is out of
-scope. `/tmp` is shared with the host because `run_python` writes its script
-there. For untrusted code, use a container or VM in addition to this sandbox.
+scope. `/tmp` is a private tmpfs (the `run_python` script is mounted read-only
+at `/tmp/lai_script.py`). For untrusted code, use a container or VM in addition
+to this sandbox.
 
 **Manifest guard:** `write_file`, `edit`, `apply_patch` and obvious shell
 redirections (`> Cargo.toml`, `rm`, `tee`, `dd of=…`) are refused unless

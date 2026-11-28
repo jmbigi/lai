@@ -170,6 +170,18 @@ impl PolicyEngine {
                     risk_level: RiskLevel::Medium,
                 }
             }
+            "git_add" | "git_commit" | "git_status" | "git_diff" | "git_rollback" => {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                if !self.is_within_workspace(path) {
+                    return PolicyDecision {
+                        allowed: false,
+                        reason: format!("Outside workspace: {}", path),
+                        policy: "WorkspaceBoundary".into(),
+                        risk_level: RiskLevel::High,
+                    };
+                }
+                self.check_git(tool)
+            }
             "read_file" | "list_dir" | "grep" | "find_files" | "repo_map" => {
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                 self.check_read(path)

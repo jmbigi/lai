@@ -1220,9 +1220,16 @@ complete corrected file content. Do not reply with analysis or questions — act
                     // necesita un agente de código y bloquearía `cd`, `sed`,
                     // `make`, etc.
                     let check_commands = crate::policy::command_allowlist_from_env();
-                    let result = if matches!(name_str, "write_file" | "apply_patch" | "edit")
-                        || (check_commands
-                            && matches!(name_str, "run_command" | "bash" | "run_python"))
+                    let result = if matches!(
+                        name_str,
+                        "write_file"
+                            | "apply_patch"
+                            | "edit"
+                            | "git_add"
+                            | "git_commit"
+                            | "git_rollback"
+                    ) || (check_commands
+                        && matches!(name_str, "run_command" | "bash" | "run_python"))
                     {
                         tools.call_tool(name_str, arguments).await
                     } else if let Some(func) = tools.tools.get(name_str) {

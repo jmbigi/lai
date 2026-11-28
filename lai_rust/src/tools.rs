@@ -218,11 +218,6 @@ fn reindent_like(template: &str, new: &str) -> String {
     result
 }
 
-/// Cita un argumento para `bash -c` (usado al envolver `run_python` en bwrap).
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 /// Mata el proceso y, en Unix, todo su grupo (hijos incluidos).
 fn kill_process_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
@@ -1030,6 +1025,46 @@ fn apply_patch_tool(args: &HashMap<String, Value>) -> Result<String> {
     ))
 }
 
+/// Ejecuta `git` y falla en voz alta si el comando no tuvo éxito.
+///
+/// Antes solo se devolvía `stdout`: un `git commit` sin nada que commitear (o
+/// con un error) devolvía una cadena vacía y el modelo lo interpretaba como
+/// éxito, igual que ocurría con `apply_patch`.
+fn run_git(path: &str, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("no se pudo ejecutar git {}: {e}", args.join(" ")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "git {} falló (código {}): {}{}",
+            args.join(" "),
+            output.status.code().unwrap_or(-1),
+            stderr,
+            if stdout.is_empty() {
+                String::new()
+            } else {
+                format!("\n{stdout}")
+            }
+        ));
+    }
+    if stdout.is_empty() {
+        return Ok(format!(
+            "git {} completado sin salida{}",
+            args.join(" "),
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        ));
+    }
+    Ok(stdout)
+}
+
 /// Símbolos del repo map con el formato de una línea por símbolo.
 ///
 /// Delega en `repomap::extract_symbols` para que `lai repo-map` y la
@@ -1039,6 +1074,82 @@ fn symbols_in_source(content: &str) -> Vec<String> {
         .into_iter()
         .map(|symbol| format!("  {} {}", symbol.kind, symbol.name))
         .collect()
+}
+
+/// Ejecuta código Python en un archivo temporal (aislado si se pide sandbox).
+fn run_python_tool(args: &HashMap<String, Value>) -> Result<String> {
+    run_python_tool_with(args, crate::sandbox::required_from_env())
+}
+
+fn run_python_tool_with(args: &HashMap<String, Value>, require_sandbox: bool) -> Result<String> {
+    let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    if code.trim().is_empty() {
+        return Err(anyhow::anyhow!("run_python requiere 'code'"));
+    }
+    let timeout_secs = arg_usize(args, "timeout", 60).clamp(1, 600);
+    // `into_temp_path()` cierra el handle antes de ejecutar (en Windows
+    // un NamedTempFile abierto puede impedir que Python lo lea) y sigue
+    // borrando el archivo al salir del ámbito.
+    let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
+    fs::write(&temp_path, code)?;
+    let explicit_sandbox = args.get("sandbox").and_then(|v| v.as_bool());
+    if require_sandbox && explicit_sandbox == Some(false) {
+        return Err(anyhow::anyhow!(
+            "sandbox requerido por LAI_REQUIRE_SANDBOX/--sandbox: no se puede \
+                     desactivar con \"sandbox\": false."
+        ));
+    }
+    let want_sandbox = require_sandbox || explicit_sandbox.unwrap_or(false);
+    let cmd = if want_sandbox {
+        let workspace = std::env::current_dir()?;
+        let allow_net =
+            arg_bool(args, "sandbox_network", false) || crate::sandbox::allow_net_from_env();
+        // El script se monta como archivo de solo lectura sobre un /tmp
+        // privado, en lugar de compartir el /tmp del host.
+        let binds = vec![(
+            std::path::PathBuf::from(&temp_path),
+            "/tmp/lai_script.py".to_string(),
+        )];
+        crate::sandbox::build_command_with_binds(
+            "python3 /tmp/lai_script.py",
+            &workspace,
+            require_sandbox,
+            allow_net,
+            crate::sandbox::preflight(),
+            &binds,
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "sandbox solicitado pero no disponible: {}",
+                crate::sandbox::preflight().detail
+            )
+        })?
+    } else {
+        let mut cmd = Command::new("python3");
+        cmd.arg(&temp_path);
+        cmd
+    };
+    let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut result = stdout.to_string();
+    if !stderr.is_empty() {
+        result.push_str("\nSTDERR:\n");
+        result.push_str(&stderr);
+    }
+    if !output.status.success() {
+        result.push_str(&format!(
+            "\nEXIT CODE: {}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    if result.trim().is_empty() {
+        result = format!(
+            "(no output, exit code {})",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+    Ok(result)
 }
 
 /// Lista de tareas del agente (scratchpad ligero, técnica de Warp).
@@ -1345,109 +1456,26 @@ impl ToolRegistry {
                 blocks.join("\n\n")
             })
         });
-        self.register_tool("run_python", |args| async move {
-            let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
-            if code.trim().is_empty() {
-                return Err(anyhow::anyhow!("run_python requiere 'code'"));
-            }
-            let timeout_secs = arg_usize(&args, "timeout", 60).clamp(1, 600);
-            // `into_temp_path()` cierra el handle antes de ejecutar (en Windows
-            // un NamedTempFile abierto puede impedir que Python lo lea) y sigue
-            // borrando el archivo al salir del ámbito.
-            let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
-            fs::write(&temp_path, code)?;
-            let require_sandbox = crate::sandbox::required_from_env();
-            let explicit_sandbox = args.get("sandbox").and_then(|v| v.as_bool());
-            if require_sandbox && explicit_sandbox == Some(false) {
-                return Err(anyhow::anyhow!(
-                    "sandbox requerido por LAI_REQUIRE_SANDBOX/--sandbox: no se puede \
-                     desactivar con \"sandbox\": false."
-                ));
-            }
-            let want_sandbox = require_sandbox || explicit_sandbox.unwrap_or(false);
-            let cmd = if want_sandbox {
-                let workspace = std::env::current_dir()?;
-                let script = shell_quote(&temp_path.to_string_lossy());
-                let allow_net = arg_bool(&args, "sandbox_network", false)
-                    || crate::sandbox::allow_net_from_env();
-                crate::sandbox::build_command_full(
-                    &format!("python3 {script}"),
-                    &workspace,
-                    require_sandbox,
-                    allow_net,
-                    crate::sandbox::preflight(),
-                )?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "sandbox solicitado pero no disponible: {}",
-                        crate::sandbox::preflight().detail
-                    )
-                })?
-            } else {
-                let mut cmd = Command::new("python3");
-                cmd.arg(&temp_path);
-                cmd
-            };
-            let output = run_with_timeout(cmd, Duration::from_secs(timeout_secs as u64))?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let mut result = stdout.to_string();
-            if !stderr.is_empty() {
-                result.push_str("\nSTDERR:\n");
-                result.push_str(&stderr);
-            }
-            if !output.status.success() {
-                result.push_str(&format!(
-                    "\nEXIT CODE: {}",
-                    output.status.code().unwrap_or(-1)
-                ));
-            }
-            if result.trim().is_empty() {
-                result = format!(
-                    "(no output, exit code {})",
-                    output.status.code().unwrap_or(-1)
-                );
-            }
-            Ok(result)
-        });
+        self.register_tool("run_python", |args| async move { run_python_tool(&args) });
         self.register_tool("todo", |args| async move { todo_tool(&args) });
         self.register_tool("apply_patch", |args| async move { apply_patch_tool(&args) });
         self.register_tool("git_add", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let files = args.get("files").and_then(|v| v.as_str()).unwrap_or(".");
-            let output = Command::new("git")
-                .args(["add", files])
-                .current_dir(path)
-                .output()?;
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            let path = arg_str(&args, "path", ".");
+            let files = arg_str(&args, "files", ".");
+            run_git(path, &["add", files])
         });
         self.register_tool("git_commit", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let message = args
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Auto commit");
-            let output = Command::new("git")
-                .args(["commit", "-m", message])
-                .current_dir(path)
-                .output()?;
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            let path = arg_str(&args, "path", ".");
+            let message = arg_str(&args, "message", "Auto commit");
+            run_git(path, &["commit", "-m", message])
         });
         self.register_tool("git_status", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let output = Command::new("git")
-                .args(["status"])
-                .current_dir(path)
-                .output()?;
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            let path = arg_str(&args, "path", ".");
+            run_git(path, &["status"])
         });
         self.register_tool("git_diff", |args| async move {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let output = Command::new("git")
-                .args(["diff"])
-                .current_dir(path)
-                .output()?;
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            let path = arg_str(&args, "path", ".");
+            run_git(path, &["diff"])
         });
     }
     pub async fn call_tool(&self, name: &str, args: HashMap<String, Value>) -> Result<String> {
@@ -2724,5 +2752,77 @@ async def go():\n\
             .to_string();
         assert!(err.contains("20"), "{err}");
         let _ = todo_tool(&args(json!({"action": "clear"})));
+    }
+
+    #[test]
+    fn git_tools_fail_loudly_on_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // Un directorio que no es un repositorio: git devuelve error y antes se
+        // convertía en una cadena vacía (éxito aparente).
+        let err = run_git(dir.path().to_str().unwrap(), &["status"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("git status falló"), "{err}");
+    }
+
+    #[test]
+    fn git_commit_with_nothing_to_commit_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        // Sin configuración de usuario, git commit falla; con ella, falla por
+        // "nothing to commit". En ambos casos debe ser un Err.
+        let err = run_git(dir.path().to_str().unwrap(), &["commit", "-m", "x"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("falló"), "{err}");
+    }
+
+    #[test]
+    fn git_status_in_a_repo_returns_output() {
+        let dir = tempfile::tempdir().unwrap();
+        if !init_git_repo(dir.path()) {
+            return;
+        }
+        let out = run_git(dir.path().to_str().unwrap(), &["status"]).unwrap();
+        assert!(!out.is_empty(), "git status debería devolver algo");
+    }
+
+    #[test]
+    fn run_python_works_under_sandbox_with_private_tmp() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let out = run_python_tool_with(
+            &args(json!({"code": "import os; print('PY_OK', os.path.exists('/tmp/lai_script.py'))", "sandbox": true})),
+            true,
+        )
+        .unwrap();
+        assert!(out.contains("PY_OK True"), "{out}");
+    }
+
+    #[test]
+    fn sandbox_private_tmp_is_not_the_host_tmp() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let host_marker = std::path::PathBuf::from("/tmp/lai-host-tmp-marker");
+        if fs::write(&host_marker, "host").is_err() {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "test -f /tmp/lai-host-tmp-marker && echo SHARED || echo PRIVATE",
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        let _ = fs::remove_file(&host_marker);
+        assert!(
+            out.contains("PRIVATE"),
+            "/tmp no debería compartirse: {out}"
+        );
     }
 }

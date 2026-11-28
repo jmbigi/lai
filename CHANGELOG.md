@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Herramienta `todo`** (técnica de Warp): lista de tareas de sesión (`set`/`add`/`done`/`list`/`clear`, máx. 20) para tareas de varios pasos; el perfil `bash` sigue exponiendo solo `bash`. 3 tests.
 - **Prompt de flujo en `auto`**: leer → reproducir → cambio mínimo → ejecutar el test → reportar el resultado real; prohíbe afirmar que un test pasó sin ejecutarlo.
 - **`scripts/start-llama.sh`**: añade `--jinja` (tool calling nativo con la plantilla del modelo), `--cache-reuse` y `-np` si el binario los soporta, con aviso si falta `--jinja`.
+- **`/tmp` privado en el sandbox**: `--tmpfs /tmp` en lugar de compartir el del host; el script de `run_python` se monta como archivo de solo lectura. 2 tests.
+- **Herramientas `git_*` honestas**: `run_git()` falla en voz alta con `stderr` en lugar de devolver una cadena vacía; `git_add`/`git_commit`/`git_rollback` pasan por el `PolicyEngine` en `auto` (frontera del workspace). 3 tests.
 - **DOCS/CAMBIOS_2026-11-28_MEJORAS4.md** (Regla 10).
 - **Diagnóstico del sandbox (2026-11-28)**: `lai doctor` y `lai status` informan bwrap, preflight, modo (opt-in/obligatorio) y si la red está permitida. Con `LAI_REQUIRE_SANDBOX=1` y sin sandbox, `doctor` lo marca como error.
 - **Red opcional dentro del sandbox**: `LAI_SANDBOX_ALLOW_NET=1` o `"sandbox_network": true` añade `--share-net` manteniendo el aislamiento de PID/mount/IPC. Por defecto sigue bloqueada.

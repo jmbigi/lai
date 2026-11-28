@@ -73,6 +73,8 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | G6 | Herramienta `todo` (lista de tareas de sesión) | ✅ | 3 tests |
 | G7 | Prompt de flujo y honestidad de tests | ✅ | Revisión |
 | G8 | `start-llama.sh` con `--jinja`/`--cache-reuse`/`-np` | ✅ | `bash -n` |
+| G9 | `/tmp` privado en el sandbox | ✅ | 2 tests |
+| G10 | `git_*` fallan en voz alta y pasan por política | ✅ | 3 tests |
 
 ## Fuera de alcance (declarado)
 

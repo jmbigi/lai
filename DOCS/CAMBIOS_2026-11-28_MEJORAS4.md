@@ -99,11 +99,39 @@ fallar.
 
 **Verificación:** `bash -n scripts/start-llama.sh`.
 
-## 8. Verificación completa
+## 8. `/tmp` privado en el sandbox
+
+**ANTES:** el sandbox montaba el `/tmp` del host con `--bind`, así que otros
+procesos podían leer los temporales del agente (y el agente los del host).
+
+**DESPUÉS:** `--tmpfs /tmp` (privado y vacío). Para `run_python`, el script se
+monta como archivo de solo lectura en `/tmp/lai_script.py` con
+`build_command_with_binds`. `run_python` se extrajo a `run_python_tool()` para
+poder probarlo.
+
+**Verificación:** 2 tests — Python funciona en sandbox y ve su script; un
+marcador creado en el `/tmp` del host no es visible dentro del sandbox.
+
+## 9. Herramientas `git_*`: fallan en voz alta y pasan por política
+
+**ANTES:** `git_add`/`git_commit`/`git_status`/`git_diff` devolvían solo
+`stdout`. Un `git commit` sin nada que commitear devolvía cadena vacía y el
+modelo lo interpretaba como éxito (el mismo fallo que tenía `apply_patch`).
+Además, en `auto` no pasaban por el `PolicyEngine`.
+
+**DESPUÉS:** `run_git()` comprueba el código de salida y devuelve `Err` con
+`stderr`; si no hay salida, lo dice explícitamente. Los cuatro comandos git (y
+`git_rollback`) pasan por `call_tool` en `auto` y `check_tool_value` aplica la
+frontera del workspace y `check_git`.
+
+**Verificación:** 3 tests (`git status` fuera de un repo falla, commit sin
+cambios falla, `git status` en un repo devuelve salida).
+
+## 10. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` | ✅ **220 tests** (178 lib + 42 integración), 0 fallos |
+| `cargo test` | ✅ **225 tests** (183 lib + 42 integración), 0 fallos |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --all-targets -- -D warnings` | ✅ |
 | `pytest tests swebench` | ✅ 241 passed, 9 skipped |
@@ -112,7 +140,7 @@ fallar.
 | `make gateway-check` | ✅ |
 | `scripts/ci_local.sh --quick --ci` | ✅ 6/6 |
 
-## 9. Lo que NO se ha probado (Regla 6)
+## 11. Lo que NO se ha probado (Regla 6)
 
 - **`cache_prompt` con un modelo real.** No hay servidor llama.cpp en marcha en
   esta sesión; no se midió la mejora de TTFT ni de tokens reprocesados. La
