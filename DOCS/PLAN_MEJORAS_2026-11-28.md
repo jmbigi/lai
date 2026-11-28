@@ -70,6 +70,9 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | G3 | Guarda de credenciales en `read_file`/`grep` | ✅ | 4 tests |
 | G4 | `LAI_DEBUG_TIMINGS=1` para medir caché | ✅ | Salida con servidor que devuelve `timings` |
 | G5 | `make sandbox-check` | ✅ | 19 pruebas de sandbox |
+| G6 | Herramienta `todo` (lista de tareas de sesión) | ✅ | 3 tests |
+| G7 | Prompt de flujo y honestidad de tests | ✅ | Revisión |
+| G8 | `start-llama.sh` con `--jinja`/`--cache-reuse`/`-np` | ✅ | `bash -n` |
 
 ## Fuera de alcance (declarado)
 

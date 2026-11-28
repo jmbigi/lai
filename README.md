@@ -157,15 +157,15 @@ The `auto` command implements advanced agent patterns:
 - **Best-version fallback**: Returns highest-scored version if not converged
 - **Cost tracking**: Token usage, estimated cloud-equivalent savings
 
-## Tool Registry — Rust (15 tools)
+## Tool Registry — Rust (16 tools)
 
 > **Vigencia (2026-11-28).** Esta lista es del CLI **Rust** (`lai_rust/`), la
 > implementación principal. El CLI Python legado (`lai_tools.py`) conserva su
 > propio registro, más amplio; no asumir paridad entre ambos.
 
 Core: `read_file`, `write_file`, `edit`, `list_dir`, `run_command`, `bash`,
-`grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `git_add`,
-`git_commit`, `git_status`, `git_diff`.
+`grep`, `find_files`, `repo_map`, `run_python`, `apply_patch`, `todo`,
+`git_add`, `git_commit`, `git_status`, `git_diff`.
 
 `run_command`, `bash` y `run_python` aceptan `"sandbox": true` para ejecutar en
 bubblewrap (sin red, workspace escribible). Con `lai --sandbox …` o

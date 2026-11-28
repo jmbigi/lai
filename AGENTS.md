@@ -33,10 +33,10 @@ This file provides guidance for AI agents working on the lai codebase.
 lai_rust/
 ├── Cargo.toml
 └── src/
-    ├── main.rs              # clap CLI: 19 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
+    ├── main.rs              # clap CLI: 20 subcommands (chat, code, auto, verify, repair, plan, bench, init, doctor, tui, mcp…)
     ├── commands.rs          # implementations of the CLI subcommands
     ├── llm.rs               # HTTP client for llama.cpp / Ollama; Rule 4 local-only guard
-    ├── tools.rs             # ToolRegistry (15 tools) + JSON schemas + perfiles (full/bash)
+    ├── tools.rs             # ToolRegistry (16 tools) + JSON schemas + perfiles (full/bash)
     ├── context_budget.rs    # presupuesto de contexto: elide salidas antiguas
     ├── context.rs           # project understanding (structure, docs, patterns, objectives)
     ├── planner.rs           # DAG planner + SPEC.md generation

@@ -1041,6 +1041,95 @@ fn symbols_in_source(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// Lista de tareas del agente (scratchpad ligero, técnica de Warp).
+///
+/// Los modelos pequeños pierden el hilo en tareas de varios pasos. Una lista
+/// corta y explícita —que el propio modelo mantiene— mejora la continuidad sin
+/// añadir un planificador rígido. Es estado de sesión, no del proyecto.
+static TODOS: std::sync::Mutex<Vec<TodoItem>> = std::sync::Mutex::new(Vec::new());
+
+#[derive(Debug, Clone)]
+struct TodoItem {
+    text: String,
+    done: bool,
+}
+
+fn todo_tool(args: &HashMap<String, Value>) -> Result<String> {
+    let action = arg_str(args, "action", "list");
+    let mut todos = TODOS
+        .lock()
+        .map_err(|_| anyhow::anyhow!("todo: lock poisoned"))?;
+
+    match action {
+        "set" => {
+            let items = args
+                .get("items")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow::anyhow!("todo con action=set requiere 'items' (array)"))?;
+            if items.len() > 20 {
+                return Err(anyhow::anyhow!(
+                    "todo: máximo 20 elementos; agrupa los pasos relacionados"
+                ));
+            }
+            todos.clear();
+            for item in items {
+                let text = item.as_str().unwrap_or("").trim().to_string();
+                if !text.is_empty() {
+                    todos.push(TodoItem { text, done: false });
+                }
+            }
+        }
+        "done" => {
+            let index =
+                args.get("index").and_then(|v| v.as_u64()).ok_or_else(|| {
+                    anyhow::anyhow!("todo con action=done requiere 'index' (1-based)")
+                })? as usize;
+            let item = todos
+                .get_mut(index.saturating_sub(1))
+                .ok_or_else(|| anyhow::anyhow!("todo: no existe el índice {index}"))?;
+            item.done = true;
+        }
+        "add" => {
+            let text = arg_str(args, "text", "").trim().to_string();
+            if text.is_empty() {
+                return Err(anyhow::anyhow!("todo con action=add requiere 'text'"));
+            }
+            if todos.len() >= 20 {
+                return Err(anyhow::anyhow!("todo: máximo 20 elementos"));
+            }
+            todos.push(TodoItem { text, done: false });
+        }
+        "clear" => todos.clear(),
+        "list" => {}
+        other => {
+            return Err(anyhow::anyhow!(
+                "todo: acción desconocida '{other}' (usa set, add, done, list o clear)"
+            ));
+        }
+    }
+
+    if todos.is_empty() {
+        return Ok("Lista de tareas vacía.".to_string());
+    }
+    let lines: Vec<String> = todos
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            format!(
+                "{}. [{}] {}",
+                i + 1,
+                if item.done { "x" } else { " " },
+                item.text
+            )
+        })
+        .collect();
+    let pending = todos.iter().filter(|t| !t.done).count();
+    Ok(format!(
+        "Tareas ({pending} pendientes):\n{}",
+        lines.join("\n")
+    ))
+}
+
 /// Perfil de herramientas que se anuncia al modelo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolProfile {
@@ -1321,6 +1410,7 @@ impl ToolRegistry {
             }
             Ok(result)
         });
+        self.register_tool("todo", |args| async move { todo_tool(&args) });
         self.register_tool("apply_patch", |args| async move { apply_patch_tool(&args) });
         self.register_tool("git_add", |args| async move {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
@@ -1443,6 +1533,11 @@ impl ToolRegistry {
                 name: "run_python".into(),
                 description: "Run Python code in a temporary file. The process is killed if it exceeds the timeout. Set sandbox=true to run inside bubblewrap; with LAI_REQUIRE_SANDBOX=1 the sandbox is mandatory and fails closed.".into(),
                 parameters: serde_json::json!({"type":"object","properties":{"code":{"type":"string"},"timeout":{"type":"integer","description":"Seconds before the process is killed (default 60, max 600)"},"sandbox":{"type":"boolean","description":"Run inside bubblewrap (default false unless LAI_REQUIRE_SANDBOX is set)"},"sandbox_network":{"type":"boolean","description":"Allow network inside the sandbox (default false)"}},"required":["code"]}),
+            },
+            ToolSchema {
+                name: "todo".into(),
+                description: "Maintain a short task list for multi-step work (max 20). Args: action (set|add|done|list|clear), items (array of strings for set), text (for add), index (1-based, for done). Keep it short and update it as you go.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"action":{"type":"string","enum":["set","add","done","list","clear"]},"items":{"type":"array","items":{"type":"string"}},"text":{"type":"string"},"index":{"type":"integer"}},"required":["action"]}),
             },
             ToolSchema {
                 name: "apply_patch".into(),
@@ -2580,5 +2675,54 @@ async def go():\n\
         .unwrap_err()
         .to_string();
         assert!(err.contains("credencial"), "{err}");
+    }
+
+    #[test]
+    fn todo_tool_manages_a_short_list() {
+        let _ = todo_tool(&args(json!({"action": "clear"})));
+
+        let out = todo_tool(&args(json!({
+            "action": "set",
+            "items": ["leer el issue", "reproducir el bug"]
+        })))
+        .unwrap();
+        assert!(out.contains("2 pendientes"), "{out}");
+
+        let out = todo_tool(&args(json!({"action": "done", "index": 1}))).unwrap();
+        assert!(out.contains("[x] leer el issue"), "{out}");
+        assert!(out.contains("1 pendientes"), "{out}");
+
+        let out = todo_tool(&args(json!({"action": "add", "text": "ejecutar tests"}))).unwrap();
+        assert!(out.contains("ejecutar tests"), "{out}");
+
+        let _ = todo_tool(&args(json!({"action": "clear"})));
+    }
+
+    #[test]
+    fn todo_tool_rejects_invalid_input() {
+        let err = todo_tool(&args(json!({"action": "set"})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("items"), "{err}");
+
+        let err = todo_tool(&args(json!({"action": "done", "index": 99})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("99"), "{err}");
+
+        let err = todo_tool(&args(json!({"action": "volcar"})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("desconocida"), "{err}");
+    }
+
+    #[test]
+    fn todo_tool_caps_the_list() {
+        let items: Vec<String> = (0..25).map(|i| format!("paso {i}")).collect();
+        let err = todo_tool(&args(json!({"action": "set", "items": items})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("20"), "{err}");
+        let _ = todo_tool(&args(json!({"action": "clear"})));
     }
 }

@@ -7,7 +7,9 @@
 #
 # Environment:
 #   LAI_MODEL_PATH, LAI_LLAMA_HOST, LAI_LLAMA_PORT, LAI_CONTEXT, LAI_NGL,
-#   LAI_MODEL_ALIAS, LAI_LOG_DIR, LLAMA_SERVER, LAI_LLAMA_EXTRA_ARGS
+#   LAI_MODEL_ALIAS, LAI_LOG_DIR, LLAMA_SERVER, LAI_LLAMA_EXTRA_ARGS,
+#   LAI_LLAMA_PARALLEL (slots for prompt-cache reuse, default 1),
+#   LAI_CACHE_REUSE (min chunk to reuse after a divergence, default 256)
 
 set -euo pipefail
 
@@ -33,6 +35,8 @@ PORT="${LAI_LLAMA_PORT:-8080}"
 CTX="${LAI_CONTEXT:-32768}"
 NGL="${LAI_NGL:-99}"
 ALIAS="${LAI_MODEL_ALIAS:-qwen3-8b}"
+PARALLEL="${LAI_LLAMA_PARALLEL:-1}"
+CACHE_REUSE="${LAI_CACHE_REUSE:-256}"
 LOG_DIR="${LAI_LOG_DIR:-$REPO_ROOT/logs}"
 PID_FILE="$LOG_DIR/llama.pid"
 LOG_FILE="$LOG_DIR/llama.log"
@@ -175,30 +179,38 @@ echo "  model:  $MODEL_PATH"
 echo "  server: $LLAMA_SERVER_PATH"
 echo "  log:    $LOG_FILE"
 
-if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-    nohup "$LLAMA_SERVER_PATH" \
-        -m "$MODEL_PATH" \
-        --host "$HOST" \
-        --port "$PORT" \
-        -c "$CTX" \
-        -ngl "$NGL" \
-        --alias "$ALIAS" \
-        --cont-batching \
-        --flash-attn auto \
-        "${EXTRA_ARGS[@]}" \
-        > "$LOG_FILE" 2>&1 &
+# Flags de agente: se añaden solo si el binario los soporta, para no romper
+# versiones antiguas de llama.cpp.
+SERVER_HELP="$("$LLAMA_SERVER_PATH" --help 2>&1 || true)"
+supports() { grep -q -- "$1" <<<"$SERVER_HELP"; }
+
+AGENT_ARGS=()
+if supports "--jinja"; then
+    # Usa la plantilla de chat del modelo (tool calling nativo fiable).
+    AGENT_ARGS+=(--jinja)
 else
-    nohup "$LLAMA_SERVER_PATH" \
-        -m "$MODEL_PATH" \
-        --host "$HOST" \
-        --port "$PORT" \
-        -c "$CTX" \
-        -ngl "$NGL" \
-        --alias "$ALIAS" \
-        --cont-batching \
-        --flash-attn auto \
-        > "$LOG_FILE" 2>&1 &
+    echo "  aviso: este llama-server no soporta --jinja; el tool calling puede ser menos fiable" >&2
 fi
+if supports "--cache-reuse"; then
+    # Reutiliza trozos del KV cache aunque el prompt diverja en el medio.
+    AGENT_ARGS+=(--cache-reuse "$CACHE_REUSE")
+fi
+if supports "--parallel"; then
+    AGENT_ARGS+=(-np "$PARALLEL")
+fi
+
+nohup "$LLAMA_SERVER_PATH" \
+    -m "$MODEL_PATH" \
+    --host "$HOST" \
+    --port "$PORT" \
+    -c "$CTX" \
+    -ngl "$NGL" \
+    --alias "$ALIAS" \
+    --cont-batching \
+    --flash-attn auto \
+    "${AGENT_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" \
+    > "$LOG_FILE" 2>&1 &
 
 PID=$!
 echo "$PID" > "$PID_FILE"

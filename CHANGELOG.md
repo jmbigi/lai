@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Guarda de credenciales en `read_file`/`grep`**: se rechazan `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `.netrc`, `.npmrc`, `.pypirc`, `id_rsa`, `*.pem`/`*.key` (salvo `.pub`), con override `allow_sensitive_read`. 4 tests.
 - **`LAI_DEBUG_TIMINGS=1`**: imprime `prompt_n`, `cache_n`, `predicted_n` y `predicted_per_second` de llama.cpp para medir una variable a la vez (Regla 11).
 - **`make sandbox-check`**: ejecuta las pruebas de aislamiento si `bwrap` está instalado.
+- **Herramienta `todo`** (técnica de Warp): lista de tareas de sesión (`set`/`add`/`done`/`list`/`clear`, máx. 20) para tareas de varios pasos; el perfil `bash` sigue exponiendo solo `bash`. 3 tests.
+- **Prompt de flujo en `auto`**: leer → reproducir → cambio mínimo → ejecutar el test → reportar el resultado real; prohíbe afirmar que un test pasó sin ejecutarlo.
+- **`scripts/start-llama.sh`**: añade `--jinja` (tool calling nativo con la plantilla del modelo), `--cache-reuse` y `-np` si el binario los soporta, con aviso si falta `--jinja`.
 - **DOCS/CAMBIOS_2026-11-28_MEJORAS4.md** (Regla 10).
 - **Diagnóstico del sandbox (2026-11-28)**: `lai doctor` y `lai status` informan bwrap, preflight, modo (opt-in/obligatorio) y si la red está permitida. Con `LAI_REQUIRE_SANDBOX=1` y sin sandbox, `doctor` lo marca como error.
 - **Red opcional dentro del sandbox**: `LAI_SANDBOX_ALLOW_NET=1` o `"sandbox_network": true` añade `--share-net` manteniendo el aislamiento de PID/mount/IPC. Por defecto sigue bloqueada.

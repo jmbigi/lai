@@ -188,7 +188,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` (suite completa) | **217 tests** (175 lib + 42 integración), 0 fallos |
+| `cargo test` (suite completa) | **220 tests** (178 lib + 42 integración), 0 fallos |
 | `pytest tests swebench` | 241 passed, 9 skipped |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
@@ -196,7 +196,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | `cargo build --release` | OK (~60 s) |
 | `make rust-check` (fmt + clippy + tests) | ✅ |
 | `make gateway-check` (`go build`) | ✅ |
-| Herramientas del `ToolRegistry` | **15** (se añadieron `edit` y `bash`) |
+| Herramientas del `ToolRegistry` | **16** (`edit`, `bash`, `todo`) |
 | Sandbox | **opt-in** (`sandbox: true`) y obligatorio con `--sandbox`; fail-closed; red opcional; entorno limpio y `/run` oculto |
 | Guarda de manifiestos | `write_file`, `edit`, `apply_patch` y redirecciones obvias en `bash` |
 | Allowlist de comandos | opt-in con `LAI_COMMAND_ALLOWLIST=1` |

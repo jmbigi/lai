@@ -71,11 +71,39 @@ devuelve `timings`. Permite medir una variable a la vez (Regla 11).
 **DESPUÉS:** `make sandbox-check` ejecuta las 19 pruebas de sandbox si `bwrap`
 está instalado y avisa si no lo está.
 
-## 6. Verificación completa
+## 6. Herramienta `todo` y prompt de flujo
+
+**ANTES:** el prompt no sugería planificar; en tareas de varios pasos los
+modelos pequeños perdían el hilo.
+
+**DESPUÉS**
+
+- Herramienta `todo` (técnica de Warp): `set`/`add`/`done`/`list`/`clear`, máximo
+  20 elementos, estado de sesión. Añadida al perfil `full`; el perfil `bash`
+  sigue exponiendo solo `bash`.
+- El prompt del perfil full explica el flujo: leer → reproducir → cambio mínimo
+  → ejecutar el test → reportar el resultado real; y pide no afirmar que un test
+  pasó si no se ejecutó.
+- 3 tests de la herramienta.
+
+## 7. `start-llama.sh` con flags de agente
+
+**ANTES:** el script arrancaba llama.cpp sin `--jinja` (necesario para que el
+servidor use la plantilla de chat del modelo y el tool calling nativo fiable) y
+sin `--cache-reuse`.
+
+**DESPUÉS:** detecta el soporte en `llama-server --help` y añade
+`--jinja`, `--cache-reuse 256` (`LAI_CACHE_REUSE`) y `-np N`
+(`LAI_LLAMA_PARALLEL`). Si el binario no soporta `--jinja`, avisa en lugar de
+fallar.
+
+**Verificación:** `bash -n scripts/start-llama.sh`.
+
+## 8. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` | ✅ **217 tests** (175 lib + 42 integración), 0 fallos |
+| `cargo test` | ✅ **220 tests** (178 lib + 42 integración), 0 fallos |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --all-targets -- -D warnings` | ✅ |
 | `pytest tests swebench` | ✅ 241 passed, 9 skipped |
@@ -84,7 +112,7 @@ está instalado y avisa si no lo está.
 | `make gateway-check` | ✅ |
 | `scripts/ci_local.sh --quick --ci` | ✅ 6/6 |
 
-## 7. Lo que NO se ha probado (Regla 6)
+## 9. Lo que NO se ha probado (Regla 6)
 
 - **`cache_prompt` con un modelo real.** No hay servidor llama.cpp en marcha en
   esta sesión; no se midió la mejora de TTFT ni de tokens reprocesados. La
@@ -95,3 +123,8 @@ está instalado y avisa si no lo está.
   detector de contenido: un secreto en `notes.txt` no se detecta.
 - **Gramáticas GBNF explícitas.** llama.cpp ya genera la gramática desde los
   `tools` nativos; no se envía un `grammar`/`response_format` adicional.
+- **`--jinja` / `--cache-reuse`.** No hay servidor llama.cpp en marcha en esta
+  sesión: el script los añade si el binario los soporta, pero no se midió su
+  efecto.
+- **Herramienta `todo` con modelos reales.** Solo tests unitarios; no se midió
+  si mejora la tasa de resolución.

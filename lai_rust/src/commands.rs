@@ -879,6 +879,18 @@ When you need to use a tool, respond with a JSON code block in this format:
 
 You can call multiple tools in one response by including multiple JSON blocks. After each tool call, you will receive the result. Continue until the task is complete.
 
+For work with 3+ steps, call `todo` with action=set to record a short plan, then
+mark items done as you finish them. Keep it under 6 items.
+
+Workflow for fixing a bug:
+1. Read the failing code and the test that fails.
+2. Reproduce the failure before changing anything.
+3. Make the smallest change that fixes the cause, not the symptom.
+4. Run the test again and report the real result. If it still fails, say so.
+
+Never claim a test passed if you did not run it. Never paste example code from
+the issue over the real file.
+
 IMPORTANT: Only output the JSON code block when you want to call a tool. Otherwise, respond normally with text.
 
 TOOL USAGE GUIDE:
