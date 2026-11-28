@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`cache_prompt` en cada petición (2026-11-28)**: el bucle de agente reutiliza el KV cache del prefijo estable (sistema + esquemas de herramientas) en lugar de reprocesarlo cada turno. Desactivable con `LAI_CACHE_PROMPT=0`. Test de serialización.
+- **Guarda de truncación**: `auto` no ejecuta tool calls de una respuesta con `finish_reason == "length"` (pueden estar incompletas); avisa y pide una acción más corta. `ChatOutcome` expone `finish_reason`.
+- **Guarda de credenciales en `read_file`/`grep`**: se rechazan `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `.netrc`, `.npmrc`, `.pypirc`, `id_rsa`, `*.pem`/`*.key` (salvo `.pub`), con override `allow_sensitive_read`. 4 tests.
+- **`LAI_DEBUG_TIMINGS=1`**: imprime `prompt_n`, `cache_n`, `predicted_n` y `predicted_per_second` de llama.cpp para medir una variable a la vez (Regla 11).
+- **`make sandbox-check`**: ejecuta las pruebas de aislamiento si `bwrap` está instalado.
+- **DOCS/CAMBIOS_2026-11-28_MEJORAS4.md** (Regla 10).
 - **Diagnóstico del sandbox (2026-11-28)**: `lai doctor` y `lai status` informan bwrap, preflight, modo (opt-in/obligatorio) y si la red está permitida. Con `LAI_REQUIRE_SANDBOX=1` y sin sandbox, `doctor` lo marca como error.
 - **Red opcional dentro del sandbox**: `LAI_SANDBOX_ALLOW_NET=1` o `"sandbox_network": true` añade `--share-net` manteniendo el aislamiento de PID/mount/IPC. Por defecto sigue bloqueada.
 - **Guarda de manifiestos en `run_command`/`bash`**: rechaza redirecciones (`> Cargo.toml`), heredocs, `rm`, `tee`, `truncate`, `dd of=` y `mv`/`cp` sobre manifiestos, salvo `allow_manifest_overwrite: true`. Mejor esfuerzo; la ofuscación puede saltarla y el sandbox es el control fuerte.

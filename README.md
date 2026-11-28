@@ -223,6 +223,8 @@ Environment variables:
 - `LAI_COMMAND_ALLOWLIST` - `1` applies the command allowlist in `auto`
 - `LAI_ALLOW_COMMANDS` - Comma-separated extra allowed commands
 - `LAI_PROTECTED_PATHS` - Comma-separated extra protected paths
+- `LAI_CACHE_PROMPT` - `0` disables prompt/KV cache reuse (default: enabled)
+- `LAI_DEBUG_TIMINGS` - `1` prints llama.cpp prompt/cache/generation timings
 
 ## Development
 

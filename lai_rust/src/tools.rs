@@ -333,6 +333,15 @@ fn read_file_tool(args: &HashMap<String, Value>) -> Result<String> {
     if path.is_empty() {
         return Err(anyhow::anyhow!("read_file requires a non-empty 'path'"));
     }
+    if !arg_bool(args, "allow_sensitive_read", false) {
+        if let Some(reason) = sensitive_read_violation(path) {
+            return Err(anyhow::anyhow!(
+                "read_file rechazado: '{path}' parece una credencial ({reason}). \
+                 El agente no debe leer claves ni tokens. Si de verdad lo necesitas, \
+                 repite con \"allow_sensitive_read\": true."
+            ));
+        }
+    }
     let bytes = fs::read(path).map_err(|e| anyhow::anyhow!("read_file {path}: {e}"))?;
     if bytes.iter().take(8192).any(|b| *b == 0) {
         return Err(anyhow::anyhow!(
@@ -395,6 +404,11 @@ fn grep_tool(args: &HashMap<String, Value>) -> Result<String> {
         return Err(anyhow::anyhow!("grep requires a non-empty 'pattern'"));
     }
     let path = arg_str(args, "path", ".");
+    if let Some(reason) = sensitive_read_violation(path) {
+        return Err(anyhow::anyhow!(
+            "grep rechazado: '{path}' parece una ruta de credenciales ({reason})."
+        ));
+    }
     // Un `path` inexistente devolvía "No matches", y el modelo interpretaba que
     // el patrón no estaba y probaba rutas inventadas (medido el 2026-11-27 en
     // pytest-5809: 10 iteraciones con /testbed/src/_pytest/terminal/pytest/...).
@@ -668,6 +682,56 @@ fn manifest_patch_violation(patch: &str, cwd: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Detecta lecturas de credenciales del usuario.
+///
+/// El sandbox protege la ejecución de comandos, pero `read_file` es una
+/// herramienta del proceso lai y lee con los permisos del usuario. Un README
+/// con prompt injection podría pedir `~/.ssh/id_ed25519` y el modelo verter el
+/// contenido al contexto. Esta guarda bloquea las rutas de credenciales más
+/// comunes; es una lista de nombres, no un análisis del contenido.
+fn sensitive_read_violation(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    let components: Vec<&str> = lower.split('/').filter(|c| !c.is_empty()).collect();
+
+    // Componentes de directorio que nunca se leen desde el agente.
+    const SENSITIVE_DIRS: &[&str] = &[".ssh", ".aws", ".gnupg", ".azure", ".kube"];
+    for dir in SENSITIVE_DIRS {
+        if components.contains(dir) {
+            return Some(format!("directorio {dir}"));
+        }
+    }
+    if components.contains(&".docker") && components.last() == Some(&"config.json") {
+        return Some("credenciales de Docker".to_string());
+    }
+
+    // Archivos de credenciales por nombre.
+    const SENSITIVE_FILES: &[&str] = &[
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".git-credentials",
+        ".env.local",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+    ];
+    if let Some(name) = components.last() {
+        if SENSITIVE_FILES.contains(name) {
+            return Some(format!("archivo {name}"));
+        }
+    }
+
+    // Claves privadas por extensión, pero no certificados públicos.
+    if let Some(name) = components.last() {
+        if (name.ends_with(".pem") || name.ends_with(".key")) && !name.ends_with(".pub") {
+            return Some(format!("posible clave privada {name}"));
+        }
+    }
+    None
 }
 
 fn write_file_tool(args: &HashMap<String, Value>) -> Result<String> {
@@ -1332,8 +1396,8 @@ impl ToolRegistry {
         vec![
             ToolSchema {
                 name: "read_file".into(),
-                description: "Read a file or a 1-based line range. Large files are capped at 400 lines by default; use start_line/end_line/max_lines for precise reads.".into(),
-                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","description":"First line, 1-based (default 1)"},"end_line":{"type":"integer","description":"Last line, inclusive"},"max_lines":{"type":"integer","description":"Maximum lines to return (default 400, max 2000)"}},"required":["path"]}),
+                description: "Read a file or a 1-based line range. Large files are capped at 400 lines by default; use start_line/end_line/max_lines for precise reads. Refuses to read credential files (~/.ssh, ~/.aws, *.pem, id_rsa, ...) unless allow_sensitive_read is true.".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","description":"First line, 1-based (default 1)"},"end_line":{"type":"integer","description":"Last line, inclusive"},"max_lines":{"type":"integer","description":"Maximum lines to return (default 400, max 2000)"},"allow_sensitive_read":{"type":"boolean","description":"Permit reading a credential-like path"}},"required":["path"]}),
             },
             ToolSchema {
                 name: "write_file".into(),
@@ -2462,5 +2526,59 @@ async def go():\n\
             out.trim().is_empty() || out.contains("(no output"),
             "/run debería estar vacío: {out}"
         );
+    }
+
+    #[test]
+    fn read_file_rejects_credential_paths() {
+        for path in [
+            "/home/user/.ssh/id_ed25519",
+            "/home/user/.aws/credentials",
+            "/home/user/project/id_rsa",
+            "C:\\Users\\me\\.ssh\\id_rsa",
+            "/home/user/.npmrc",
+            "/home/user/private.pem",
+            "/home/user/.docker/config.json",
+        ] {
+            let err = read_file_tool(&args(json!({"path": path})))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("credencial"), "{path}: {err}");
+        }
+    }
+
+    #[test]
+    fn read_file_allows_public_and_normal_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let normal = dir.path().join("main.rs");
+        fs::write(&normal, "fn main() {}\n").unwrap();
+        assert!(read_file_tool(&args(json!({"path": normal.to_string_lossy()}))).is_ok());
+
+        let public_key = dir.path().join("id_rsa.pub");
+        fs::write(&public_key, "ssh-rsa AAA\n").unwrap();
+        assert!(read_file_tool(&args(json!({"path": public_key.to_string_lossy()}))).is_ok());
+    }
+
+    #[test]
+    fn read_file_can_override_sensitive_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("id_rsa");
+        fs::write(&key, "secret\n").unwrap();
+        let out = read_file_tool(&args(json!({
+            "path": key.to_string_lossy(),
+            "allow_sensitive_read": true
+        })))
+        .unwrap();
+        assert!(out.contains("secret"), "{out}");
+    }
+
+    #[test]
+    fn grep_rejects_credential_directories() {
+        let err = grep_tool(&args(json!({
+            "pattern": "PRIVATE KEY",
+            "path": "/home/user/.ssh"
+        })))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("credencial"), "{err}");
     }
 }

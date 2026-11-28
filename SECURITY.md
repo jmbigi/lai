@@ -73,6 +73,13 @@ redirections (`> Cargo.toml`, `rm`, `tee`, `dd of=…`) are refused unless
 (variables, `python -c`, nested shells) can bypass it; the sandbox is the
 control that does not depend on parsing the command.
 
+**Credential read guard:** `read_file` and `grep` refuse paths under `.ssh`,
+`.aws`, `.gnupg`, `.azure`, `.kube`, `.docker/config.json`, and files such as
+`.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `id_rsa`, `id_ed25519`, and
+private `.pem`/`.key` files (public `.pub` files are allowed). Override with
+`allow_sensitive_read: true` on `read_file`. This is a name/component list, not
+content detection.
+
 **Command allowlist:** `LAI_COMMAND_ALLOWLIST=1` routes `run_command`, `bash`
 and `run_python` through the `PolicyEngine` allowlist (extend it with
 `LAI_ALLOW_COMMANDS=make,sed,…`). It is off by default because coding agents

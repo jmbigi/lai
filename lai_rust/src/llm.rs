@@ -153,6 +153,13 @@ pub struct ChatRequest {
     pub top_k: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<HashMap<String, serde_json::Value>>,
+    /// Reutiliza el KV cache de la petición anterior cuando el prefijo coincide.
+    ///
+    /// En un bucle de agente el prompt de sistema y las herramientas son un
+    /// prefijo estable de miles de tokens; sin esto se reprocesan en cada
+    /// turno. llama.cpp y Ollama ignoran el campo si no lo soportan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_prompt: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,6 +167,10 @@ pub struct ChatResponse {
     pub choices: Vec<Choice>,
     #[serde(default)]
     pub usage: serde_json::Value,
+    /// Métricas de llama.cpp (`prompt_n`, `cache_n`, `predicted_per_second`).
+    /// Opcional: otros servidores no lo devuelven.
+    #[serde(default)]
+    pub timings: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -167,6 +178,24 @@ pub struct Choice {
     pub message: Message,
     #[serde(default)]
     pub finish_reason: Option<String>,
+}
+
+/// Resultado de una llamada con tool calling: el mensaje y por qué terminó.
+///
+/// `finish_reason == "length"` significa que la respuesta se truncó al agotar
+/// `max_tokens`; una tool call en ese estado puede estar incompleta y no debe
+/// ejecutarse (lección del análisis de gramáticas de llama.cpp).
+#[derive(Debug, Clone)]
+pub struct ChatOutcome {
+    pub message: Message,
+    pub finish_reason: Option<String>,
+}
+
+impl ChatOutcome {
+    /// ¿La respuesta se cortó por longitud y hay que pedir una más corta?
+    pub fn truncated(&self) -> bool {
+        self.finish_reason.as_deref() == Some("length")
+    }
 }
 
 /// Tool schema for native function calling (OpenAI-compatible)
@@ -280,6 +309,10 @@ pub struct NativeChatRequest {
     pub top_k: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<HashMap<String, serde_json::Value>>,
+    /// Reutiliza el KV cache de la petición anterior cuando el prefijo coincide.
+    /// Ver `ChatRequest::cache_prompt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_prompt: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -339,6 +372,25 @@ impl LlmClient {
         self
     }
 
+    /// ¿Se pide reutilizar el KV cache entre peticiones?
+    ///
+    /// En un bucle de agente el prompt de sistema y los esquemas de herramientas
+    /// son un prefijo estable de miles de tokens. `cache_prompt` hace que
+    /// llama.cpp lo procese una vez y reutilice el KV cache en los turnos
+    /// siguientes; sin él se recalcula en cada iteración. Los servidores que no
+    /// lo soportan ignoran el campo. Se puede desactivar con
+    /// `LAI_CACHE_PROMPT=0` (por si un backend rechaza campos desconocidos).
+    fn cache_prompt(&self) -> bool {
+        !matches!(
+            std::env::var("LAI_CACHE_PROMPT")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    }
+
     /// Regla 4: permite endpoints no locales con consentimiento explícito.
     pub fn with_allow_remote(mut self, allow_remote: bool) -> Self {
         self.allow_remote = allow_remote;
@@ -392,6 +444,7 @@ impl LlmClient {
                 "enable_thinking".into(),
                 serde_json::Value::Bool(false),
             )])),
+            cache_prompt: Some(self.cache_prompt()),
         };
 
         let resp = self.chat_request()?.json(&payload).send().await?;
@@ -433,6 +486,7 @@ impl LlmClient {
                 "enable_thinking".into(),
                 serde_json::Value::Bool(false),
             )])),
+            cache_prompt: Some(self.cache_prompt()),
         };
 
         let resp = self.chat_request()?.json(&payload).send().await?;
@@ -460,7 +514,7 @@ impl LlmClient {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
         tool_choice: Option<ToolChoice>,
-    ) -> Result<Message> {
+    ) -> Result<ChatOutcome> {
         let payload = NativeChatRequest {
             model: self.model.clone(),
             messages,
@@ -475,6 +529,7 @@ impl LlmClient {
                 "enable_thinking".into(),
                 serde_json::Value::Bool(false),
             )])),
+            cache_prompt: Some(self.cache_prompt()),
         };
 
         let resp = self.chat_request()?.json(&payload).send().await?;
@@ -486,13 +541,19 @@ impl LlmClient {
         }
 
         let data: ChatResponse = resp.json().await?;
+        if let Some(timings) = &data.timings {
+            log_timings(timings);
+        }
         let choice = data
             .choices
             .first()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
-        Ok(choice.message)
+        Ok(ChatOutcome {
+            message: choice.message,
+            finish_reason: choice.finish_reason,
+        })
     }
 
     /// Streaming chat with native tool calling
@@ -516,6 +577,7 @@ impl LlmClient {
                 "enable_thinking".into(),
                 serde_json::Value::Bool(false),
             )])),
+            cache_prompt: Some(self.cache_prompt()),
         };
 
         let resp = self.chat_request()?.json(&payload).send().await?;
@@ -528,6 +590,33 @@ impl LlmClient {
 
         Ok(resp)
     }
+}
+
+/// Imprime métricas de llama.cpp cuando `LAI_DEBUG_TIMINGS=1`.
+///
+/// Permite medir el efecto de `cache_prompt` (Regla 11: una variable a la vez):
+/// `cache_n` son los tokens de prompt reutilizados del KV cache y `prompt_n`
+/// los realmente procesados.
+fn log_timings(timings: &serde_json::Value) {
+    let enabled = matches!(
+        std::env::var("LAI_DEBUG_TIMINGS")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    );
+    if !enabled {
+        return;
+    }
+    let get = |key: &str| timings.get(key).cloned().unwrap_or(serde_json::Value::Null);
+    eprintln!(
+        "  ⏱ prompt_n={} cache_n={} predicted_n={} gen_t/s={}",
+        get("prompt_n"),
+        get("cache_n"),
+        get("predicted_n"),
+        get("predicted_per_second"),
+    );
 }
 
 #[cfg(test)]
@@ -647,5 +736,91 @@ mod tests {
 
         let local = LlmClient::new("http://127.0.0.1:11434/v1".into(), "m".into());
         assert!(local.check_endpoint().is_ok());
+    }
+
+    #[test]
+    fn chat_outcome_detects_truncation() {
+        let message = Message {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        };
+        let truncated = ChatOutcome {
+            message: message.clone(),
+            finish_reason: Some("length".into()),
+        };
+        assert!(truncated.truncated());
+        let stopped = ChatOutcome {
+            message,
+            finish_reason: Some("stop".into()),
+        };
+        assert!(!stopped.truncated());
+        let unknown = ChatOutcome {
+            message: Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+            finish_reason: None,
+        };
+        assert!(!unknown.truncated());
+    }
+
+    #[test]
+    fn native_request_serializes_cache_prompt() {
+        let payload = NativeChatRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            tool_choice: None,
+            stream: Some(false),
+            temperature: Some(0.2),
+            max_tokens: Some(64),
+            top_p: None,
+            top_k: None,
+            chat_template_kwargs: None,
+            cache_prompt: Some(true),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["cache_prompt"], true);
+
+        let without = NativeChatRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            tool_choice: None,
+            stream: Some(false),
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            top_k: None,
+            chat_template_kwargs: None,
+            cache_prompt: None,
+        };
+        let json = serde_json::to_value(&without).unwrap();
+        assert!(
+            json.get("cache_prompt").is_none(),
+            "no debe enviarse si es None"
+        );
+    }
+
+    #[test]
+    fn cache_prompt_env_parsing_is_pure() {
+        for value in ["0", "false", "NO", "off"] {
+            assert!(matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            ));
+        }
+        for value in ["1", "true", "", "on"] {
+            assert!(!matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            ));
+        }
     }
 }

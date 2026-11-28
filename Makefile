@@ -1,4 +1,4 @@
-.PHONY: help check lint test format type ci ci-quick install dev-install build gateway-build clean smoke
+.PHONY: help check lint test format type ci ci-quick install dev-install build gateway-build clean smoke rust-check gateway-check sandbox-check
 
 # Default target
 help:
@@ -11,6 +11,9 @@ help:
 	@echo "  install      Install package in editable mode"
 	@echo "  dev-install  Install package with dev dependencies"
 	@echo "  gateway-build Build Go gateway"
+	@echo "  rust-check   Rust fmt + clippy + tests (implementación principal)"
+	@echo "  gateway-check Build the Go gateway"
+	@echo "  sandbox-check Verify bubblewrap isolation (if installed)"
 	@echo "  clean        Remove build artifacts and caches"
 
 # Quality checks
@@ -55,6 +58,15 @@ rust-check:
 # Gateway Go (opcional: no lo necesita el agente para funcionar).
 gateway-check:
 	cd gateway-go && go build -o /tmp/lai-gateway-check .
+
+# Verifica que el sandbox aísla de verdad (solo si bubblewrap está instalado).
+sandbox-check:
+	@if command -v bwrap >/dev/null 2>&1; then \
+		cd lai_rust && cargo test --quiet --lib sandbox ; \
+		echo "sandbox: pruebas de aislamiento OK"; \
+	else \
+		echo "sandbox: bwrap no instalado; se omite (instala bubblewrap para probarlo)"; \
+	fi
 
 # Installation
 install:

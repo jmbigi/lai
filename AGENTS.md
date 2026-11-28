@@ -159,6 +159,12 @@ cargo install --path .
   `LAI_SANDBOX_ALLOW_NET=1` (network inside the sandbox),
   `LAI_COMMAND_ALLOWLIST=1` + `LAI_ALLOW_COMMANDS=a,b` (opt-in command allowlist
   in `auto`), `LAI_PROTECTED_PATHS=…` (extra protected paths)
+- `read_file`/`grep` refuse credential paths (`~/.ssh`, `~/.aws`, `*.pem`,
+  `id_rsa`, …) unless `allow_sensitive_read: true`.
+- `auto` does not execute tool calls from a response with
+  `finish_reason == "length"` (they may be truncated).
+- `cache_prompt: true` is sent on every request (disable with
+  `LAI_CACHE_PROMPT=0`); `LAI_DEBUG_TIMINGS=1` prints llama.cpp timings.
 
 ## Documentation
 

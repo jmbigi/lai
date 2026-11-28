@@ -61,6 +61,16 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | F5 | Coherencia registro/esquemas y pruebas de ataque del sandbox | ✅ | 4 tests |
 | F6 | Documentar que los benchmarks se hicieron sin sandbox | ✅ | `BENCHMARKS.md` |
 
+## Lote G — Eficiencia y seguridad de lectura (investigación llama.cpp)
+
+| # | Mejora | Estado | Verificación |
+|---|---|---|---|
+| G1 | `cache_prompt: true` en cada petición | ✅ | Test de serialización |
+| G2 | No ejecutar tool calls con `finish_reason == "length"` | ✅ | Test |
+| G3 | Guarda de credenciales en `read_file`/`grep` | ✅ | 4 tests |
+| G4 | `LAI_DEBUG_TIMINGS=1` para medir caché | ✅ | Salida con servidor que devuelve `timings` |
+| G5 | `make sandbox-check` | ✅ | 19 pruebas de sandbox |
+
 ## Fuera de alcance (declarado)
 
 - Conectar `contracts.rs` a Dafny/TLA+/α,β-CROWN: requiere instalar herramientas

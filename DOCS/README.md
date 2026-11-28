@@ -24,6 +24,7 @@ This directory contains technical documentation for lai.
 | [PLAN_MEJORAS_2026-11-28.md](PLAN_MEJORAS_2026-11-28.md) | Improvement plan after the sandbox work |
 | [CAMBIOS_2026-11-28_MEJORAS2.md](CAMBIOS_2026-11-28_MEJORAS2.md) | Before/after record: sandbox diagnostics, network opt-in, shell manifest guard, command allowlist (Regla 10) |
 | [CAMBIOS_2026-11-28_MEJORAS3.md](CAMBIOS_2026-11-28_MEJORAS3.md) | Before/after record: sandbox env scrub, `/run` masking, indentation-tolerant `edit`, submit sentinel (Regla 10) |
+| [CAMBIOS_2026-11-28_MEJORAS4.md](CAMBIOS_2026-11-28_MEJORAS4.md) | Before/after record: prompt cache, truncation guard, credential read guard, timings (Regla 10) |
 
 ## External References
 

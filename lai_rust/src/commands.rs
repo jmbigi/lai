@@ -1051,7 +1051,28 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
             .await;
 
         match result {
-            Ok(msg) => {
+            Ok(outcome) => {
+                let truncated = outcome.truncated();
+                let msg = outcome.message;
+                // Una respuesta truncada por `max_tokens` puede contener una
+                // tool call a medias; ejecutarla aplicaría un parche corrupto.
+                if truncated {
+                    eprintln!(
+                        "  ⚠ La respuesta se truncó al agotar max_tokens; no se ejecutan \
+                         sus tool calls. Se pide al modelo una acción más corta."
+                    );
+                    messages.push(crate::llm::Message {
+                        role: "user".into(),
+                        content: "Your previous response was cut off by the output limit. \
+                                  Reply with ONE short tool call (or a short final answer), \
+                                  without long explanations."
+                            .into(),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        name: None,
+                    });
+                    continue;
+                }
                 let content = strip_think_tags(&msg.content);
                 if !content.is_empty() {
                     println!("{}", content);

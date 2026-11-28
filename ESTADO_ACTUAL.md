@@ -188,7 +188,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` (suite completa) | **210 tests** (168 lib + 42 integración), 0 fallos |
+| `cargo test` (suite completa) | **217 tests** (175 lib + 42 integración), 0 fallos |
 | `pytest tests swebench` | 241 passed, 9 skipped |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
@@ -200,6 +200,8 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | Sandbox | **opt-in** (`sandbox: true`) y obligatorio con `--sandbox`; fail-closed; red opcional; entorno limpio y `/run` oculto |
 | Guarda de manifiestos | `write_file`, `edit`, `apply_patch` y redirecciones obvias en `bash` |
 | Allowlist de comandos | opt-in con `LAI_COMMAND_ALLOWLIST=1` |
+| Credenciales | `read_file`/`grep` rechazan `~/.ssh`, `~/.aws`, `id_rsa`, `*.pem`… |
+| Caché de prompt | `cache_prompt: true`; medible con `LAI_DEBUG_TIMINGS=1` |
 | Artefactos de build versionados | **0** (se retiraron 345 archivos / 82 MB de `lai_rust/target/`) |
 
 Pendientes abiertos: medir el sandbox con modelos reales (los benchmarks se
