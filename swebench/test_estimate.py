@@ -95,6 +95,49 @@ class TestSampleSize:
             estimate.sample_size_for_margin(0.2, 0)
 
 
+class TestClusterCorrelation:
+    def test_no_correlation_when_clusters_match(self):
+        clusters = [(1, 1), (0, 1), (1, 1), (0, 1)]
+        assert estimate.intraclass_correlation(clusters) == pytest.approx(0.0, abs=0.01)
+        assert estimate.design_effect(clusters) == pytest.approx(1.0, abs=0.01)
+
+    def test_perfect_clustering_gives_icc_one(self):
+        clusters = [(3, 3), (0, 3), (0, 3), (0, 3)]
+        assert estimate.intraclass_correlation(clusters) == pytest.approx(1.0, abs=0.01)
+        # DE = 1 + (m̄-1)·ICC = 1 + 2·1 = 3
+        assert estimate.design_effect(clusters) == pytest.approx(3.0, abs=0.01)
+
+    def test_degenerate_inputs(self):
+        assert estimate.intraclass_correlation([]) == 0.0
+        assert estimate.intraclass_correlation([(1, 1)]) == 0.0
+        assert estimate.design_effect([]) == 1.0
+
+    def test_bootstrap_ci_brackets_the_rate(self):
+        clusters = [(0, 3), (1, 1), (0, 1), (1, 2), (0, 1)]
+        low, high = estimate.cluster_bootstrap_ci(clusters, iterations=2000)
+        rate = sum(k for k, _ in clusters) / sum(n for _, n in clusters)
+        assert low <= rate <= high
+
+    def test_bootstrap_is_deterministic_with_seed(self):
+        clusters = [(1, 2), (0, 3), (1, 1)]
+        first = estimate.cluster_bootstrap_ci(clusters, iterations=1000, seed=7)
+        second = estimate.cluster_bootstrap_ci(clusters, iterations=1000, seed=7)
+        assert first == second
+
+    def test_bootstrap_wider_than_wilson_with_clustering(self):
+        # Un repo concentra todos los éxitos: la correlación debe ensanchar el IC.
+        clusters = [(5, 5), (0, 5), (0, 5), (0, 5)]
+        low, high = estimate.cluster_bootstrap_ci(clusters, iterations=5000)
+        naive_low, naive_high = estimate.wilson_interval(5, 20)
+        assert (high - low) > (naive_high - naive_low)
+
+    def test_wilson_with_design_effect_shrinks_n(self):
+        low, high = estimate.wilson_with_design_effect(2, 10, 1.0)
+        assert (low, high) == pytest.approx(estimate.wilson_interval(2, 10))
+        de_low, de_high = estimate.wilson_with_design_effect(2, 10, 3.0)
+        assert de_low < low and de_high > high
+
+
 class TestBuildEstimate:
     def test_end_to_end_and_scored_rates(self):
         report = _report(
@@ -144,6 +187,25 @@ class TestBuildEstimate:
         report = _report(instances, resolved=6, scored=30, empty=0)
         est = estimate.build_estimate("run-1", report)
         assert est["preliminary"] is False
+
+    def test_cluster_fields_are_present(self):
+        report = _report(
+            [
+                ("pytest-dev", True, True),
+                ("pytest-dev", False, True),
+                ("astropy", False, True),
+            ],
+            resolved=1,
+            scored=3,
+            empty=0,
+        )
+        est = estimate.build_estimate("run-1", report)
+        assert est["clusters"] == 2
+        assert 0.0 <= est["icc"] <= 1.0
+        assert est["design_effect"] >= 1.0
+        assert est["effective_n"] <= est["attempted"]
+        low, high = est["cluster_bootstrap_ci95"]
+        assert low <= high
 
     def test_infra_errors_are_reported(self):
         report = _report([("a", False, True)], resolved=0, scored=1, empty=0, infra=2)

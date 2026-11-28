@@ -27,6 +27,7 @@ This directory contains technical documentation for lai.
 | [CAMBIOS_2026-11-28_MEJORAS4.md](CAMBIOS_2026-11-28_MEJORAS4.md) | Before/after record: prompt cache, truncation guard, credential read guard, timings (Regla 10) |
 | [CAMBIOS_2026-11-28_LLAMACPP.md](CAMBIOS_2026-11-28_LLAMACPP.md) | Before/after record: llama.cpp enabled locally, GPU/context cascade, measured throughput (Regla 10) |
 | [CAMBIOS_2026-11-28_REGLA12.md](CAMBIOS_2026-11-28_REGLA12.md) | Before/after record: Regla 12, SWE estimation with Wilson CI and sample sizes (Regla 10) |
+| [CAMBIOS_2026-11-28_MUESTRA62.md](CAMBIOS_2026-11-28_MUESTRA62.md) | Before/after record: reproducible 62-instance sample, ICC and cluster bootstrap (Regla 10) |
 
 ## External References
 

@@ -71,6 +71,101 @@ def sample_size_for_margin(p: float, margin: float, z: float = 1.959963984540054
     return math.ceil((z * z * p * (1 - p)) / (margin * margin))
 
 
+def intraclass_correlation(clusters: list[tuple[int, int]]) -> float:
+    """Estima el coeficiente de correlación intraclase (ICC) para un resultado binario.
+
+    `clusters` es una lista de `(éxitos, total)` por repositorio. Se usa el
+    estimador ANOVA de una vía (el habitual en ensayos aleatorizados por
+    conglomerados), con la varianza intra-cluster de Bernoulli `p(1−p)`:
+
+        MSB = Σ nᵢ(pᵢ − p)² / (k − 1)
+        MSW = Σ nᵢ pᵢ(1 − pᵢ) / (N − k)
+        ICC = (MSB − MSW) / (MSB + (m̄ − 1)·MSW)
+
+    Devuelve 0.0 si no se puede estimar (menos de 2 clusters, N ≤ k, o
+    proporción global 0/1).
+    """
+    usable = [(k, n) for k, n in clusters if n > 0]
+    total_n = sum(n for _, n in usable)
+    clusters_k = len(usable)
+    if clusters_k < 2 or total_n <= clusters_k:
+        return 0.0
+    overall = sum(k for k, _ in usable) / total_n
+    if overall in (0.0, 1.0):
+        return 0.0
+
+    msb = sum(n * (k / n - overall) ** 2 for k, n in usable) / (clusters_k - 1)
+    msw = sum(n * (k / n) * (1 - k / n) for k, n in usable) / (total_n - clusters_k)
+    m_bar = total_n / clusters_k
+    denominator = msb + (m_bar - 1) * msw
+    if denominator <= 0:
+        return 0.0
+    icc = (msb - msw) / denominator
+    return max(0.0, min(1.0, icc))
+
+
+def design_effect(clusters: list[tuple[int, int]]) -> float:
+    """Efecto de diseño `1 + (m̄ − 1)·ICC`, acotado a [1, n]."""
+    usable = [(k, n) for k, n in clusters if n > 0]
+    total_n = sum(n for _, n in usable)
+    if not usable or total_n == 0:
+        return 1.0
+    m_bar = total_n / len(usable)
+    de = 1 + (m_bar - 1) * intraclass_correlation(clusters)
+    return max(1.0, min(float(total_n), de))
+
+
+def cluster_bootstrap_ci(
+    clusters: list[tuple[int, int]], iterations: int = 10000, seed: int = 20261128
+) -> tuple[float, float]:
+    """Intervalo bootstrap remuestreando **repositorios**, no instancias.
+
+    Las instancias de un mismo repo comparten código, entorno y tipo de fallo,
+    así que no son independientes. Remuestrear clusters preserva esa estructura
+    y produce un intervalo más ancho (y más honesto) que Wilson.
+    """
+    usable = [(k, n) for k, n in clusters if n > 0]
+    if len(usable) < 2:
+        return (0.0, 0.0)
+    import random as _random
+
+    rng = _random.Random(seed)
+    rates = []
+    for _ in range(iterations):
+        successes = 0
+        total = 0
+        for _ in range(len(usable)):
+            k, n = usable[rng.randrange(len(usable))]
+            successes += k
+            total += n
+        if total:
+            rates.append(successes / total)
+    if not rates:
+        return (0.0, 0.0)
+    rates.sort()
+    low = rates[int(0.025 * (len(rates) - 1))]
+    high = rates[int(0.975 * (len(rates) - 1))]
+    return (low, high)
+
+
+def wilson_with_design_effect(
+    successes: int, total: int, de: float
+) -> tuple[float, float]:
+    """Wilson usando el tamaño efectivo de muestra `n / DE`."""
+    if total <= 0:
+        return (0.0, 0.0)
+    n_eff = max(1.0, total / de)
+    p = successes / total
+    return _wilson_from_p(p, n_eff)
+
+
+def _wilson_from_p(p: float, n: float, z: float = 1.959963984540054) -> tuple[float, float]:
+    denominator = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denominator
+    margin = (z / denominator) * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (max(0.0, centre - margin), min(1.0, centre + margin))
+
+
 def load_report(run_id: str | None, model: str | None, report_path: str | None) -> tuple[str, dict]:
     if report_path:
         path = Path(report_path)
@@ -137,6 +232,15 @@ def build_estimate(run_id: str, report: dict) -> dict:
         if instance.get("resolved"):
             entry["resolved"] += 1
 
+    # Correlación intra-repositorio: las instancias de un mismo repo comparten
+    # código y tipo de fallo, así que Wilson (que asume independencia) puede
+    # quedarse corto. Se calcula el efecto de diseño y un bootstrap por cluster.
+    clusters = [(entry["resolved"], entry["attempted"]) for entry in per_repo.values()]
+    de = design_effect(clusters)
+    icc = intraclass_correlation(clusters)
+    boot = cluster_bootstrap_ci(clusters) if len(clusters) >= 2 else (0.0, 0.0)
+    n_eff = attempted / de if de > 0 else float(attempted)
+
     return {
         "run_id": run_id,
         "model": run.get("model"),
@@ -156,6 +260,12 @@ def build_estimate(run_id: str, report: dict) -> dict:
         "upper_bound_95": upper_bound,
         "preliminary": attempted < MIN_N_FOR_CLAIM,
         "per_repo": per_repo,
+        "clusters": len(clusters),
+        "icc": icc,
+        "design_effect": de,
+        "effective_n": n_eff,
+        "cluster_bootstrap_ci95": list(boot),
+        "wilson_with_de_ci95": list(wilson_with_design_effect(resolved, attempted, de)),
         "sample_sizes": {
             "margin_5pp_p20": sample_size_for_margin(0.2, 0.05),
             "margin_10pp_p20": sample_size_for_margin(0.2, 0.10),
@@ -202,6 +312,23 @@ def render_text(est: dict) -> str:
             f"(evaluables {entry['scored']})"
         )
     lines.append("")
+    lines.append("Correlación por repositorio (las instancias de un repo no son independientes):")
+    lines.append(f"  repositorios en la muestra: {est.get('clusters', 0)}")
+    lines.append(f"  ICC estimado:               {est.get('icc', 0.0):.3f}")
+    lines.append(f"  efecto de diseño (DE):      {est.get('design_effect', 1.0):.2f}")
+    lines.append(f"  n efectivo:                 {est.get('effective_n', est['attempted']):.1f}")
+    boot_low, boot_high = est.get("cluster_bootstrap_ci95", (0.0, 0.0))
+    de_low, de_high = est.get("wilson_with_de_ci95", (0.0, 0.0))
+    lines.append(
+        f"  IC 95 % por bootstrap de clusters: [{format_pct(boot_low)} – {format_pct(boot_high)}]"
+    )
+    lines.append(
+        f"  IC 95 % Wilson con DE:             [{format_pct(de_low)} – {format_pct(de_high)}]"
+    )
+    lines.append(
+        "  El IC de clusters es el que debe citarse cuando la muestra mezcla repositorios."
+    )
+    lines.append("")
     sizes = est["sample_sizes"]
     lines.append("Muestra necesaria para estimar una tasa:")
     lines.append(f"  ±5 pp con p≈20 %:  n ≥ {sizes['margin_5pp_p20']}")
@@ -238,6 +365,14 @@ def render_markdown(est: dict) -> str:
         f"| Tasa sobre evaluables | {format_pct(est['scored_rate'])} "
         f"[{format_pct(slow)} – {format_pct(shigh)}] |",
     ]
+    if "cluster_bootstrap_ci95" in est:
+        b_low, b_high = est["cluster_bootstrap_ci95"]
+        rows.append(
+            f"| IC 95 % por clusters (bootstrap) | "
+            f"[{format_pct(b_low)} – {format_pct(b_high)}] |"
+        )
+        rows.append(f"| ICC intra-repositorio | {est['icc']:.3f} |")
+        rows.append(f"| Efecto de diseño | {est['design_effect']:.2f} |")
     out = [
         f"**Estimación SWE — `{est['model']}` (corrida `{est['run_id']}`)**",
         "",

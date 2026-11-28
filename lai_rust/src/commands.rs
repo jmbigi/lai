@@ -1441,6 +1441,14 @@ pub fn cmd_swe_estimate(report_path: &str, json: bool, extrapolate: bool) {
             "scored_ci95": [estimate.scored_ci95.0, estimate.scored_ci95.1],
             "upper_bound_95": estimate.upper_bound_95,
             "preliminary": estimate.preliminary,
+            "clusters": estimate.clusters,
+            "icc": estimate.icc,
+            "design_effect": estimate.design_effect,
+            "effective_n": estimate.effective_n,
+            "cluster_bootstrap_ci95": [
+                estimate.cluster_bootstrap_ci95.0,
+                estimate.cluster_bootstrap_ci95.1
+            ],
         });
         match serde_json::to_string_pretty(&payload) {
             Ok(text) => println!("{text}"),

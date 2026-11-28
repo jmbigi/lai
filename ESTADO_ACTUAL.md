@@ -188,8 +188,8 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` (suite completa) | **240 tests** (198 lib + 42 integración), 0 fallos |
-| `pytest tests swebench` | 261 passed, 8 skipped (con llama.cpp arriba) |
+| `cargo test` (suite completa) | **248 tests** (206 lib + 42 integración), 0 fallos |
+| `pytest tests swebench` | 269 passed, 8 skipped (con llama.cpp arriba) |
 | `ruff check .` | All checks passed, sin avisos de configuración |
 | `cargo clippy --all-targets -- -D warnings` | sin avisos |
 | `cargo fmt --check` | limpio |
