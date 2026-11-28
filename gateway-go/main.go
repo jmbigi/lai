@@ -1834,6 +1834,34 @@ func loadConfig(path string) (*Config, error) {
 
 var startTime = time.Now()
 
+// detectUpstreamContext pregunta a llama.cpp la ventana de contexto real
+// (`/props` → `default_generation_settings.n_ctx`).
+//
+// Sin esto el gateway anunciaba el `max_tokens` del YAML (32768) aunque el
+// servidor estuviera arrancado con menos (p. ej. 16384 en una GPU de 8 GB), y
+// aceptaba peticiones que el upstream no podía atender. Devuelve 0 si no se
+// puede determinar; el llamador conserva entonces el valor de configuración.
+func detectUpstreamContext(baseURL string, timeout time.Duration) int {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(strings.TrimRight(baseURL, "/") + "/props")
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	var payload struct {
+		DefaultGenerationSettings struct {
+			NCtx int `json:"n_ctx"`
+		} `json:"default_generation_settings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0
+	}
+	return payload.DefaultGenerationSettings.NCtx
+}
+
 func main() {
 	configPath := "config.yaml"
 	if len(os.Args) > 1 {
@@ -1848,6 +1876,18 @@ func main() {
 	if config.Logging.Format == "json" {
 		log.SetFlags(0)
 		log.SetOutput(os.Stdout)
+	}
+
+	// El contexto real del upstream manda sobre el YAML: si llama.cpp corre con
+	// 16384, anunciar 32768 solo provoca rechazos aguas arriba.
+	if config.Upstream.LlamaCPP.URL != "" {
+		if detected := detectUpstreamContext(config.Upstream.LlamaCPP.URL, 3*time.Second); detected > 0 {
+			if detected != config.Context.MaxTokens {
+				log.Printf("context: using upstream n_ctx=%d (config said %d)",
+					detected, config.Context.MaxTokens)
+			}
+			config.Context.MaxTokens = detected
+		}
 	}
 
 	gateway, err := NewGateway(config)

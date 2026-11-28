@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **El gateway anuncia el contexto real del upstream**: al arrancar consulta `{llama_cpp}/props` y usa `n_ctx` en lugar del `max_tokens` del YAML (que decía 32768 mientras llama.cpp corría a 16384). Lo registra en el log.
+- **Timeout configurable en los tests de modelo** (`LAI_TEST_TIMEOUT`, por defecto 180 s): el valor fijo de 30 s hacía fallar los tests de integración cuando la GPU estaba ocupada.
 - **Correlación intra-repositorio en la estimación SWE**: ICC (ANOVA de una vía), efecto de diseño `1+(m̄−1)·ICC`, n efectivo y **bootstrap remuestreando repositorios** (10 000 iteraciones, semilla fija). El IC por clusters es más ancho que Wilson cuando las instancias se agrupan por repo, y es el que debe citarse. Implementado en `swebench/estimate.py` y `lai_rust/src/estimate.rs`; 8 tests nuevos en cada uno.
 - **Muestra reproducible de 62 instancias** (`swebench/data/sample62.txt`, semilla 20261128) en lugar de 10 elegidas a mano.
 - **`swebench/run_ready.sh` y `run_until_done.sh`**: ejecutan el agente solo sobre instancias con imagen lista y encadenan pasadas mientras `prepare.py` descarga, sin registrar errores de infraestructura por imágenes ausentes.

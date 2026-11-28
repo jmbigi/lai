@@ -23,6 +23,20 @@ def _check_service_url(url: str) -> bool:
         return False
 
 
+def _model_timeout() -> int:
+    """Timeout para llamadas al modelo real en los tests de integración.
+
+    Con una GPU compartida (p. ej. un contenedor de SWE-bench usando llama.cpp)
+    una respuesta que normalmente tarda 3 s puede tardar 60. El valor fijo de
+    30 s hacía fallar estos tests de forma intermitente. Configurable con
+    ``LAI_TEST_TIMEOUT``.
+    """
+    try:
+        return max(10, int(os.environ.get("LAI_TEST_TIMEOUT", "180")))
+    except ValueError:
+        return 180
+
+
 def _check_tool_calling_support(base_url: str = "http://localhost:8080/v1") -> bool:
     """Check whether the server actually returns native tool calls.
 
@@ -413,7 +427,7 @@ class TestIntegration:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=_model_timeout()) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
             message = data["choices"][0]["message"]
@@ -460,7 +474,7 @@ class TestIntegration:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=_model_timeout()) as resp:
             assert resp.status == 200
             saw_tool_call = False
             for raw_line in resp:
@@ -520,7 +534,7 @@ class TestIntegration:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=_model_timeout()) as resp:
             assert resp.status == 200
             data = json.loads(resp.read())
             message = data["choices"][0]["message"]
@@ -563,7 +577,7 @@ class TestIntegration:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json", "Authorization": "Bearer open"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=_model_timeout()) as resp:
             assert resp.status == 200
             for raw_line in resp:
                 decoded = raw_line.decode().strip()
