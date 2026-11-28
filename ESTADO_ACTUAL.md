@@ -205,7 +205,7 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | Artefactos de build versionados | **0** (se retiraron 345 archivos / 82 MB de `lai_rust/target/`) |
 
 Pendientes abiertos: medir el sandbox con modelos reales (los benchmarks se
-hicieron sin él), `contracts.rs` sin verificador externo conectado, seccomp o
+hicieron sin él), `contracts.rs` conectado vía `lai verify --external` (sin probar con Dafny/TLA+ reales), seccomp o
 Landlock como capa adicional, `/tmp` compartido con el host y Windows/macOS.
 La allowlist de comandos y la guarda shell ya existen como opt-in. Detalle en
 `DOCS/CAMBIOS_2026-11-28_MEJORAS3.md`.

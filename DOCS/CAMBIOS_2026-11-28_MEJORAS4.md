@@ -141,7 +141,27 @@ corridas ni comprobar si `cache_prompt` servía.
 
 **Verificación:** E2E con servidor falso (imprime el resumen).
 
-## 11. Verificación completa
+## 11. `contracts.rs` conectado a `lai verify`
+
+**ANTES:** la capa de contratos compilaba y tenía tests, pero ningún comando la
+usaba (declarado en ADR-0001).
+
+**DESPUÉS:** `lai verify <path> --external <safe|unsafe|timeout|unknown>
+[--required]` mapea el resultado de un verificador externo al veredicto acotado
+y sale con código 2 si no es un éxito. Permite que un wrapper de Dafny, TLA+ o
+α,β-CROWN alimente a lai sin que la herramienta externa pueda declarar SUCCESS
+por sí sola.
+
+**Verificación** (ejecutada):
+
+| Entrada | Veredicto | Código |
+|---|---|---|
+| `safe --required` | SUCCESS | 0 |
+| `unsafe --required` | BLOCKED | 2 |
+| `timeout` (opcional) | SUCCESS_WITH_DECLARED_GAPS | 0 |
+| `counterexample` (opcional) | FAILED | 2 |
+
+## 12. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
@@ -154,7 +174,7 @@ corridas ni comprobar si `cache_prompt` servía.
 | `make gateway-check` | ✅ |
 | `scripts/ci_local.sh --quick --ci` | ✅ 6/6 |
 
-## 12. Lo que NO se ha probado (Regla 6)
+## 13. Lo que NO se ha probado (Regla 6)
 
 - **`cache_prompt` con un modelo real.** No hay servidor llama.cpp en marcha en
   esta sesión; no se midió la mejora de TTFT ni de tokens reprocesados. La
@@ -163,6 +183,8 @@ corridas ni comprobar si `cache_prompt` servía.
   truncarse.
 - **Guarda de credenciales.** Es una lista de nombres y componentes, no un
   detector de contenido: un secreto en `notes.txt` no se detecta.
+- **Contratos con una herramienta externa real.** El mapeo y el CLI están
+  probados; no se ejecutó Dafny/TLA+/α,β-CROWN en este equipo.
 - **Gramáticas GBNF explícitas.** llama.cpp ya genera la gramática desde los
   `tools` nativos; no se envía un `grammar`/`response_format` adicional.
 - **`--jinja` / `--cache-reuse`.** No hay servidor llama.cpp en marcha en esta

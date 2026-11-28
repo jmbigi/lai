@@ -79,9 +79,10 @@ medición violaría Regla 6 y Regla 11.
   `master` con tests; el historial de la rama sigue recuperable desde el tag.
 - **Negativas:** se pierde el trabajo de investigación no portado. Si se
   necesita, se puede `git cherry-pick` o `git show` desde el tag.
-- **Pendiente:** conectar `contracts.rs` a un verificador externo real y medir
-  su admisión; y aplicar `require_sandbox` por defecto cuando la experiencia
-  con bubblewrap en Ubuntu 24.04 esté validada.
+- **Pendiente:** medir la admisión de un verificador externo real; y aplicar
+  `require_sandbox` por defecto cuando la experiencia con bubblewrap en
+  Ubuntu 24.04 esté validada. `contracts.rs` ya está conectado al CLI mediante
+  `lai verify --external` (ver `DOCS/CAMBIOS_2026-11-28_MEJORAS4.md` §11).
 
 ## Verificación
 

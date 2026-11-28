@@ -2004,9 +2004,37 @@ pub async fn cmd_baseline(command: crate::baseline::BaselineCommands) {
     }
 }
 
-pub async fn cmd_verify(path: &str, level: Option<u32>) {
+pub async fn cmd_verify(path: &str, level: Option<u32>, external: Option<&str>, required: bool) {
     use crate::planner::{VerificationLevel, VerificationScope};
     use crate::verification_engine::{VerificationEngine, VerificationVerdict};
+
+    // Capa de contratos: si el operador trae el resultado de un verificador
+    // externo (Dafny, TLA+, α,β-CROWN…), se mapea al veredicto acotado en vez
+    // de ejecutar las comprobaciones internas. La herramienta externa no puede
+    // declarar SUCCESS por sí sola: `required` decide si un timeout/unknown
+    // bloquea la tarea.
+    if let Some(label) = external {
+        let verdict = crate::contracts::ExternalVerdict::parse(label);
+        let mapped = verdict.to_verdict(required);
+        println!(
+            "Contrato externo: '{}' → {} (requerido: {})",
+            label,
+            match mapped {
+                VerificationVerdict::Success => "SUCCESS",
+                VerificationVerdict::SuccessWithDeclaredGaps => "SUCCESS_WITH_DECLARED_GAPS",
+                VerificationVerdict::Failed => "FAILED",
+                VerificationVerdict::Blocked => "BLOCKED",
+            },
+            if required { "sí" } else { "no" }
+        );
+        if !matches!(
+            mapped,
+            VerificationVerdict::Success | VerificationVerdict::SuccessWithDeclaredGaps
+        ) {
+            std::process::exit(2);
+        }
+        return;
+    }
 
     let root = PathBuf::from(path);
     if !root.exists() {

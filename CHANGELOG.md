@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Herramientas `git_*` honestas**: `run_git()` falla en voz alta con `stderr` en lugar de devolver una cadena vacía; `git_add`/`git_commit`/`git_rollback` pasan por el `PolicyEngine` en `auto` (frontera del workspace). 3 tests.
 - **Resumen de consumo en `auto`**: al terminar imprime prompt/completion tokens y, si el servidor lo informa, tokens reutilizados del KV cache.
 - **Fix de orden de montajes**: `--tmpfs /tmp` se aplica antes del bind del workspace; un proyecto dentro de `/tmp` ya no queda tapado (bwrap `Can't chdir`).
+- **`lai verify --external`**: conecta la capa de contratos con un verificador externo; mapea `safe|unsafe|timeout|unknown` al veredicto acotado y sale con código 2 si no es éxito. `--required` hace fail-closed.
 - **DOCS/CAMBIOS_2026-11-28_MEJORAS4.md** (Regla 10).
 - **Diagnóstico del sandbox (2026-11-28)**: `lai doctor` y `lai status` informan bwrap, preflight, modo (opt-in/obligatorio) y si la red está permitida. Con `LAI_REQUIRE_SANDBOX=1` y sin sandbox, `doctor` lo marca como error.
 - **Red opcional dentro del sandbox**: `LAI_SANDBOX_ALLOW_NET=1` o `"sandbox_network": true` añade `--share-net` manteniendo el aislamiento de PID/mount/IPC. Por defecto sigue bloqueada.

@@ -88,6 +88,16 @@ enum Commands {
         path: String,
         #[arg(long, help = "Verification level (1-8)")]
         level: Option<u32>,
+        #[arg(
+            long,
+            help = "Map an external verifier result (safe|unsafe|timeout|unknown) instead of running checks"
+        )]
+        external: Option<String>,
+        #[arg(
+            long,
+            help = "Treat the external result as required (fail-closed on unsafe/timeout/unknown)"
+        )]
+        required: bool,
     },
     /// Diagnose errors
     Diagnose {
@@ -224,8 +234,13 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Baseline { command }) => {
             commands::cmd_baseline(command).await;
         }
-        Some(Commands::Verify { path, level }) => {
-            commands::cmd_verify(&path, level).await;
+        Some(Commands::Verify {
+            path,
+            level,
+            external,
+            required,
+        }) => {
+            commands::cmd_verify(&path, level, external.as_deref(), required).await;
         }
         Some(Commands::Diagnose { input, root }) => {
             commands::cmd_diagnose(&input, root.as_deref()).await;
