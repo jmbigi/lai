@@ -73,11 +73,37 @@ prompt del perfil bash explica que debe ejecutarse como único comando del turno
 `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, la corrida termina en la iteración
 1 con `✅ Tarea entregada por el agente (submit).`
 
-## 4. Verificación completa
+## 4. Parser XML de tool calls
+
+**ANTES:** solo se reconocían tool calls nativas y bloques ```json. Si un modelo
+cambiaba a XML a mitad de la corrida (`<tool_call><function=…>`), la llamada
+llegaba como texto y el bucle la interpretaba como "tarea terminada" (fallo
+documentado por Bees con modelos locales).
+
+**DESPUÉS:** `parse_xml_tool_calls()` recupera:
+- `<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>`;
+- la variante sin envoltorio `<function=NAME>…`;
+- múltiples parámetros y entidades XML (`&amp;`, `&lt;`, …).
+
+Se usa solo si no hubo tool calls nativas ni JSON. 4 tests.
+
+## 5. Coherencia de herramientas y pruebas de ataque
+
+**ANTES:** nada impedía registrar una herramienta sin esquema (o anunciar una
+que no existe); el sandbox no tenía pruebas de "escribir fuera del workspace".
+
+**DESPUÉS**
+- `every_registered_tool_has_a_schema`: el registro y los esquemas coinciden en
+  ambos sentidos.
+- `bash_profile_exposes_exactly_one_tool`: el perfil bash expone solo `bash`.
+- `sandbox_blocks_writes_outside_the_workspace`: `/etc` es de solo lectura.
+- `sandbox_masks_run_directory`: `/run` está vacío (sin sockets de Docker).
+
+## 6. Verificación completa
 
 | Comprobación | Resultado |
 |---|---|
-| `cargo test` | ✅ **202 tests** (160 lib + 42 integración), 0 fallos |
+| `cargo test` | ✅ **210 tests** (168 lib + 42 integración), 0 fallos |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --all-targets -- -D warnings` | ✅ |
 | `pytest tests swebench` | ✅ 241 passed, 9 skipped |
@@ -87,7 +113,7 @@ prompt del perfil bash explica que debe ejecutarse como único comando del turno
 | Submit sentinel | ✅ |
 | `edit` con indentación distinta | ✅ |
 
-## 5. Lo que NO se ha probado (Regla 6)
+## 7. Lo que NO se ha probado (Regla 6)
 
 - **Modelos reales.** Todo con comandos directos y servidor falso. No se midió
   cuánto mejora la tasa de parches con el fallback de `edit` ni con el sentinel.

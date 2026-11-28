@@ -1058,10 +1058,15 @@ If the user asks you to create a file, your FIRST tool call MUST be "write_file"
                 }
                 messages.push(msg.clone());
 
-                // Native tool calls take precedence; fall back to JSON code blocks.
+                // Native tool calls take precedence; fall back to JSON code
+                // blocks and then to XML-style calls (some local models switch
+                // format mid-run).
                 let mut tool_calls = parse_native_tool_calls(&msg.tool_calls);
                 if tool_calls.is_empty() {
                     tool_calls = parse_simulated_tool_calls(&msg.content);
+                }
+                if tool_calls.is_empty() {
+                    tool_calls = parse_xml_tool_calls(&msg.content);
                 }
 
                 if tool_calls.is_empty() {
@@ -1432,6 +1437,86 @@ fn parse_simulated_tool_calls(response: &str) -> Vec<Value> {
     }
 
     calls
+}
+
+/// Fallback para modelos que emiten tool calls en XML en lugar de JSON:
+///
+/// ```text
+/// <tool_call><function=read_file><parameter=path>src/lib.rs</parameter></function></tool_call>
+/// ```
+///
+/// llama.cpp fija el parser al primer formato que detecta en una corrida; si el
+/// modelo cambia de JSON a XML a mitad, la segunda llamada llega como texto y el
+/// bucle la interpretaría como "tarea terminada" (caso documentado por Bees).
+/// Este fallback recupera esas llamadas en vez de terminar en silencio.
+fn parse_xml_tool_calls(response: &str) -> Vec<Value> {
+    let mut calls = Vec::new();
+    let mut rest = response;
+    while let Some(pos) = rest.find("<tool_call>") {
+        let after = &rest[pos + "<tool_call>".len()..];
+        let Some(end) = after.find("</tool_call>") else {
+            break;
+        };
+        let block = &after[..end];
+        if let Some(call) = parse_xml_tool_call_block(block) {
+            calls.push(call);
+        }
+        rest = &after[end + "</tool_call>".len()..];
+    }
+
+    // Algunos modelos omiten el envoltorio y emiten solo `<function=...>`.
+    if calls.is_empty() {
+        if let Some(start) = response.find("<function=") {
+            if let Some(call) = parse_xml_tool_call_block(&response[start..]) {
+                calls.push(call);
+            }
+        }
+    }
+    calls
+}
+
+fn parse_xml_tool_call_block(block: &str) -> Option<Value> {
+    let name_start = block.find("<function=")? + "<function=".len();
+    let name_rest = &block[name_start..];
+    let name_end = name_rest.find(|c: char| c == '>' || c.is_whitespace())?;
+    let name = name_rest[..name_end]
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut args = serde_json::Map::new();
+    let mut rest = &name_rest[name_end..];
+    while let Some(pos) = rest.find("<parameter=") {
+        let after = &rest[pos + "<parameter=".len()..];
+        let Some(key_end) = after.find('>') else {
+            break;
+        };
+        let key = after[..key_end].trim().to_string();
+        let value_rest = &after[key_end + 1..];
+        let Some(value_end) = value_rest.find("</parameter>") else {
+            break;
+        };
+        let mut value = value_rest[..value_end].to_string();
+        // Desescapar las entidades XML habituales.
+        value = value
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&");
+        if !key.is_empty() {
+            args.insert(key, Value::String(value));
+        }
+        rest = &value_rest[value_end + "</parameter>".len()..];
+    }
+
+    Some(serde_json::json!({
+        "tool": name,
+        "arguments": Value::Object(args),
+    }))
 }
 
 /// Escapa los caracteres de control literales que aparecen dentro de cadenas
@@ -2609,6 +2694,37 @@ mod normalization_tests {
         let repaired = repair_json_control_chars(raw);
         let val: Value = serde_json::from_str(&repaired).unwrap();
         assert_eq!(val["content"], "let s = \"a\";\nlet t = 1;");
+    }
+
+    #[test]
+    fn xml_tool_call_is_parsed() {
+        let response = "<tool_call><function=read_file><parameter=path>src/lib.rs</parameter></function></tool_call>";
+        let calls = parse_xml_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tool"], "read_file");
+        assert_eq!(calls[0]["arguments"]["path"], "src/lib.rs");
+    }
+
+    #[test]
+    fn xml_tool_call_parses_multiple_parameters() {
+        let response = "<tool_call><function=write_file><parameter=path>a.txt</parameter><parameter=content>hi &amp; bye</parameter></function></tool_call>";
+        let calls = parse_xml_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["arguments"]["content"], "hi & bye");
+    }
+
+    #[test]
+    fn xml_tool_call_without_wrapper_is_parsed() {
+        let response = "<function=run_command><parameter=command>ls -la</parameter></function>";
+        let calls = parse_xml_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tool"], "run_command");
+        assert_eq!(calls[0]["arguments"]["command"], "ls -la");
+    }
+
+    #[test]
+    fn xml_tool_call_ignores_plain_text() {
+        assert!(parse_xml_tool_calls("no hay llamadas aquí").is_empty());
     }
 }
 

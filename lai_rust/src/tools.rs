@@ -2393,4 +2393,74 @@ async def go():\n\
         assert!(out.contains("tok=[]"), "{out}");
         assert!(out.contains("ssh=[]"), "{out}");
     }
+
+    #[test]
+    fn every_registered_tool_has_a_schema() {
+        // Lección de Bees: nunca anunciar al modelo una herramienta que no
+        // puede ver, ni registrar una que no se anuncia.
+        let registry = ToolRegistry::new();
+        let schemas: Vec<String> = registry
+            .get_tools_schema()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        for name in registry.tools.keys() {
+            assert!(
+                schemas.contains(name),
+                "la herramienta '{name}' está registrada pero no tiene esquema"
+            );
+        }
+        for name in &schemas {
+            assert!(
+                registry.tools.contains_key(name),
+                "el esquema '{name}' no corresponde a ninguna herramienta"
+            );
+        }
+    }
+
+    #[test]
+    fn bash_profile_exposes_exactly_one_tool() {
+        let registry = ToolRegistry::new();
+        let schemas = registry.get_tools_schema_for(ToolProfile::BashOnly);
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0].name, "bash");
+    }
+
+    #[test]
+    fn sandbox_blocks_writes_outside_the_workspace() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "touch /etc/lai-sandbox-was-here 2>/dev/null && echo WROTE || echo READONLY",
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        assert!(
+            out.contains("READONLY"),
+            "/etc debería ser de solo lectura: {out}"
+        );
+    }
+
+    #[test]
+    fn sandbox_masks_run_directory() {
+        if !crate::sandbox::preflight().available {
+            return;
+        }
+        let out = run_shell_tool_with(
+            &args(json!({
+                "command": "ls -A /run 2>/dev/null | head -5",
+                "sandbox": true
+            })),
+            true,
+        )
+        .unwrap();
+        assert!(
+            out.trim().is_empty() || out.contains("(no output"),
+            "/run debería estar vacío: {out}"
+        );
+    }
 }
