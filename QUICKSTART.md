@@ -54,10 +54,31 @@ lai auto "añade tests unitarios para src/auth.rs"
 
 Verás al agente:
 - Leer el código existente
-- Planear los tests
-- Escribirlos
-- Ejecutarlos (`cargo test` / `pytest`)
-- Iterar hasta que pasen
+- Editar los archivos necesarios (con `edit`, `apply_patch` o `write_file`)
+- Ejecutar comandos que él decida (`cargo test` / `pytest`)
+
+El agente **no** tiene un planificador fijo ni un bucle "hasta que pasen los
+tests": itera con las herramientas hasta que decide terminar o agota
+`--max-iterations`. Si quieres que verifique, pídeselo en la tarea.
+
+### Sandbox (recomendado para código que no es tuyo)
+
+```bash
+# Sandbox obligatorio: si bwrap no está disponible, falla en vez de ejecutar sin aislamiento
+lai --sandbox auto "arregla el bug"
+
+# Tareas que necesitan descargar dependencias
+LAI_SANDBOX_ALLOW_NET=1 lai --sandbox auto "actualiza dependencias"
+```
+
+El sandbox monta el proyecto en lectura/escritura, el resto del sistema en solo
+lectura, bloquea la red por defecto y limpia el entorno (no hereda
+`GITHUB_TOKEN` ni `SSH_AUTH_SOCK`). Requiere `bubblewrap` en Linux:
+`sudo apt install bubblewrap`.
+
+Para repositorios de confianza y máxima comodidad, el sandbox es opt-in con
+`"sandbox": true` en las herramientas; sin él, `auto` ejecuta comandos con tus
+permisos.
 
 ---
 

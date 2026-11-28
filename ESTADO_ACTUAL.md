@@ -202,7 +202,8 @@ Datos comprobados en este equipo (Linux, Rust estable), no extrapolados:
 | Allowlist de comandos | opt-in con `LAI_COMMAND_ALLOWLIST=1` |
 | Artefactos de build versionados | **0** (se retiraron 345 archivos / 82 MB de `lai_rust/target/`) |
 
-Pendientes abiertos: allowlist de comandos en `auto` (decisión de producto),
-perfil `bash` puede saltar la guarda de manifiestos con `cat > Cargo.toml`,
-`contracts.rs` sin verificador externo conectado, piloto SWE-bench con sandbox
-y Windows. Detalle en `DOCS/CAMBIOS_2026-11-28_SANDBOX.md`.
+Pendientes abiertos: medir el sandbox con modelos reales (los benchmarks se
+hicieron sin él), `contracts.rs` sin verificador externo conectado, seccomp o
+Landlock como capa adicional, `/tmp` compartido con el host y Windows/macOS.
+La allowlist de comandos y la guarda shell ya existen como opt-in. Detalle en
+`DOCS/CAMBIOS_2026-11-28_MEJORAS3.md`.

@@ -223,6 +223,12 @@ varianza. Para afirmar algo haría falta repetir con controles intercalados
 - **Dos entornos.** La comparativa de 2026-11-25 se midió con GPU (RTX 3070
   Laptop, 7.7 GB VRAM); la corrida de CPU de 2026-11-26, con una iGPU y 15.8 GB
   de RAM. **No son comparables entre sí**: son filas distintas de hardware.
+- **Sin sandbox en las mediciones.** Todas las corridas de esta página se
+  hicieron sin `--sandbox` (ejecución directa). El sandbox bubblewrap, el
+  entorno limpio y la red bloqueada por defecto se añadieron después y **no se
+  midieron con modelos reales**. No hay dato de cuántos parches fallarían por
+  falta de red ni de cuánto cambia la tasa de resolución; no se presenta ninguna
+  cifra al respecto (Regla 6).
 
 ---
 

@@ -50,6 +50,17 @@ se pueda probar (Regla 6). Orden por riesgo creciente.
 | E4 | `ESTADO_ACTUAL.md`, `CHANGELOG.md`, `DOCS/README.md`, `CAMBIOS_2026-11-28_MEJORAS2.md` | Regla 10 | Enlaces |
 | E5 | `make check` incluye el chequeo de sandbox si bwrap existe | Evita regresiones silenciosas | `make rust-check` |
 
+## Lote F — Endurecimiento y robustez (inspirado en investigación externa)
+
+| # | Mejora | Estado | Verificación |
+|---|---|---|---|
+| F1 | Sandbox con `--clearenv` (sin filtrar tokens) y `/run` oculto | ✅ | Tokens vacíos; `cargo`/`python` funcionan |
+| F2 | `edit` tolerante a indentación con reindentación | ✅ | 4 tests |
+| F3 | Sentinel `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` en perfil bash | ✅ | E2E |
+| F4 | Parser XML de tool calls como tercer fallback | ✅ | 4 tests |
+| F5 | Coherencia registro/esquemas y pruebas de ataque del sandbox | ✅ | 4 tests |
+| F6 | Documentar que los benchmarks se hicieron sin sandbox | ✅ | `BENCHMARKS.md` |
+
 ## Fuera de alcance (declarado)
 
 - Conectar `contracts.rs` a Dafny/TLA+/α,β-CROWN: requiere instalar herramientas
